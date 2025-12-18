@@ -4,8 +4,8 @@ Kubernetes Operator designed to streamline and centralize the configuration of *
 **SSO authentication** within the NIC ecosystem.
 
 This project targets a GitOps-friendly platform where:
-- **Argo CD** deploys application Helm charts (the “workloads/apps”) -
-  [NS/EW traffic management](https://devcookies.medium.com/north-south-vs-east-west-traffic-in-microservices-a-complete-guide-0e458fe4e605):
+- **Argo CD** deploys application Helm charts (the “workloads/apps”)
+- [NS/EW traffic management](https://devcookies.medium.com/north-south-vs-east-west-traffic-in-microservices-a-complete-guide-0e458fe4e605):
   - **Envoy Gateway (Gateway API)** provides north/south traffic entry
   - **Istio** provides mesh capabilities (east/west, optional policies)
 - **cert-manager** provisions/renews TLS certificates
