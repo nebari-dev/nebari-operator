@@ -11,7 +11,8 @@ This project targets a GitOps-friendly platform where:
 - **cert-manager** provisions/renews TLS certificates
 - **Keycloak** provides authentication / user & client management
 
-The operator’s purpose is to enable self-service onboarding: > “When a new app is installed via Helm/Argo CD, the
+The operator’s purpose is to enable self-service onboarding: 
+> “When a new app is installed via Helm/Argo CD, the
 platform automatically wires DNS/TLS, routes, and SSO.”
 
 
