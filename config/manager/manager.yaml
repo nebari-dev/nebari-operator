@@ -64,7 +64,17 @@ spec:
           - --leader-elect
           - --health-probe-bind-address=:8081
         image: controller:latest
+        imagePullPolicy: IfNotPresent
         name: manager
+        env:
+          - name: KEYCLOAK_URL
+            value: "http://keycloak.keycloak.svc.cluster.local:8080"
+          - name: KEYCLOAK_REALM
+            value: "keycloak"
+          - name: KEYCLOAK_ADMIN_USER
+            value: "admin"
+          - name: KEYCLOAK_ADMIN_PASSWORD
+            value: "admin"
         ports: []
         securityContext:
           readOnlyRootFilesystem: true

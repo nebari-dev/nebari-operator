@@ -1,0 +1,28 @@
+# KIND cluster configuration for nic-operator development
+# This configuration sets up a cluster ready for Envoy Gateway ingress testing
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: nic-operator-dev
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+    extraPortMappings:
+      # HTTP
+      - containerPort: 80
+        hostPort: 80
+        protocol: TCP
+      # HTTPS
+      - containerPort: 443
+        hostPort: 443
+        protocol: TCP
+      # Keycloak (development access)
+      - containerPort: 30080
+        hostPort: 30080
+        protocol: TCP
+  - role: worker
+  - role: worker

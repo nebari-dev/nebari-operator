@@ -1,0 +1,103 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo-app
+  labels:
+    nic.nebari.dev/managed: "true"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-demo
+  namespace: demo-app
+  labels:
+    app: nginx-demo
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nginx-demo
+  template:
+    metadata:
+      labels:
+        app: nginx-demo
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.25-alpine
+        ports:
+        - containerPort: 80
+          name: http
+        volumeMounts:
+        - name: html
+          mountPath: /usr/share/nginx/html
+      volumes:
+      - name: html
+        configMap:
+          name: nginx-content
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-content
+  namespace: demo-app
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>NIC Operator Demo</title>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                max-width: 800px;
+                margin: 50px auto;
+                padding: 20px;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+            }
+            .container {
+                background: rgba(255, 255, 255, 0.1);
+                padding: 30px;
+                border-radius: 10px;
+                backdrop-filter: blur(10px);
+            }
+            h1 { margin-top: 0; }
+            .info { margin: 20px 0; }
+            .success { color: #4ade80; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>NIC Operator Demo Application</h1>
+            <div class="info">
+                <p><strong>Status:</strong> <span class="success">Running</span></p>
+                <p><strong>Application:</strong> Simple Nginx Demo</p>
+                <p><strong>Purpose:</strong> Testing NIC Operator routing capabilities</p>
+            </div>
+            <p>If you can see this page, the NIC operator successfully configured:</p>
+            <ul>
+                <li>Gateway API routing (HTTPRoute)</li>
+                <li>TLS certificate (if using HTTPS)</li>
+                <li>DNS resolution to *.nic.local</li>
+            </ul>
+        </div>
+    </body>
+    </html>
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-demo
+  namespace: demo-app
+  labels:
+    app: nginx-demo
+spec:
+  type: ClusterIP
+  selector:
+    app: nginx-demo
+  ports:
+  - port: 80
+    targetPort: http
+    protocol: TCP
+    name: http

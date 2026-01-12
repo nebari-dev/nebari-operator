@@ -1,0 +1,23 @@
+# Sample NicApp with Authentication Enabled
+# This demonstrates how to enable Keycloak authentication for an application
+apiVersion: apps.nic.nebari.dev/v1
+kind: NicApp
+metadata:
+  name: nginx-demo-auth
+  namespace: demo-app
+spec:
+  hostname: nginx-demo-auth.nic.local
+  service:
+    name: nginx-demo
+    port: 80
+  tls:
+    enabled: true
+    mode: wildcard
+  auth:
+    enabled: true                    # Enable authentication
+    provider: keycloak               # Use Keycloak as the OIDC provider
+    provisionClient: true            # Automatically create Keycloak client
+    # Optional: Custom client configuration
+    # clientId: custom-client-id     # Default: <app-name>-<namespace>
+    # scopes: ["openid", "profile"]  # Default scopes
+  gateway: public

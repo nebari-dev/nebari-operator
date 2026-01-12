@@ -34,6 +34,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+
+	egv1alpha1 "github.com/envoyproxy/gateway/api/v1alpha1"
+	appsv1 "github.com/nebari-dev/nic-operator/api/v1"
+	"github.com/nebari-dev/nic-operator/internal/controller"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -45,7 +50,18 @@ var (
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
+	utilruntime.Must(appsv1.AddToScheme(scheme))
+	utilruntime.Must(gatewayv1.AddToScheme(scheme))
+	utilruntime.Must(egv1alpha1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
+}
+
+// getEnv gets an environment variable or returns a default value
+func getEnv(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
 }
 
 // nolint:gocyclo
@@ -58,6 +74,10 @@ func main() {
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var tlsOpts []func(*tls.Config)
+
+	// Keycloak configuration
+	var keycloakURL, keycloakIssuerURL, keycloakRealm, keycloakAdminUser, keycloakAdminPassword string
+
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -75,6 +95,24 @@ func main() {
 	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
+
+	// Keycloak flags with environment variable fallbacks
+	flag.StringVar(&keycloakURL, "keycloak-url",
+		getEnv("KEYCLOAK_URL", "http://keycloak.keycloak.svc.cluster.local:8080"),
+		"Keycloak server URL for admin API (env: KEYCLOAK_URL)")
+	flag.StringVar(&keycloakIssuerURL, "keycloak-issuer-url",
+		getEnv("KEYCLOAK_ISSUER_URL", "http://localhost:30080/realms/keycloak"),
+		"Keycloak OIDC issuer URL - must be browser-accessible (env: KEYCLOAK_ISSUER_URL)")
+	flag.StringVar(&keycloakRealm, "keycloak-realm",
+		getEnv("KEYCLOAK_REALM", "keycloak"),
+		"Keycloak realm for OIDC clients (env: KEYCLOAK_REALM)")
+	flag.StringVar(&keycloakAdminUser, "keycloak-admin-user",
+		getEnv("KEYCLOAK_ADMIN_USER", "admin"),
+		"Keycloak admin username (env: KEYCLOAK_ADMIN_USER)")
+	flag.StringVar(&keycloakAdminPassword, "keycloak-admin-password",
+		getEnv("KEYCLOAK_ADMIN_PASSWORD", "admin"),
+		"Keycloak admin password (env: KEYCLOAK_ADMIN_PASSWORD)")
+
 	opts := zap.Options{
 		Development: true,
 	}
@@ -174,6 +212,25 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Log Keycloak configuration
+	setupLog.Info("Keycloak configuration",
+		"adminURL", keycloakURL,
+		"issuerURL", keycloakIssuerURL,
+		"realm", keycloakRealm,
+		"adminUser", keycloakAdminUser)
+
+	if err := (&controller.NicAppReconciler{
+		Client:            mgr.GetClient(),
+		Scheme:            mgr.GetScheme(),
+		KeycloakURL:       keycloakURL,
+		KeycloakIssuerURL: keycloakIssuerURL,
+		KeycloakRealm:     keycloakRealm,
+		KeycloakAdmin:     keycloakAdminUser,
+		KeycloakPass:      keycloakAdminPassword,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "NicApp")
+		os.Exit(1)
+	}
 	// +kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {

@@ -1,0 +1,47 @@
+# Sample NicApp with multiple path-based routes
+# This demonstrates path-based routing: myapp.nic.local/app-1, myapp.nic.local/app-2, etc.
+apiVersion: apps.nic.nebari.dev/v1
+kind: NicApp
+metadata:
+  name: multi-path-demo
+  namespace: demo-app
+spec:
+  hostname: myapp.nic.local
+  service:
+    name: my-service
+    port: 80
+  routes:
+  - pathPrefix: /app-1
+    pathType: PathPrefix
+  - pathPrefix: /app-2
+    pathType: PathPrefix
+  - pathPrefix: /api/v1
+    pathType: PathPrefix
+  tls:
+    enabled: true
+    mode: wildcard
+  auth:
+    enabled: false
+  gateway: public
+
+---
+# Example showing exact path matching
+apiVersion: apps.nic.nebari.dev/v1
+kind: NicApp
+metadata:
+  name: exact-path-demo
+  namespace: demo-app
+spec:
+  hostname: api.nic.local
+  service:
+    name: api-service
+    port: 8080
+  routes:
+  - pathPrefix: /health
+    pathType: Exact
+  - pathPrefix: /ready
+    pathType: Exact
+  tls:
+    enabled: true
+    mode: wildcard
+  gateway: public

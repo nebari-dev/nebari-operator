@@ -41,13 +41,97 @@ help: ## Display this help.
 
 ##@ Development
 
+##@ Playground / Local Development
+
+CLUSTER_NAME ?= nic-operator-dev
+
+.PHONY: kind-create
+kind-create: ## Create KIND cluster for local development
+	@./dev/nic-dev cluster:create
+
+.PHONY: kind-delete
+kind-delete: ## Delete KIND cluster
+	@./dev/nic-dev cluster:delete
+
+.PHONY: playground-setup
+playground-setup: kind-create ## Set up complete local development environment (cluster + foundational services)
+	@echo "⏳ Setting up foundational services..."
+	@./dev/local-cluster/setup-foundational-services.sh
+	@echo ""
+	@echo "✨ Playground is ready!"
+	@echo ""
+	@echo "Next steps:"
+	@echo "  1. Setup gateway access (macOS only): ./dev/nic-dev gateway:setup"
+	@echo "  2. Build and deploy the operator: make docker-build deploy"
+	@echo "  3. Deploy sample apps: make sample-deploy"
+	@echo "  4. Test your changes!"
+
+.PHONY: playground-teardown
+playground-teardown: ## Tear down the local development environment (undeploy operator + delete cluster)
+	@echo "🧹 Tearing down playground environment..."
+	@if kubectl config current-context | grep -q "kind-$(CLUSTER_NAME)" 2>/dev/null; then \
+		echo "Undeploying operator..."; \
+		$(MAKE) undeploy 2>/dev/null || echo "Operator not deployed or already removed"; \
+		echo "Deleting cluster..."; \
+		$(MAKE) kind-delete; \
+	else \
+		echo "⚠️  KIND cluster not found or not active"; \
+	fi
+	@echo "✅ Teardown complete"
+
+.PHONY: sample-deploy
+sample-deploy: ## Deploy sample applications to test the operator
+	@./dev/nic-dev samples:deploy
+
+.PHONY: sample-deploy-auth
+sample-deploy-auth: ## Deploy sample application with authentication enabled
+	@./dev/nic-dev samples:deploy-auth
+
+.PHONY: sample-undeploy
+sample-undeploy: ## Remove sample applications
+	@./dev/nic-dev samples:delete
+
+.PHONY: playground-status
+playground-status: ## Check the status of playground components
+	@echo "🔍 Checking playground status..."
+	@echo ""
+	@echo "📦 Foundational Services:"
+	@echo "  Envoy Gateway:"
+	@kubectl get pods -n envoy-gateway-system 2>/dev/null || echo "    ❌ Not installed"
+	@echo "  cert-manager:"
+	@kubectl get pods -n cert-manager 2>/dev/null || echo "    ❌ Not installed"
+	@echo "  Keycloak:"
+	@kubectl get pods -n keycloak 2>/dev/null || echo "    ❌ Not installed"
+	@echo ""
+	@echo "🌐 Gateways:"
+	@kubectl get gateway -n envoy-gateway-system 2>/dev/null || echo "  ❌ No gateways found"
+	@echo ""
+	@echo "📜 Certificates:"
+	@kubectl get certificate -A 2>/dev/null || echo "  ❌ No certificates found"
+
+.PHONY: kind-load
+kind-load: docker-build ## Build and load the operator image into KIND cluster
+	@echo "📦 Loading image $(IMG) into KIND cluster $(CLUSTER_NAME)..."
+	$(KIND) load docker-image $(IMG) --name $(CLUSTER_NAME)
+	@echo "✅ Image loaded successfully"
+
+.PHONY: deploy-dev
+deploy-dev: kind-load install deploy ## Build, load image, install CRDs, and deploy operator to KIND cluster
+	@echo "✅ Operator deployed to KIND cluster"
+	@echo ""
+	@echo "Check status with:"
+	@echo "  kubectl get pods -n nic-operator-system"
+	@echo "  kubectl logs -n nic-operator-system deployment/nic-operator-controller-manager -f"
+
+##@ Code Generation
+
 .PHONY: manifests
 manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
 	"$(CONTROLLER_GEN)" rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases
 
 .PHONY: generate
 generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
-	"$(CONTROLLER_GEN)" object:headerFile="hack/boilerplate.go.txt" paths="./..."
+	"$(CONTROLLER_GEN)" object:headerFile="dev/boilerplate.go.txt" paths="./..."
 
 .PHONY: fmt
 fmt: ## Run go fmt against code.

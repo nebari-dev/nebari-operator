@@ -1,0 +1,27 @@
+# Sample NicApp Custom Resource for nginx-demo
+# This demonstrates how apps declare their onboarding intent
+apiVersion: apps.nic.nebari.dev/v1
+kind: NicApp
+metadata:
+  name: nginx-demo
+  namespace: demo-app
+spec:
+  hostname: nginx-demo.nic.local
+  service:
+    name: nginx-demo
+    port: 80
+  # Optional: Define specific path routes. If omitted, all traffic to the hostname is routed.
+  # routes:
+  # - pathPrefix: /
+  #   pathType: PathPrefix
+  tls:
+    enabled: true
+    mode: wildcard
+  auth:
+    enabled: false  # Authentication is opt-in, not required by default
+                    # See nginx-demo-with-auth.yaml for authentication example
+                    # See AUTHENTICATION.md for detailed configuration options
+  gateway: public
+
+# Note: The operator automatically creates the HTTPRoute based on this NicApp spec.
+# No need to manually create HTTPRoute resources.

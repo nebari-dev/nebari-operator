@@ -1,0 +1,39 @@
+apiVersion: apps.nic.nebari.dev/v1
+kind: NicApp
+metadata:
+  name: nginx-demo
+  namespace: demo-app
+  labels:
+    app.kubernetes.io/name: nginx-demo
+    app.kubernetes.io/instance: nginx-demo-sample
+    app.kubernetes.io/part-of: nic-operator
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/created-by: nic-operator
+spec:
+  # The hostname where the application will be accessible
+  hostname: nginx-demo.nic.local
+
+  # Reference to the Kubernetes Service
+  service:
+    name: nginx-demo
+    port: 80
+
+  # TLS configuration (optional, defaults shown)
+  tls:
+    enabled: true
+    mode: wildcard  # Use shared wildcard certificate
+
+  # Authentication configuration (optional)
+  auth:
+    enabled: false  # Disable auth for this simple demo
+    # To enable auth:
+    # enabled: true
+    # provider: keycloak
+    # scopes:
+    #   - openid
+    #   - profile
+    #   - email
+    # provisionClient: true
+
+  # Gateway selection (optional, defaults to "public")
+  gateway: public
