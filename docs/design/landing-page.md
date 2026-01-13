@@ -3,7 +3,7 @@
 **Status:** Draft
 **Author:** [Author Name]
 **Created:** 2026-01-12
-**Last Updated:** 2026-01-12
+**Last Updated:** 2026-01-13
 
 ## Table of Contents
 
@@ -94,7 +94,8 @@ Users need a single entry point to:
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
 | Deployment Model | Separate from operator | Independent scaling, clearer separation of concerns, can restart without affecting operator |
-| Frontend Stack | React SPA with TypeScript | Rich interactivity, type safety, large ecosystem, team familiarity |
+| Frontend Stack | React 19 SPA with TypeScript | Rich interactivity, type safety, large ecosystem |
+| UI Components | react-uswds (USWDS 3.0) | Section 508 accessibility, consistent design, pre-built accessible components |
 | Real-time Updates | WebSocket | Low latency updates without polling, efficient for multiple clients |
 | Health Checks | Server-side | Centralized checking avoids CORS issues, reduces client load |
 | Data Source | Watch NicApp CRs | Native Kubernetes pattern, no additional data store needed |
@@ -262,11 +263,17 @@ internal/landingpage/
 **Location:** `web/`
 
 **Tech Stack:**
-- React 18 with TypeScript
+- React 19 with TypeScript
 - Vite for build tooling
-- TailwindCSS for styling
+- [react-uswds](https://github.com/trussworks/react-uswds) (USWDS 3.0 components) for UI components and styling
 - React Query (TanStack Query) for data fetching and caching
 - Native WebSocket API for real-time updates
+
+**Why USWDS:**
+- Section 508 accessibility compliance built-in
+- Consistent, professional design system
+- Pre-built accessible components (Card, Grid, Search, Tag, Alert)
+- Well-maintained React implementation by Trussworks
 
 **Component Hierarchy:**
 
@@ -686,7 +693,6 @@ nic-operator/
 ├── web/
 │   ├── package.json
 │   ├── vite.config.ts
-│   ├── tailwind.config.js
 │   ├── src/
 │   │   ├── main.tsx
 │   │   ├── App.tsx
@@ -714,5 +720,10 @@ nic-operator/
 
 - [nic-operator README](../../README.md)
 - [Kubernetes Operator Pattern](https://kubernetes.io/docs/concepts/extend-kubernetes/operator/)
+- [React 19 Documentation](https://react.dev/)
+- [react-uswds (Trussworks)](https://github.com/trussworks/react-uswds)
+- [react-uswds Storybook](https://trussworks.github.io/react-uswds/)
+- [USWDS Design System](https://designsystem.digital.gov/)
+- [USWDS Components](https://designsystem.digital.gov/components/overview/)
 - [React Query Documentation](https://tanstack.com/query/latest)
 - [Vite Documentation](https://vitejs.dev/)
