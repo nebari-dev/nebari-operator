@@ -251,6 +251,48 @@ internal/landingpage/
     └── hub.go          # WebSocket connection management, broadcasting
 ```
 
+**Kubernetes Informer Pattern:**
+
+The API server uses the standard client-go informer pattern for data synchronization:
+
+1. **On Startup (LIST):** The informer performs a LIST operation to fetch all existing `NicApp` resources across all namespaces, populating the in-memory cache with services that have `landingPage.enabled: true`.
+
+2. **Ongoing (WATCH):** After the initial list, the informer establishes a persistent WATCH connection to the Kubernetes API server, receiving real-time events for any `NicApp` changes.
+
+3. **Event Handling:** The watcher processes three event types:
+   - `ADDED` - New NicApp created; add to cache if landing page enabled
+   - `MODIFIED` - NicApp updated; update cache entry or add/remove based on enabled flag
+   - `DELETED` - NicApp removed; remove from cache
+
+```go
+// Simplified informer setup
+informer := cache.NewSharedIndexInformer(
+    &cache.ListWatch{
+        ListFunc: func(opts metav1.ListOptions) (runtime.Object, error) {
+            return client.NicApps("").List(ctx, opts)  // LIST all namespaces
+        },
+        WatchFunc: func(opts metav1.ListOptions) (watch.Interface, error) {
+            return client.NicApps("").Watch(ctx, opts)  // WATCH all namespaces
+        },
+    },
+    &v1alpha1.NicApp{},
+    resyncPeriod,
+    cache.Indexers{},
+)
+
+informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+    AddFunc:    s.onNicAppAdded,
+    UpdateFunc: s.onNicAppUpdated,
+    DeleteFunc: s.onNicAppDeleted,
+})
+```
+
+This pattern provides:
+- **Consistency:** The informer handles reconnection and resyncs automatically
+- **Efficiency:** Only deltas are transmitted after the initial list
+- **Reliability:** Built-in retry logic and exponential backoff
+- **No Polling:** The server reacts to events rather than polling the API
+
 **Health Check Implementation:**
 
 - Health checks run in a dedicated goroutine pool
