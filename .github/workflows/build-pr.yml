@@ -201,16 +201,6 @@ jobs:
           echo "tag=$TAG_NAME" >> $GITHUB_OUTPUT
           echo "Branch: $BRANCH_NAME -> Tag: $TAG_NAME"
 
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=ref,event=pr
-            type=raw,value=${{ steps.branch.outputs.tag }}
-            type=sha,prefix=${{ steps.branch.outputs.tag }}-
-
       - name: Build and push Docker image
         if: steps.login.outcome == 'success'
         uses: docker/build-push-action@v6
@@ -218,8 +208,7 @@ jobs:
           context: .
           platforms: ${{ matrix.platform }}
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.branch.outputs.tag }}
           cache-from: type=gha,scope=${{ matrix.platform }}
           cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
           provenance: false
@@ -231,8 +220,7 @@ jobs:
           context: .
           platforms: ${{ matrix.platform }}
           push: false
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.branch.outputs.tag }}
           cache-from: type=gha,scope=${{ matrix.platform }}
           cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
           provenance: false
@@ -243,18 +231,18 @@ jobs:
         with:
           script: |
             const branchTag = '${{ steps.branch.outputs.tag }}';
-            const images = `${{ steps.meta.outputs.tags }}`.split('\n');
+            const imageName = '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:' + branchTag;
 
-            const comment = `### 🐳 Docker Images Built
+            const comment = `### 🐳 Docker Image Built
 
-            The following images have been built and pushed to Quay.io:
+            Image pushed to Quay.io for branch \`${branchTag}\`:
 
-            ${images.map(img => `- \`${img}\``).join('\n')}
+            - \`${imageName}\` (linux/amd64 + linux/arm64)
 
             You can test this PR by deploying:
             \`\`\`bash
             kubectl apply -f https://raw.githubusercontent.com/${{ github.repository }}/${{ github.head_ref || github.ref_name }}/config/default/
-            kubectl set image deployment/nebari-operator-controller-manager manager=${images[0]} -n nebari-operator-system
+            kubectl set image deployment/nebari-operator-controller-manager manager=${imageName} -n nebari-operator-system
             \`\`\`
             `;
 
@@ -271,7 +259,5 @@ jobs:
           echo "### Build Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Branch**: ${{ steps.branch.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Tags**: " >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "**Image**: \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.branch.outputs.tag }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Platforms**: linux/amd64, linux/arm64" >> $GITHUB_STEP_SUMMARY
