@@ -51,7 +51,13 @@ var _ = Describe("NebariApp Controller", func() {
 						Name:      resourceName,
 						Namespace: "default",
 					},
-					// TODO(user): Specify other spec details if needed.
+					Spec: reconcilersv1.NebariAppSpec{
+						Hostname: "test-app.nebari.local",
+						Service: reconcilersv1.ServiceReference{
+							Name: "test-service",
+							Port: 8080,
+						},
+					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 			}

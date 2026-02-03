@@ -36,6 +36,8 @@ bin
 
 # Release artifacts
 dist/
+# But keep the helm chart in git
+!dist/chart/
 Dockerfile.cross
 
 #
