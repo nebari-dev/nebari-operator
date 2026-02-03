@@ -197,7 +197,7 @@ make build-installer IMG=quay.io/nebari/nebari-operator:v1.0.0
 
 **Output**: `dist/install.yaml`
 
-**Used in CI**: 
+**Used in CI**:
 - ✅ Release workflow
 - ✅ Generates installer with version-specific image tag
 
