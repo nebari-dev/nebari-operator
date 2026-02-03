@@ -114,6 +114,8 @@ jobs:
       - name: Running Test e2e
         env:
           DOCKER_BUILD_SKIP: "true"
+          KIND_CLUSTER_SKIP: "true"
+          KIND_CLUSTER: "test-cluster"
         run: |
           go mod tidy
           make test-e2e
@@ -152,7 +154,7 @@ jobs:
         run: |
           go mod tidy
           make docker-build IMG=nebari-operator:v0.1.0
-          kind load docker-image nebari-operator:v0.1.0
+          kind load docker-image nebari-operator:v0.1.0 --name test-cluster
 
       - name: Install Helm chart for project
         run: |
