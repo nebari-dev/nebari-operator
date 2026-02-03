@@ -163,13 +163,19 @@ func CreateKindCluster() error {
 			dockerOutput, dockerErr := Run(dockerCheckCmd)
 
 			if dockerErr == nil && strings.TrimSpace(dockerOutput) == "true" {
-				_, _ = fmt.Fprintf(GinkgoWriter, "Kind cluster %q is healthy with %d node(s) running, skipping creation\n", cluster, len(nodeLines))
+				_, _ = fmt.Fprintf(GinkgoWriter,
+					"Kind cluster %q is healthy with %d node(s) running, skipping creation\n",
+					cluster, len(nodeLines))
 				return nil
 			}
 
-			_, _ = fmt.Fprintf(GinkgoWriter, "Kind cluster %q has node metadata but Docker container is not running, deleting...\n", cluster)
+			_, _ = fmt.Fprintf(GinkgoWriter,
+				"Kind cluster %q has node metadata but Docker container is not running, deleting...\n",
+				cluster)
 		} else {
-			_, _ = fmt.Fprintf(GinkgoWriter, "Kind cluster %q is unhealthy (no nodes found), deleting and recreating...\n", cluster)
+			_, _ = fmt.Fprintf(GinkgoWriter,
+				"Kind cluster %q is unhealthy (no nodes found), deleting and recreating...\n",
+				cluster)
 		}
 
 		// Cluster exists but is unhealthy, delete it
@@ -249,7 +255,9 @@ func LoadImageToKindClusterWithName(name string) error {
 	}
 
 	if strings.TrimSpace(dockerOutput) != "true" {
-		return fmt.Errorf("node %q Docker container exists but is not running (state: %s)", nodeName, strings.TrimSpace(dockerOutput))
+		return fmt.Errorf(
+			"node %q Docker container exists but is not running (state: %s)",
+			nodeName, strings.TrimSpace(dockerOutput))
 	}
 
 	_, _ = fmt.Fprintf(GinkgoWriter, "Cluster has %d healthy node(s), loading image %s...\n", len(nodeLines), name)
