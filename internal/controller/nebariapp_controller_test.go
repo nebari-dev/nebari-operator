@@ -27,7 +27,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	reconcilersv1 "github.com/nebari-dev/nic-operator/api/v1"
+	reconcilersv1 "github.com/nebari-dev/nebari-operator/api/v1"
 )
 
 var _ = Describe("NebariApp Controller", func() {

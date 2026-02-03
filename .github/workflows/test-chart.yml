@@ -29,11 +29,11 @@ jobs:
       - name: Create kind cluster
         run: kind create cluster
 
-      - name: Prepare nic-operator
+      - name: Prepare nebari-operator
         run: |
           go mod tidy
-          make docker-build IMG=nic-operator:v0.1.0
-          kind load docker-image nic-operator:v0.1.0
+          make docker-build IMG=nebari-operator:v0.1.0
+          kind load docker-image nebari-operator:v0.1.0
 
       - name: Install Helm
         run: |
@@ -66,8 +66,8 @@ jobs:
 
       - name: Install Helm chart for project
         run: |
-          helm install my-release ./dist/chart --create-namespace --namespace nic-operator-system
+          helm install my-release ./dist/chart --create-namespace --namespace nebari-operator-system
 
       - name: Check Helm release status
         run: |
-          helm status my-release --namespace nic-operator-system
+          helm status my-release --namespace nebari-operator-system

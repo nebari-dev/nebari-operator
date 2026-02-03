@@ -145,7 +145,7 @@ jobs:
             You can test this PR by deploying:
             \`\`\`bash
             kubectl apply -f https://raw.githubusercontent.com/${{ github.repository }}/${{ github.head_ref || github.ref_name }}/config/default/
-            kubectl set image deployment/nic-operator-controller-manager manager=${images[0]} -n nic-operator-system
+            kubectl set image deployment/nebari-operator-controller-manager manager=${images[0]} -n nebari-operator-system
             \`\`\`
             `;
 

@@ -2,7 +2,7 @@ apiVersion: reconcilers.nebari.dev/v1
 kind: NebariApp
 metadata:
   labels:
-    app.kubernetes.io/name: nic-operator
+    app.kubernetes.io/name: nebari-operator
     app.kubernetes.io/managed-by: kustomize
   name: nebariapp-sample
 spec:

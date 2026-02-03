@@ -32,7 +32,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	reconcilersv1 "github.com/nebari-dev/nic-operator/api/v1"
+	reconcilersv1 "github.com/nebari-dev/nebari-operator/api/v1"
 	// +kubebuilder:scaffold:imports
 )
 

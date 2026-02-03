@@ -35,8 +35,8 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	appsv1 "github.com/nebari-dev/nic-operator/api/v1"
-	"github.com/nebari-dev/nic-operator/internal/controller"
+	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
+	"github.com/nebari-dev/nebari-operator/internal/controller"
 	// +kubebuilder:scaffold:imports
 )
 

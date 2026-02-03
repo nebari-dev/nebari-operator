@@ -24,7 +24,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	reconcilersv1 "github.com/nebari-dev/nic-operator/api/v1"
+	reconcilersv1 "github.com/nebari-dev/nebari-operator/api/v1"
 )
 
 // NebariAppReconciler reconciles a NebariApp object

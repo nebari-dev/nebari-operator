@@ -31,9 +31,9 @@ builds:
         goarch: arm64
     ldflags:
       - -s -w
-      - -X github.com/nebari-dev/nic-operator/internal/version.Version={{.Version}}
-      - -X github.com/nebari-dev/nic-operator/internal/version.Commit={{.Commit}}
-      - -X github.com/nebari-dev/nic-operator/internal/version.Date={{.Date}}
+      - -X github.com/nebari-dev/nebari-operator/internal/version.Version={{.Version}}
+      - -X github.com/nebari-dev/nebari-operator/internal/version.Commit={{.Commit}}
+      - -X github.com/nebari-dev/nebari-operator/internal/version.Date={{.Date}}
     flags:
       - -trimpath
 
@@ -96,7 +96,7 @@ changelog:
 release:
   github:
     owner: nebari-dev
-    name: nic-operator
+    name: nebari-operator
   draft: false
   prerelease: auto
   mode: append
@@ -110,7 +110,7 @@ release:
     To install the operator in your cluster:
 
     ```bash
-    kubectl apply -f https://github.com/nebari-dev/nic-operator/releases/download/{{ .Tag }}/install.yaml
+    kubectl apply -f https://github.com/nebari-dev/nebari-operator/releases/download/{{ .Tag }}/install.yaml
     ```
 
     ### Docker Image
@@ -123,12 +123,12 @@ release:
   footer: |
     ---
 
-    **Full Changelog**: https://github.com/nebari-dev/nic-operator/compare/{{ .PreviousTag }}...{{ .Tag }}
+    **Full Changelog**: https://github.com/nebari-dev/nebari-operator/compare/{{ .PreviousTag }}...{{ .Tag }}
 
     ## What's Next?
 
-    - Check out the [documentation](https://github.com/nebari-dev/nic-operator/tree/{{ .Tag }}/docs) for configuration options
-    - Report issues at https://github.com/nebari-dev/nic-operator/issues
+    - Check out the [documentation](https://github.com/nebari-dev/nebari-operator/tree/{{ .Tag }}/docs) for configuration options
+    - Report issues at https://github.com/nebari-dev/nebari-operator/issues
 
   extra_files:
     - glob: dist/install.yaml

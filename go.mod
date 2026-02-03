@@ -1,4 +1,4 @@
-module github.com/nebari-dev/nic-operator
+module github.com/nebari-dev/nebari-operator
 
 go 1.24.6
 

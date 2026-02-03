@@ -10,8 +10,8 @@ plugins:
   helm.kubebuilder.io/v2-alpha:
     manifests: dist/install.yaml
     output: dist
-projectName: nic-operator
-repo: github.com/nebari-dev/nic-operator
+projectName: nebari-operator
+repo: github.com/nebari-dev/nebari-operator
 resources:
 - api:
     crdVersion: v1
@@ -20,6 +20,6 @@ resources:
   domain: nebari.dev
   group: reconcilers
   kind: NebariApp
-  path: github.com/nebari-dev/nic-operator/api/v1
+  path: github.com/nebari-dev/nebari-operator/api/v1
   version: v1
 version: "3"
