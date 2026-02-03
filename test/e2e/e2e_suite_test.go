@@ -36,11 +36,13 @@ var (
 	// Optional Environment Variables:
 	// - CERT_MANAGER_INSTALL_SKIP=true: Skips CertManager installation during test setup.
 	// - KIND_CLUSTER_SKIP=true: Skips Kind cluster creation/deletion during test setup.
+	// - DOCKER_BUILD_SKIP=true: Skips Docker image build during test setup (assumes image is pre-built).
 	// These variables are useful if CertManager or Kind cluster are already set up, avoiding
 	// re-installation and conflicts.
-	skipCertManagerInstall = os.Getenv("CERT_MANAGER_INSTALL_SKIP") == "true"
+	skipCertManagerInstall    = os.Getenv("CERT_MANAGER_INSTALL_SKIP") == "true"
 	skipKindClusterManagement = os.Getenv("KIND_CLUSTER_SKIP") == "true"
-	
+	skipDockerBuild           = os.Getenv("DOCKER_BUILD_SKIP") == "true"
+
 	// isCertManagerAlreadyInstalled will be set true when CertManager CRDs be found on the cluster
 	isCertManagerAlreadyInstalled = false
 	// isKindClusterCreated will be set true when we create a new Kind cluster
@@ -72,27 +74,30 @@ var _ = BeforeSuite(func() {
 		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to create Kind cluster")
 	}
 
-	By("building the manager(Operator) image")
-	cmd := exec.Command("make", "docker-build", fmt.Sprintf("IMG=%s", projectImage))
-	_, err := utils.Run(cmd)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the manager(Operator) image")
+	// Build Docker image if not skipped
+	if !skipDockerBuild {
+		By("building the manager(Operator) image")
+		cmd := exec.Command("make", "docker-build", fmt.Sprintf("IMG=%s", projectImage))
+		_, err := utils.Run(cmd)
+		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the manager(Operator) image")
+	}
 
 	// TODO(user): If you want to change the e2e test vendor from Kind, ensure the image is
 	// built and available before running the tests. Also, remove the following block.
 	By("loading the manager(Operator) image on Kind")
-	err = utils.LoadImageToKindClusterWithName(projectImage)
-	
+	err := utils.LoadImageToKindClusterWithName(projectImage)
+
 	// If loading fails due to unhealthy cluster, try recreating it once
 	if err != nil && !skipKindClusterManagement && strings.Contains(err.Error(), "has no nodes") {
 		_, _ = fmt.Fprintf(GinkgoWriter, "Cluster became unhealthy, recreating...\n")
 		_ = utils.DeleteKindCluster()
 		err = utils.CreateKindCluster()
 		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to recreate Kind cluster")
-		
+
 		// Try loading image again
 		err = utils.LoadImageToKindClusterWithName(projectImage)
 	}
-	
+
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the manager(Operator) image into Kind")
 
 	// The tests-e2e are intended to run on a temporary cluster that is created and destroyed for testing.
