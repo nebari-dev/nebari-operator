@@ -5,4 +5,4 @@ kind: Kustomization
 images:
 - name: controller
   newName: quay.io/nebari/nebari-operator
-  newTag: 2026.2.1
+  newTag: v0.0.1
