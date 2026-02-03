@@ -34,5 +34,9 @@ go.work.sum
 # Go build files
 bin
 
+# Release artifacts
+dist/
+Dockerfile.cross
+
 #
 .DS_Store
