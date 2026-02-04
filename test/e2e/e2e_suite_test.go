@@ -82,7 +82,9 @@ var _ = BeforeSuite(func() {
 		cmd := exec.Command("make", "docker-build", fmt.Sprintf("IMG=%s", projectImage))
 		_, err := utils.Run(cmd)
 		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the manager(Operator) image")
-	}Load image to Kind if not skipped
+	}
+
+	// Load image to Kind if not skipped
 	if !skipImageLoad {
 		// TODO(user): If you want to change the e2e test vendor from Kind, ensure the image is
 		// built and available before running the tests. Also, remove the following block.
@@ -102,8 +104,6 @@ var _ = BeforeSuite(func() {
 
 		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the manager(Operator) image into Kind")
 	}
-
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the manager(Operator) image into Kind")
 
 	// The tests-e2e are intended to run on a temporary cluster that is created and destroyed for testing.
 	// To prevent errors when tests run in environments with CertManager already installed,
