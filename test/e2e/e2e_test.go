@@ -2,7 +2,7 @@
 // +build e2e
 
 /*
-Copyright 2025.
+Copyright 2026, OpenTeams.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -30,20 +30,20 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/nebari-dev/nic-operator/test/utils"
+	"github.com/nebari-dev/nebari-operator/test/utils"
 )
 
 // namespace where the project is deployed in
-const namespace = "nic-operator-system"
+const namespace = "nebari-operator-system"
 
 // serviceAccountName created for the project
-const serviceAccountName = "nic-operator-controller-manager"
+const serviceAccountName = "nebari-operator-controller-manager"
 
 // metricsServiceName is the name of the metrics service of the project
-const metricsServiceName = "nic-operator-controller-manager-metrics-service"
+const metricsServiceName = "nebari-operator-controller-manager-metrics-service"
 
 // metricsRoleBindingName is the name of the RBAC that will be created to allow get the metrics data
-const metricsRoleBindingName = "nic-operator-metrics-binding"
+const metricsRoleBindingName = "nebari-operator-metrics-binding"
 
 var _ = Describe("Manager", Ordered, func() {
 	var controllerPodName string
@@ -176,7 +176,7 @@ var _ = Describe("Manager", Ordered, func() {
 		It("should ensure the metrics endpoint is serving metrics", func() {
 			By("creating a ClusterRoleBinding for the service account to allow access to metrics")
 			cmd := exec.Command("kubectl", "create", "clusterrolebinding", metricsRoleBindingName,
-				"--clusterrole=nic-operator-metrics-reader",
+				"--clusterrole=nebari-operator-metrics-reader",
 				fmt.Sprintf("--serviceaccount=%s:%s", namespace, serviceAccountName),
 			)
 			_, err := utils.Run(cmd)

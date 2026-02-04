@@ -1,0 +1,139 @@
+# GoReleaser configuration for NIC Operator
+# Documentation: https://goreleaser.com
+
+version: 2
+
+before:
+  hooks:
+    # Ensure dependencies are up to date
+    - go mod tidy
+    # Generate code
+    - make generate
+    # Generate manifests
+    - make manifests
+
+builds:
+  - id: manager
+    main: ./cmd/main.go
+    binary: manager
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    # Ignore windows/arm64 combination as it's not commonly used
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w
+      - -X github.com/nebari-dev/nebari-operator/internal/version.Version={{.Version}}
+      - -X github.com/nebari-dev/nebari-operator/internal/version.Commit={{.Commit}}
+      - -X github.com/nebari-dev/nebari-operator/internal/version.Date={{.Date}}
+    flags:
+      - -trimpath
+
+archives:
+  - id: default
+    format: tar.gz
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - LICENSE
+      - README.md
+      - docs/**/*
+
+checksum:
+  name_template: 'checksums.txt'
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^ci:'
+      - '^chore:'
+      - Merge pull request
+      - Merge branch
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 0
+    - title: 'Bug Fixes'
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: 'Performance Improvements'
+      regexp: '^.*?perf(\([[:word:]]+\))??!?:.+$'
+      order: 2
+    - title: 'Refactors'
+      regexp: '^.*?refactor(\([[:word:]]+\))??!?:.+$'
+      order: 3
+    - title: 'Dependencies'
+      regexp: '^.*?(build|deps)(\([[:word:]]+\))??!?:.+$'
+      order: 4
+    - title: Others
+      order: 999
+
+release:
+  github:
+    owner: nebari-dev
+    name: nebari-operator
+  draft: false
+  prerelease: auto
+  mode: append
+  header: |
+    ## NIC Operator {{ .Tag }}
+
+    This release includes the NIC Operator binaries and Kubernetes manifests.
+
+    ### Installation
+
+    To install the operator in your cluster:
+
+    ```bash
+    kubectl apply -f https://github.com/nebari-dev/nebari-operator/releases/download/{{ .Tag }}/install.yaml
+    ```
+
+    ### Docker Image
+
+    The operator image is available at:
+    ```
+    quay.io/nebari/nebari-operator:{{ .Tag }}
+    ```
+
+  footer: |
+    ---
+
+    **Full Changelog**: https://github.com/nebari-dev/nebari-operator/compare/{{ .PreviousTag }}...{{ .Tag }}
+
+    ## What's Next?
+
+    - Check out the [documentation](https://github.com/nebari-dev/nebari-operator/tree/{{ .Tag }}/docs) for configuration options
+    - Report issues at https://github.com/nebari-dev/nebari-operator/issues
+
+  extra_files:
+    - glob: dist/install.yaml
+      name_template: install.yaml
+
+# Announcements (optional)
+announce:
+  skip: '{{ gt .Patch 0 }}'  # Only announce major and minor releases

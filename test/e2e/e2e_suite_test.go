@@ -2,7 +2,7 @@
 // +build e2e
 
 /*
-Copyright 2025.
+Copyright 2026, OpenTeams.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -23,26 +23,36 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/nebari-dev/nic-operator/test/utils"
+	"github.com/nebari-dev/nebari-operator/test/utils"
 )
 
 var (
 	// Optional Environment Variables:
 	// - CERT_MANAGER_INSTALL_SKIP=true: Skips CertManager installation during test setup.
-	// These variables are useful if CertManager is already installed, avoiding
+	// - KIND_CLUSTER_SKIP=true: Skips Kind cluster creation/deletion during test setup.
+	// - DOCKER_BUILD_SKIP=true: Skips Docker image build during test setup (assumes image is pre-built).
+	// - IMAGE_LOAD_SKIP=true: Skips loading Docker image to Kind (for pre-deployed operators).
+	// These variables are useful if CertManager or Kind cluster are already set up, avoiding
 	// re-installation and conflicts.
-	skipCertManagerInstall = os.Getenv("CERT_MANAGER_INSTALL_SKIP") == "true"
+	skipCertManagerInstall    = os.Getenv("CERT_MANAGER_INSTALL_SKIP") == "true"
+	skipKindClusterManagement = os.Getenv("KIND_CLUSTER_SKIP") == "true"
+	skipDockerBuild           = os.Getenv("DOCKER_BUILD_SKIP") == "true"
+	skipImageLoad             = os.Getenv("IMAGE_LOAD_SKIP") == "true"
+
 	// isCertManagerAlreadyInstalled will be set true when CertManager CRDs be found on the cluster
 	isCertManagerAlreadyInstalled = false
+	// isKindClusterCreated will be set true when we create a new Kind cluster
+	isKindClusterCreated = false
 
 	// projectImage is the name of the image which will be build and loaded
 	// with the code source changes to be tested.
-	projectImage = "example.com/nic-operator:v0.0.1"
+	projectImage = "quay.io/nebari/nebari-operator:v0.0.1"
 )
 
 // TestE2E runs the end-to-end (e2e) test suite for the project. These tests execute in an isolated,
@@ -51,21 +61,49 @@ var (
 // CertManager.
 func TestE2E(t *testing.T) {
 	RegisterFailHandler(Fail)
-	_, _ = fmt.Fprintf(GinkgoWriter, "Starting nic-operator integration test suite\n")
+	_, _ = fmt.Fprintf(GinkgoWriter, "Starting nebari-operator integration test suite\n")
 	RunSpecs(t, "e2e suite")
 }
 
 var _ = BeforeSuite(func() {
-	By("building the manager(Operator) image")
-	cmd := exec.Command("make", "docker-build", fmt.Sprintf("IMG=%s", projectImage))
-	_, err := utils.Run(cmd)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the manager(Operator) image")
+	// Create Kind cluster if not skipped
+	if !skipKindClusterManagement {
+		By("creating kind cluster")
+		err := utils.CreateKindCluster()
+		if err == nil {
+			isKindClusterCreated = true
+		}
+		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to create Kind cluster")
+	}
 
-	// TODO(user): If you want to change the e2e test vendor from Kind, ensure the image is
-	// built and available before running the tests. Also, remove the following block.
-	By("loading the manager(Operator) image on Kind")
-	err = utils.LoadImageToKindClusterWithName(projectImage)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the manager(Operator) image into Kind")
+	// Build Docker image if not skipped
+	if !skipDockerBuild {
+		By("building the manager(Operator) image")
+		cmd := exec.Command("make", "docker-build", fmt.Sprintf("IMG=%s", projectImage))
+		_, err := utils.Run(cmd)
+		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the manager(Operator) image")
+	}
+
+	// Load image to Kind if not skipped
+	if !skipImageLoad {
+		// TODO(user): If you want to change the e2e test vendor from Kind, ensure the image is
+		// built and available before running the tests. Also, remove the following block.
+		By("loading the manager(Operator) image on Kind")
+		err := utils.LoadImageToKindClusterWithName(projectImage)
+
+		// If loading fails due to unhealthy cluster, try recreating it once
+		if err != nil && !skipKindClusterManagement && strings.Contains(err.Error(), "has no nodes") {
+			_, _ = fmt.Fprintf(GinkgoWriter, "Cluster became unhealthy, recreating...\n")
+			_ = utils.DeleteKindCluster()
+			err = utils.CreateKindCluster()
+			ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to recreate Kind cluster")
+
+			// Try loading image again
+			err = utils.LoadImageToKindClusterWithName(projectImage)
+		}
+
+		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the manager(Operator) image into Kind")
+	}
 
 	// The tests-e2e are intended to run on a temporary cluster that is created and destroyed for testing.
 	// To prevent errors when tests run in environments with CertManager already installed,
@@ -89,4 +127,16 @@ var _ = AfterSuite(func() {
 		_, _ = fmt.Fprintf(GinkgoWriter, "Uninstalling CertManager...\n")
 		utils.UninstallCertManager()
 	}
+
+	// Delete Kind cluster if we created it
+	if !skipKindClusterManagement && isKindClusterCreated {
+		By("deleting kind cluster")
+		if err := utils.DeleteKindCluster(); err != nil {
+			warnError(err)
+		}
+	}
 })
+
+func warnError(err error) {
+	_, _ = fmt.Fprintf(GinkgoWriter, "warning: %v\n", err)
+}
