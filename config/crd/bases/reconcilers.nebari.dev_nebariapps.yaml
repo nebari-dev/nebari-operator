@@ -301,6 +301,12 @@ spec:
                   Hostname is the actual hostname where the application is accessible.
                   This mirrors the spec.hostname for easy reference.
                 type: string
+              observedGeneration:
+                description: |-
+                  ObservedGeneration is the most recent generation observed for this NebariApp.
+                  It corresponds to the NebariApp's generation, which is updated on mutation by the API Server.
+                format: int64
+                type: integer
             type: object
         required:
         - spec

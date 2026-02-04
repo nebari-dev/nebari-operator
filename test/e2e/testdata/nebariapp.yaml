@@ -1,0 +1,10 @@
+apiVersion: reconcilers.nebari.dev/v1
+kind: NebariApp
+metadata:
+  name: NAME_PLACEHOLDER
+  namespace: NAMESPACE_PLACEHOLDER
+spec:
+  hostname: test-app.example.com
+  service:
+    name: test-app
+    port: 80

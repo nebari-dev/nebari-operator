@@ -282,6 +282,29 @@ func GetNonEmptyLines(output string) []string {
 	return res
 }
 
+// LoadTestDataFile reads a YAML file from the testdata directory and replaces placeholders.
+// The replacements map contains key-value pairs where keys are placeholders to be replaced
+// with their corresponding values.
+func LoadTestDataFile(filename string, replacements map[string]string) (string, error) {
+	projectDir, err := GetProjectDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to get project directory: %w", err)
+	}
+
+	filePath := fmt.Sprintf("%s/test/e2e/testdata/%s", projectDir, filename)
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read file %s: %w", filePath, err)
+	}
+
+	result := string(content)
+	for placeholder, value := range replacements {
+		result = strings.ReplaceAll(result, placeholder, value)
+	}
+
+	return result, nil
+}
+
 // GetProjectDir will return the directory where the project is
 func GetProjectDir() (string, error) {
 	wd, err := os.Getwd()

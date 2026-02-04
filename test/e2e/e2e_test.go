@@ -25,6 +25,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -265,18 +266,82 @@ var _ = Describe("Manager", Ordered, func() {
 			}
 			Eventually(verifyMetricsAvailable, 2*time.Minute).Should(Succeed())
 		})
-
 		// +kubebuilder:scaffold:e2e-webhooks-checks
+	})
 
-		// TODO: Customize the e2e test suite with scenarios specific to your project.
-		// Consider applying sample/CR(s) and check their status and/or verifying
-		// the reconciliation by using the metrics, i.e.:
-		// metricsOutput, err := getMetricsOutput()
-		// Expect(err).NotTo(HaveOccurred(), "Failed to retrieve logs from curl pod")
-		// Expect(metricsOutput).To(ContainSubstring(
-		//    fmt.Sprintf(`controller_runtime_reconcile_total{controller="%s",result="success"} 1`,
-		//    strings.ToLower(<Kind>),
-		// ))
+	Context("NebariApp Reconciliation", func() {
+		var testNamespace string
+
+		BeforeAll(func() {
+			testNamespace = "e2e-test-app"
+
+			By("cleaning up any existing test resources")
+			cmd := exec.Command("kubectl", "delete", "namespace", testNamespace, "--ignore-not-found", "--timeout=60s")
+			_, _ = utils.Run(cmd)
+			cmd = exec.Command("kubectl", "delete", "gateway", "test-gateway", "-n", "default", "--ignore-not-found")
+			_, _ = utils.Run(cmd)
+
+			By("creating test namespace")
+			cmd = exec.Command("kubectl", "create", "namespace", testNamespace)
+			_, err := utils.Run(cmd)
+			By("labeling namespace for Operator management")
+			cmd = exec.Command("kubectl", "label", "namespace", testNamespace, "nebari.dev/managed=true")
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to label namespace")
+
+			By("creating a test application deployment")
+			appYAML, err := utils.LoadTestDataFile("test-app.yaml", map[string]string{
+				"NAMESPACE_PLACEHOLDER": testNamespace,
+			})
+			Expect(err).NotTo(HaveOccurred(), "Failed to load test-app.yaml")
+
+			cmd = exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(appYAML)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create test application")
+
+			By("waiting for test application to be ready")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "deployment", "test-app", "-n", testNamespace,
+					"-o", "jsonpath={.status.availableReplicas}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("1"))
+			}, 2*time.Minute, time.Second).Should(Succeed())
+		})
+
+		AfterAll(func() {
+			By("cleaning up test resources")
+			cmd := exec.Command("kubectl", "delete", "namespace", testNamespace, "--ignore-not-found")
+			_, _ = utils.Run(cmd)
+
+			cmd = exec.Command("kubectl", "delete", "gateway", "test-gateway", "-n", "default", "--ignore-not-found")
+			_, _ = utils.Run(cmd)
+		})
+
+		It("should reconcile a NebariApp resource successfully", func() {
+			By("creating a NebariApp resource")
+			nebariAppYAML, err := utils.LoadTestDataFile("nebariapp.yaml", map[string]string{
+				"NAMESPACE_PLACEHOLDER": testNamespace,
+				"NAME_PLACEHOLDER":      "test-nebariapp",
+			})
+			Expect(err).NotTo(HaveOccurred(), "Failed to load nebariapp.yaml")
+
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(nebariAppYAML)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create NebariApp resource")
+
+			By("verifying that the NebariApp resource is reconciled")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "nebariapp", "test-nebariapp",
+					"-n", testNamespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("True"), "NebariApp not ready")
+			}, 3*time.Minute, 5*time.Second).Should(Succeed())
+		})
 	})
 })
 
