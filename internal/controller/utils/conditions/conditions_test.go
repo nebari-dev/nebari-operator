@@ -70,7 +70,7 @@ func TestGetCondition(t *testing.T) {
 
 	cond := GetCondition(nebariApp, "Ready")
 	if cond == nil {
-		t.Error("expected to find condition, got nil")
+		t.Fatal("expected to find condition, got nil")
 	}
 	if cond.Type != "Ready" {
 		t.Errorf("expected type 'Ready', got '%s'", cond.Type)
