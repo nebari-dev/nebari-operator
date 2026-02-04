@@ -24,7 +24,7 @@ env:
 
 jobs:
   lint:
-    name: Lint & Unit Tests
+    name: Lint and Validate
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
