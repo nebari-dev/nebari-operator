@@ -99,30 +99,57 @@ jobs:
         with:
           cluster_name: test-cluster
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Cache Docker layers
-        uses: actions/cache@v4
-        with:
-          path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-buildx-e2e-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-buildx-e2e-
-
-      - name: Build Docker image with cache
+      - name: Build operator binary
         run: |
-          docker buildx build \
-            --cache-from=type=local,src=/tmp/.buildx-cache \
-            --cache-to=type=local,dest=/tmp/.buildx-cache-new,mode=max \
-            --load \
-            -t quay.io/nebari/nebari-operator:v0.0.1 \
-            .
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/manager cmd/main.go
+          chmod +x bin/manager
 
-      - name: Move cache
+      - name: Copy binary to Kind node
         run: |
-          rm -rf /tmp/.buildx-cache
-          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+          # Get the Kind node container name
+          NODE_NAME=$(kind get nodes --name test-cluster | head -1)
+          # Copy binary to the node
+          docker cp bin/manager ${NODE_NAME}:/usr/local/bin/manager
+
+      - name: Create deployment with hostPath
+        run: |
+          kubectl create namespace nebari-operator-system || true
+          cat <<EOF | kubectl apply -f -
+          apiVersion: v1
+          kind: ServiceAccount
+          metadata:
+            name: nebari-operator-controller-manager
+            namespace: nebari-operator-system
+          ---
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: nebari-operator-controller-manager
+            namespace: nebari-operator-system
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                control-plane: controller-manager
+            template:
+              metadata:
+                labels:
+                  control-plane: controller-manager
+              spec:
+                serviceAccountName: nebari-operator-controller-manager
+                containers:
+                - name: manager
+                  image: alpine:latest
+                  command:
+                  - /usr/local/bin/manager
+                  args:
+                  - --leader-elect
+                  securityContext:
+                    allowPrivilegeEscalation: false
+                    capabilities:
+                      drop:
+                      - ALL
+          EOF
 
       - name: Running Test e2e
         env:
