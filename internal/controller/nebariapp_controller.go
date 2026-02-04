@@ -18,46 +18,112 @@ package controller
 
 import (
 	"context"
+	"time"
 
+	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/client-go/tools/record"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	reconcilersv1 "github.com/nebari-dev/nebari-operator/api/v1"
+	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
+	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/core"
+	"github.com/nebari-dev/nebari-operator/internal/controller/utils/conditions"
 )
 
 // NebariAppReconciler reconciles a NebariApp object
 type NebariAppReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme         *runtime.Scheme
+	Recorder       record.EventRecorder
+	CoreReconciler *core.CoreReconciler
 }
 
 // +kubebuilder:rbac:groups=reconcilers.nebari.dev,resources=nebariapps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=reconcilers.nebari.dev,resources=nebariapps/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=reconcilers.nebari.dev,resources=nebariapps/finalizers,verbs=update
+// +kubebuilder:rbac:groups=core,resources=namespaces,verbs=get;list;watch
+// +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch
+// +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the NebariApp object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.22.4/pkg/reconcile
 func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = logf.FromContext(ctx)
+	logger := logf.FromContext(ctx)
 
-	// TODO(user): your logic here
+	logger.Info("Reconciling NebariApp", "name", req.Name, "namespace", req.Namespace)
 
-	return ctrl.Result{}, nil
+	// Fetch the NebariApp instance
+	nebariApp := &appsv1.NebariApp{}
+	if err := r.Get(ctx, req.NamespacedName, nebariApp); err != nil {
+		if errors.IsNotFound(err) {
+			// Request object not found, could have been deleted after reconcile request.
+			// Owned objects are automatically garbage collected. For additional cleanup logic use finalizers.
+			logger.Info("NebariApp resource not found. Ignoring since object must be deleted")
+			return ctrl.Result{}, nil
+		}
+		logger.Error(err, "Failed to get NebariApp")
+		return ctrl.Result{}, err
+	}
+
+	// Initialize core reconciler
+	if r.CoreReconciler == nil {
+		r.CoreReconciler = &core.CoreReconciler{
+			Client:   r.Client,
+			Scheme:   r.Scheme,
+			Recorder: r.Recorder,
+		}
+	}
+
+	// Initialize status if needed
+	if nebariApp.Status.ObservedGeneration == 0 {
+		nebariApp.Status.ObservedGeneration = nebariApp.Generation
+		nebariApp.Status.Hostname = nebariApp.Spec.Hostname
+	}
+
+	// Set initial reconciling status
+	conditions.SetCondition(nebariApp, appsv1.ConditionTypeReady, metav1.ConditionUnknown,
+		appsv1.ReasonReconciling, "Reconciliation in progress")
+
+	// Validate namespace opt-in and NebariApp spec
+	if err := r.CoreReconciler.ValidateSpec(ctx, nebariApp); err != nil {
+		logger.Error(err, "Core validation failed")
+		if err := r.Status().Update(ctx, nebariApp); err != nil {
+			return ctrl.Result{}, err
+		}
+		// Requeue after a longer delay for validation failures
+		return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
+	}
+
+	// Validation succeeded, set Ready condition to True
+	conditions.SetCondition(nebariApp, appsv1.ConditionTypeReady, metav1.ConditionTrue,
+		appsv1.ReasonReconcileSuccess, "NebariApp reconciled successfully")
+
+	// Update observed generation
+	nebariApp.Status.ObservedGeneration = nebariApp.Generation
+
+	// Update status
+	if err := r.Status().Update(ctx, nebariApp); err != nil {
+		logger.Error(err, "Failed to update NebariApp status")
+		return ctrl.Result{}, err
+	}
+
+	logger.Info("Successfully reconciled NebariApp")
+	// Requeue after 1 minute for now (until full implementation)
+	return ctrl.Result{RequeueAfter: time.Minute}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *NebariAppReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	// Initialize the event recorder
+	r.Recorder = mgr.GetEventRecorderFor("nebariapp-controller")
+
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&reconcilersv1.NebariApp{}).
+		For(&appsv1.NebariApp{}).
 		Named("nebariapp").
 		Complete(r)
 }
