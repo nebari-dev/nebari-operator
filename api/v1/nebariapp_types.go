@@ -181,6 +181,11 @@ type NebariAppStatus struct {
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
+	// ObservedGeneration is the most recent generation observed for this NebariApp.
+	// It corresponds to the NebariApp's generation, which is updated on mutation by the API Server.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
 	// Hostname is the actual hostname where the application is accessible.
 	// This mirrors the spec.hostname for easy reference.
 	// +optional
@@ -241,6 +246,9 @@ const (
 	// ReasonAvailable indicates the resource is functioning correctly
 	ReasonAvailable = "Available"
 
+	// ReasonReconcileSuccess indicates successful reconciliation
+	ReasonReconcileSuccess = "ReconcileSuccess"
+
 	// ReasonFailed indicates reconciliation failed
 	ReasonFailed = "Failed"
 
@@ -258,6 +266,57 @@ const (
 
 	// ReasonCertificateNotReady indicates the cert-manager Certificate is not ready
 	ReasonCertificateNotReady = "CertificateNotReady"
+)
+
+// Event reasons for recording Kubernetes events
+const (
+	// EventReasonValidationFailed is used when validation fails
+	EventReasonValidationFailed = "ValidationFailed"
+
+	// EventReasonValidationSuccess is used when validation succeeds
+	EventReasonValidationSuccess = "ValidationSuccess"
+
+	// EventReasonNamespaceNotOptIn is used when namespace is not opted-in
+	EventReasonNamespaceNotOptIn = "NamespaceNotOptedIn"
+
+	// EventReasonServiceNotFound is used when referenced service doesn't exist
+	EventReasonServiceNotFound = "ServiceNotFound"
+
+	// EventReasonHTTPRouteCreated is used when HTTPRoute is created
+	EventReasonHTTPRouteCreated = "HTTPRouteCreated"
+
+	// EventReasonHTTPRouteUpdated is used when HTTPRoute is updated
+	EventReasonHTTPRouteUpdated = "HTTPRouteUpdated"
+
+	// EventReasonHTTPRouteDeleted is used when HTTPRoute is deleted
+	EventReasonHTTPRouteDeleted = "HTTPRouteDeleted"
+
+	// EventReasonGatewayNotFound is used when target gateway doesn't exist
+	EventReasonGatewayNotFound = "GatewayNotFound"
+
+	// EventReasonTLSConfigured is used when TLS is successfully configured
+	EventReasonTLSConfigured = "TLSConfigured"
+
+	// EventReasonTLSFailed is used when TLS configuration fails
+	EventReasonTLSFailed = "TLSFailed"
+
+	// EventReasonAuthConfigured is used when auth is successfully configured
+	EventReasonAuthConfigured = "AuthConfigured"
+
+	// EventReasonAuthFailed is used when auth configuration fails
+	EventReasonAuthFailed = "AuthFailed"
+
+	// EventReasonClientProvisioned is used when OIDC client is provisioned
+	EventReasonClientProvisioned = "ClientProvisioned"
+
+	// EventReasonClientProvisionFailed is used when OIDC client provisioning fails
+	EventReasonClientProvisionFailed = "ClientProvisionFailed"
+
+	// EventReasonSecurityPolicyCreated is used when SecurityPolicy is created
+	EventReasonSecurityPolicyCreated = "SecurityPolicyCreated"
+
+	// EventReasonSecurityPolicyUpdated is used when SecurityPolicy is updated
+	EventReasonSecurityPolicyUpdated = "SecurityPolicyUpdated"
 )
 
 // +kubebuilder:object:root=true
