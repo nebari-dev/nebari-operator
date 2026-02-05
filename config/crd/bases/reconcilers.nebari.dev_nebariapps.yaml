@@ -55,7 +55,7 @@ spec:
                       The secret must be in the same namespace as the NebariApp and contain:
                         - client-id: The OIDC client ID
                         - client-secret: The OIDC client secret
-                      If not specified and Keycloak provisioning is enabled, the operator will create
+                      If not specified and ProvisionClient is enabled, the operator will create
                       a secret named "<nebariapp-name>-oidc-client".
                     type: string
                   enabled:
@@ -64,25 +64,50 @@ spec:
                       Enabled determines whether authentication should be enforced for this application.
                       When true, users must authenticate via OIDC before accessing the application.
                     type: boolean
+                  groups:
+                    description: |-
+                      Groups specifies the list of groups that should have access to this application.
+                      When specified, only users belonging to these groups will be authorized.
+                      Group matching is case-sensitive and depends on the OIDC provider's group claim.
+                    items:
+                      type: string
+                    type: array
+                  issuerURL:
+                    description: |-
+                      IssuerURL specifies the OIDC issuer URL for generic-oidc provider.
+                      Required when provider="generic-oidc", ignored for other providers.
+                      Example: https://accounts.google.com, https://login.microsoftonline.com/<tenant>/v2.0
+                    type: string
                   provider:
                     default: keycloak
                     description: |-
-                      Provider specifies the authentication provider to use.
-                      Currently only "keycloak" is supported.
+                      Provider specifies the OIDC authentication provider to use.
+                      Supported values: keycloak, generic-oidc
                     enum:
                     - keycloak
+                    - generic-oidc
                     type: string
                   provisionClient:
                     default: true
                     description: |-
                       ProvisionClient determines whether the operator should automatically provision
-                      an OIDC client in Keycloak. When true, the operator will create a Keycloak client
-                      and store the credentials in a Secret.
+                      an OIDC client in the provider. When true, the operator will create a client
+                      (e.g., in Keycloak) and store the credentials in a Secret.
+                      Only supported for provider="keycloak".
+                      Defaults to true if not specified.
                     type: boolean
+                  redirectURI:
+                    description: |-
+                      RedirectURI specifies the OAuth2 callback path for the application.
+                      If not specified, defaults to "/oauth2/callback" which is the Envoy Gateway default.
+                      For application-level auth handling, specify the app's callback path (e.g., "/auth/callback").
+                      The full redirect URL will be: https://<hostname><redirectURI>
+                    type: string
                   scopes:
                     description: |-
                       Scopes defines the OIDC scopes to request during authentication.
-                      Common scopes: openid, profile, email, roles
+                      Common scopes: openid, profile, email, roles, groups
+                      If not specified, defaults to: ["openid", "profile", "email"]
                     items:
                       type: string
                     type: array

@@ -52,6 +52,34 @@ const (
 	ClientSecretSuffix = "oidc-client"
 )
 
+// Auth/OIDC provider constants
+const (
+	// ProviderKeycloak identifies the Keycloak OIDC provider
+	ProviderKeycloak = "keycloak"
+
+	// ProviderGenericOIDC identifies a generic OIDC provider
+	ProviderGenericOIDC = "generic-oidc"
+
+	// DefaultOAuthCallbackPath is the default OAuth2 callback path used by Envoy Gateway
+	DefaultOAuthCallbackPath = "/oauth2/callback"
+
+	// DefaultLogoutPath is the default logout path
+	DefaultLogoutPath = "/logout"
+
+	// DefaultKeycloakNamespace is the namespace where Keycloak is deployed
+	DefaultKeycloakNamespace = "keycloak"
+
+	// DefaultKeycloakServiceName is the service name for Keycloak
+	// This matches the service created by codecentric/keycloakx Helm chart
+	DefaultKeycloakServiceName = "keycloak-keycloakx-http"
+
+	// DefaultKeycloakServicePort is the HTTP port for Keycloak service
+	DefaultKeycloakServicePort = 80
+
+	// DefaultKeycloakContextPath is the HTTP context path for Keycloak
+	DefaultKeycloakContextPath = "/auth"
+)
+
 // Secret keys
 const (
 	// ClientSecretKey is the key name for OIDC client secret data

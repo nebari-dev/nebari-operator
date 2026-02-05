@@ -4,10 +4,11 @@ import (
 	"fmt"
 
 	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
+	"github.com/nebari-dev/nebari-operator/internal/controller/utils/constants"
 )
 
 // ResourceName generates a consistent resource name for NebariApp-owned resources.
-// Pattern: <nicapp-name>-<resource-type>
+// Pattern: <nebariapp-name>-<resource-type>
 //
 // Examples:
 //   - ResourceName(nebariApp, "route") -> "my-app-route"
@@ -18,13 +19,26 @@ func ResourceName(nebariApp *appsv1.NebariApp, resourceType string) string {
 }
 
 // SecurityPolicyName generates the name for a SecurityPolicy.
-// Pattern: <nicapp-name>-security
+// Pattern: <nebariapp-name>-security
 func SecurityPolicyName(nebariApp *appsv1.NebariApp) string {
-	return ResourceName(nebariApp, "security")
+	return ResourceName(nebariApp, constants.SecurityPolicySuffix)
 }
 
 // HTTPRouteName generates the name for an HTTPRoute.
-// Pattern: <nicapp-name>-route
+// Pattern: <nebariapp-name>-route
 func HTTPRouteName(nebariApp *appsv1.NebariApp) string {
-	return ResourceName(nebariApp, "route")
+	return ResourceName(nebariApp, constants.HTTPRouteSuffix)
+}
+
+// ClientSecretName generates the name for the OIDC client secret.
+// Pattern: <nebariapp-name>-oidc-client
+func ClientSecretName(nebariApp *appsv1.NebariApp) string {
+	return ResourceName(nebariApp, constants.ClientSecretSuffix)
+}
+
+// ClientID generates the OIDC client ID for a NebariApp.
+// Pattern: <namespace>-<nebariapp-name>
+// This ensures uniqueness across namespaces.
+func ClientID(nebariApp *appsv1.NebariApp) string {
+	return fmt.Sprintf("%s-%s", nebariApp.Namespace, nebariApp.Name)
 }

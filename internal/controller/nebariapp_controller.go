@@ -34,6 +34,7 @@ import (
 	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
+	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/auth"
 	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/core"
 	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/routing"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/conditions"
@@ -47,6 +48,7 @@ type NebariAppReconciler struct {
 	Recorder          record.EventRecorder
 	CoreReconciler    *core.CoreReconciler
 	RoutingReconciler *routing.RoutingReconciler
+	AuthReconciler    *auth.AuthReconciler
 }
 
 // +kubebuilder:rbac:groups=reconcilers.nebari.dev,resources=nebariapps,verbs=get;list;watch;create;update;patch;delete
@@ -98,6 +100,9 @@ func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			Recorder: r.Recorder,
 		}
 	}
+
+	// Note: AuthReconciler should be initialized in main.go with providers configured
+	// Do not lazy-initialize here as it would create an empty Providers map
 
 	// Handle finalizer
 	if nebariApp.DeletionTimestamp.IsZero() {
@@ -167,6 +172,18 @@ func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		logger.Info("Routing not configured, skipping HTTPRoute reconciliation", "nebariapp", nebariApp.Name)
 	}
 
+	// Reconcile authentication (SecurityPolicy creation/update) if auth is configured
+	if err := r.AuthReconciler.ReconcileAuth(ctx, nebariApp); err != nil {
+		logger.Error(err, "Auth reconciliation failed")
+		conditions.SetCondition(nebariApp, appsv1.ConditionTypeReady, metav1.ConditionFalse,
+			appsv1.ReasonFailed, fmt.Sprintf("Auth reconciliation failed: %v", err))
+		if err := r.Status().Update(ctx, nebariApp); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: time.Minute}, nil
+	}
+	logger.Info("Auth reconciled successfully", "nebariapp", nebariApp.Name)
+
 	// Validation succeeded, set Ready condition to True
 	conditions.SetCondition(nebariApp, appsv1.ConditionTypeReady, metav1.ConditionTrue,
 		appsv1.ReasonReconcileSuccess, "NebariApp reconciled successfully")
@@ -195,6 +212,14 @@ func (r *NebariAppReconciler) cleanup(ctx context.Context, nebariApp *appsv1.Neb
 	if r.RoutingReconciler != nil {
 		if err := r.RoutingReconciler.CleanupHTTPRoute(ctx, nebariApp); err != nil {
 			logger.Error(err, "Failed to delete HTTPRoute")
+			return err
+		}
+	}
+
+	// Cleanup authentication resources (delete OIDC client if provisioned)
+	if r.AuthReconciler != nil {
+		if err := r.AuthReconciler.CleanupAuth(ctx, nebariApp); err != nil {
+			logger.Error(err, "Failed to cleanup auth resources")
 			return err
 		}
 	}

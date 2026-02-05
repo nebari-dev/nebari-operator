@@ -66,6 +66,26 @@ spec:
         image: controller:latest
         imagePullPolicy: Never
         name: manager
+        env:
+          # Keycloak OIDC Provider Configuration
+          - name: KEYCLOAK_ENABLED
+            value: "true"
+          - name: KEYCLOAK_URL
+            value: "http://keycloak-keycloakx-http.keycloak.svc.cluster.local/auth"
+          - name: KEYCLOAK_REALM
+            value: "nebari"
+          - name: KEYCLOAK_ADMIN_SECRET_NAME
+            value: "nebari-realm-admin-credentials"
+          - name: KEYCLOAK_ADMIN_SECRET_NAMESPACE
+            value: "keycloak"
+          # Alternative: Use direct credentials (not recommended for production)
+          # - name: KEYCLOAK_ADMIN_USERNAME
+          #   value: "admin"
+          # - name: KEYCLOAK_ADMIN_PASSWORD
+          #   valueFrom:
+          #     secretKeyRef:
+          #       name: keycloak-admin-credentials
+          #       key: admin-password
         ports: []
         securityContext:
           readOnlyRootFilesystem: true

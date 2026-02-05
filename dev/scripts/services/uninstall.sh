@@ -36,6 +36,13 @@ kubectl delete certificate nebari-gateway-cert -n envoy-gateway-system --ignore-
 
 log_success "Gateway resources deleted"
 
+# Uninstall Keycloak
+log_info "Uninstalling Keycloak..."
+helm uninstall keycloak -n keycloak 2>/dev/null || true
+kubectl delete namespace keycloak --ignore-not-found --timeout=60s
+
+log_success "Keycloak uninstalled"
+
 # Uninstall Envoy Gateway
 log_info "Uninstalling Envoy Gateway..."
 helm uninstall eg -n envoy-gateway-system 2>/dev/null || true

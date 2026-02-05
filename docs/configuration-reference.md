@@ -106,9 +106,12 @@ Configures routing behavior including path-based rules and TLS termination.
 
 **Type:** `array` (optional)
 
-Defines path-based routing rules for the application. If not specified, the Gateway API automatically adds a default path match of `"/"` (PathPrefix), which routes all traffic to the hostname to the service. When specified, only traffic matching these path prefixes will be routed.
+Defines path-based routing rules for the application. If not specified, the Gateway API automatically adds a default
+path match of `"/"` (PathPrefix), which routes all traffic to the hostname to the service. When specified, only traffic
+matching these path prefixes will be routed.
 
-**Important:** When no routes are specified, the operator creates an HTTPRoute with an empty matches array, and the Gateway API implementation (Envoy Gateway) automatically adds the default `"/"` path match.
+**Important:** When no routes are specified, the operator creates an HTTPRoute with an empty matches array, and the
+Gateway API implementation (Envoy Gateway) automatically adds the default `"/"` path match.
 
 ##### routing.routes[].pathPrefix
 
@@ -203,12 +206,24 @@ before accessing the application.
 
 **Type:** `string` (optional)
 
-Specifies the authentication provider to use.
+Specifies the OIDC authentication provider to use.
 
 **Valid values:**
-- `keycloak`
+- `keycloak`: Uses Keycloak for authentication with automatic client provisioning
+- `generic-oidc`: Uses any OIDC-compliant provider (Google, Azure AD, Okta, Auth0, etc.)
 
 **Default:** `keycloak`
+
+#### auth.redirectURI
+
+**Type:** `string` (optional)
+
+Specifies the OAuth2 callback path for the application. The full redirect URL will be `https://<hostname><redirectURI>`.
+
+For Envoy Gateway-level authentication (default), use `/oauth2/callback`. For application-level authentication handling,
+specify your app's callback path (e.g., `/auth/callback`).
+
+**Default:** `/oauth2/callback`
 
 #### auth.clientSecretRef
 
@@ -216,10 +231,9 @@ Specifies the authentication provider to use.
 
 References a Kubernetes Secret containing OIDC client credentials. The secret must be in the same namespace as the
 NebariApp and contain:
-- `client-id`: The OIDC client ID
 - `client-secret`: The OIDC client secret
 
-If not specified and Keycloak provisioning is enabled, the operator will create a secret named
+If not specified and `provisionClient` is enabled, the operator will create a secret named
 `<nebariapp-name>-oidc-client`.
 
 #### auth.scopes
@@ -228,20 +242,56 @@ If not specified and Keycloak provisioning is enabled, the operator will create 
 
 Defines the OIDC scopes to request during authentication.
 
-**Common scopes:** `openid`, `profile`, `email`, `roles`
+**Common scopes:** `openid`, `profile`, `email`, `roles`, `groups`
+
+**Default:** `["openid", "profile", "email"]`
+
+#### auth.groups
+
+**Type:** `array of strings` (optional)
+
+Specifies the list of groups that should have access to this application. When specified, only users belonging to these
+groups will be authorized. Group matching is case-sensitive and depends on the OIDC provider's group claim.
+
+**Example:**
+```yaml
+groups:
+  - admin
+  - developers
+  - data-scientists
+```
 
 #### auth.provisionClient
 
 **Type:** `boolean` (optional)
 
-Determines whether the operator should automatically provision an OIDC client in Keycloak. When true, the operator will
-create a Keycloak client and store the credentials in a Secret.
+Determines whether the operator should automatically provision an OIDC client in the provider. When true, the operator
+will create a client (e.g., in Keycloak) and store the credentials in a Secret.
+
+**Supported for:** `keycloak` provider only
 
 **Default:** `true`
 
-**Example:**
+#### auth.issuerURL
+
+**Type:** `string` (required when `provider: generic-oidc`)
+
+Specifies the OIDC issuer URL for generic-oidc provider. This field is required when using `generic-oidc` provider and
+ignored for other providers.
+
+**Examples:**
+- Google: `https://accounts.google.com`
+- Azure AD: `https://login.microsoftonline.com/<tenant-id>/v2.0`
+- Okta: `https://<your-domain>.okta.com`
+- Auth0: `https://<your-domain>.auth0.com`
+
+**Keycloak Authentication Example:**
 ```yaml
 spec:
+  hostname: my-app.example.com
+  service:
+    name: backend
+    port: 8080
   auth:
     enabled: true
     provider: keycloak
@@ -250,6 +300,30 @@ spec:
       - openid
       - profile
       - email
+      - groups
+    groups:
+      - developers
+      - data-scientists
+```
+
+**Generic OIDC Authentication Example (Google):**
+```yaml
+spec:
+  hostname: my-app.example.com
+  service:
+    name: backend
+    port: 8080
+  auth:
+    enabled: true
+    provider: generic-oidc
+    provisionClient: false
+    issuerURL: https://accounts.google.com
+    clientSecretRef: my-app-google-oauth
+    scopes:
+      - openid
+      - profile
+      - email
+    redirectURI: /oauth2/callback
 ```
 
 

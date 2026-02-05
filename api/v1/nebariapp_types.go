@@ -120,33 +120,55 @@ type AuthConfig struct {
 	// +optional
 	Enabled bool `json:"enabled,omitempty"`
 
-	// Provider specifies the authentication provider to use.
-	// Currently only "keycloak" is supported.
-	// +kubebuilder:validation:Enum=keycloak
+	// Provider specifies the OIDC authentication provider to use.
+	// Supported values: keycloak, generic-oidc
+	// +kubebuilder:validation:Enum=keycloak;generic-oidc
 	// +kubebuilder:default=keycloak
 	// +optional
 	Provider string `json:"provider,omitempty"`
+
+	// RedirectURI specifies the OAuth2 callback path for the application.
+	// If not specified, defaults to "/oauth2/callback" which is the Envoy Gateway default.
+	// For application-level auth handling, specify the app's callback path (e.g., "/auth/callback").
+	// The full redirect URL will be: https://<hostname><redirectURI>
+	// +optional
+	RedirectURI string `json:"redirectURI,omitempty"`
 
 	// ClientSecretRef references a Kubernetes Secret containing OIDC client credentials.
 	// The secret must be in the same namespace as the NebariApp and contain:
 	//   - client-id: The OIDC client ID
 	//   - client-secret: The OIDC client secret
-	// If not specified and Keycloak provisioning is enabled, the operator will create
+	// If not specified and ProvisionClient is enabled, the operator will create
 	// a secret named "<nebariapp-name>-oidc-client".
 	// +optional
 	ClientSecretRef *string `json:"clientSecretRef,omitempty"`
 
 	// Scopes defines the OIDC scopes to request during authentication.
-	// Common scopes: openid, profile, email, roles
+	// Common scopes: openid, profile, email, roles, groups
+	// If not specified, defaults to: ["openid", "profile", "email"]
 	// +optional
 	Scopes []string `json:"scopes,omitempty"`
 
+	// Groups specifies the list of groups that should have access to this application.
+	// When specified, only users belonging to these groups will be authorized.
+	// Group matching is case-sensitive and depends on the OIDC provider's group claim.
+	// +optional
+	Groups []string `json:"groups,omitempty"`
+
 	// ProvisionClient determines whether the operator should automatically provision
-	// an OIDC client in Keycloak. When true, the operator will create a Keycloak client
-	// and store the credentials in a Secret.
+	// an OIDC client in the provider. When true, the operator will create a client
+	// (e.g., in Keycloak) and store the credentials in a Secret.
+	// Only supported for provider="keycloak".
+	// Defaults to true if not specified.
 	// +kubebuilder:default=true
 	// +optional
-	ProvisionClient bool `json:"provisionClient,omitempty"`
+	ProvisionClient *bool `json:"provisionClient,omitempty"`
+
+	// IssuerURL specifies the OIDC issuer URL for generic-oidc provider.
+	// Required when provider="generic-oidc", ignored for other providers.
+	// Example: https://accounts.google.com, https://login.microsoftonline.com/<tenant>/v2.0
+	// +optional
+	IssuerURL string `json:"issuerURL,omitempty"`
 }
 
 // NebariAppStatus defines the observed state of NebariApp.

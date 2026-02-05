@@ -160,6 +160,14 @@ jobs:
           make services-install
           cd ..
 
+      - name: Install/Setup Keycloak
+        run: |
+          cd dev
+          ./install-keycloak.sh
+
+          ./setup-keycloak-realm.sh
+          cd ..
+
       - name: Running Test e2e
         env:
           USE_EXISTING_CLUSTER: "true"

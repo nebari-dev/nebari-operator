@@ -267,6 +267,15 @@ else
 fi
 
 # ============================================
+# 8. Keycloak (skipped - install manually if needed)
+# ============================================
+# Keycloak installation has been moved to CI workflows and can be installed
+# manually when needed for local development:
+#   ./dev/install-keycloak.sh
+#   ./dev/setup-keycloak-realm.sh
+echo ""
+
+# ============================================
 # Summary
 # ============================================
 echo ""
@@ -284,6 +293,9 @@ if [ -n "${GATEWAY_IP}" ] && [ "${GATEWAY_IP}" != "pending" ]; then
     echo "  ✅ /etc/hosts configured for nebari.local"
 fi
 echo ""
+echo "📝 Optional (not installed):"
+echo "  ⚪ Keycloak - Run ./dev/install-keycloak.sh if needed for auth testing"
+echo ""
 echo "🌐 Gateway Information:"
 echo "  Name: nebari-gateway"
 echo "  Namespace: envoy-gateway-system"
@@ -297,6 +309,13 @@ echo ""
 echo "📜 TLS Certificate:"
 echo "  Secret: nebari-gateway-tls (namespace: envoy-gateway-system)"
 echo "  DNS Names: *.nebari.local, nebari.local"
+echo ""
+echo "🔐 Keycloak Authentication:"
+echo "  URL: http://keycloak-keycloakx-http.keycloak.svc.cluster.local/auth"
+echo "  Admin credentials: admin/admin"
+echo "  Realm: nebari"
+echo "  Realm admin: admin/nebari-admin"
+echo "  Secret: nebari-realm-admin-credentials (namespace: keycloak)"
 echo ""
 echo "Next steps:"
 echo "  1. Deploy the operator: cd .. && make deploy"
