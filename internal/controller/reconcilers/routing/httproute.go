@@ -166,9 +166,9 @@ func (r *RoutingReconciler) buildHTTPRoute(nebariApp *appsv1.NebariApp, gatewayN
 			Name:      routeName,
 			Namespace: nebariApp.Namespace,
 			Labels: map[string]string{
-				"app.kubernetes.io/name":       "nicapp",
+				"app.kubernetes.io/name":       "nebariapp",
 				"app.kubernetes.io/instance":   nebariApp.Name,
-				"app.kubernetes.io/managed-by": "nic-operator",
+				"app.kubernetes.io/managed-by": "nebari-operator",
 			},
 			Annotations: map[string]string{
 				"nebari.dev/tls-enabled": fmt.Sprintf("%t", tlsEnabled),
