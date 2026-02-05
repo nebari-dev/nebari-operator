@@ -94,6 +94,12 @@ func (r *RoutingReconciler) ReconcileRouting(ctx context.Context, nebariApp *app
 	// Update existing HTTPRoute
 	existingRoute.Spec = desiredRoute.Spec
 	if err := r.Client.Update(ctx, existingRoute); err != nil {
+		// Conflict errors are expected when multiple reconciliations happen concurrently
+		// Return nil to avoid error logging - the controller will naturally retry
+		if errors.IsConflict(err) {
+			logger.V(1).Info("HTTPRoute update conflict, will retry", "name", existingRoute.Name)
+			return nil
+		}
 		logger.Error(err, "Failed to update HTTPRoute")
 		conditions.SetCondition(nebariApp, appsv1.ConditionTypeRoutingReady, metav1.ConditionFalse,
 			"UpdateFailed", fmt.Sprintf("Failed to update HTTPRoute: %v", err))

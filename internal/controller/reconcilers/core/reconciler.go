@@ -62,8 +62,14 @@ func (r *CoreReconciler) ValidateSpec(ctx context.Context, nebariApp *appsv1.Neb
 	}
 
 	logger.Info("Core validation passed", "nebariapp", nebariApp.Name)
-	r.Recorder.Event(nebariApp, corev1.EventTypeNormal, appsv1.EventReasonValidationSuccess,
-		"NebariApp validation completed successfully")
+
+	// Only emit event if condition state is changing (not Ready=True already)
+	currentCondition := conditions.GetCondition(nebariApp, appsv1.ConditionTypeReady)
+	if currentCondition == nil || currentCondition.Status != metav1.ConditionTrue ||
+		currentCondition.Reason != appsv1.ReasonValidationSuccess {
+		r.Recorder.Event(nebariApp, corev1.EventTypeNormal, appsv1.EventReasonValidationSuccess,
+			"NebariApp validation completed successfully")
+	}
 
 	// Set Ready condition to True since core validation passed
 	// Note: This may be overridden by routing reconciliation failures

@@ -36,9 +36,11 @@ var (
 	// - USE_EXISTING_CLUSTER=true: Use existing cluster instead of creating new Kind cluster
 	// - SETUP_INFRASTRUCTURE=true: Run dev/install-services.sh to setup infrastructure
 	// - SKIP_SETUP=true: Skip all setup (cluster and infrastructure), assume everything exists
+	// - SKIP_DOCKER_BUILD=true: Skip docker build, assume image is already built and loaded
 	useExistingCluster  = os.Getenv("USE_EXISTING_CLUSTER") == "true"
 	setupInfrastructure = os.Getenv("SETUP_INFRASTRUCTURE") == "true"
 	skipSetup           = os.Getenv("SKIP_SETUP") == "true"
+	skipDockerBuild     = os.Getenv("SKIP_DOCKER_BUILD") == "true"
 
 	// Internal flags
 	isKindClusterCreated = false
@@ -96,14 +98,18 @@ var _ = BeforeSuite(func() {
 	}
 
 	// Build and load operator image
-	By("building the manager(Operator) image")
-	cmd := exec.Command("make", "docker-build", fmt.Sprintf("IMG=%s", projectImage))
-	_, err := utils.Run(cmd)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the manager(Operator) image")
+	if !skipDockerBuild {
+		By("building the manager(Operator) image")
+		cmd := exec.Command("make", "docker-build", fmt.Sprintf("IMG=%s", projectImage))
+		_, err := utils.Run(cmd)
+		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the manager(Operator) image")
 
-	By("loading the manager(Operator) image on Kind")
-	err = utils.LoadImageToKindClusterWithName(projectImage)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the manager(Operator) image into Kind")
+		By("loading the manager(Operator) image on Kind")
+		err = utils.LoadImageToKindClusterWithName(projectImage)
+		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the manager(Operator) image into Kind")
+	} else {
+		_, _ = fmt.Fprintf(GinkgoWriter, "Skipping docker build, assuming image is already built and loaded\n")
+	}
 })
 
 var _ = AfterSuite(func() {
