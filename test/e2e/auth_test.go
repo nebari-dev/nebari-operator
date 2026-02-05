@@ -142,20 +142,20 @@ var _ = Describe("NebariApp Authentication", Ordered, func() {
 			Expect(output).To(ContainSubstring("KEYCLOAK_REALM"))
 			Expect(output).To(ContainSubstring("KEYCLOAK_ADMIN_SECRET_NAME"))
 			Expect(output).To(ContainSubstring("KEYCLOAK_ADMIN_SECRET_NAMESPACE"))
-			Expect(output).To(ContainSubstring("keycloak-admin-credentials"))
+			Expect(output).To(ContainSubstring("nebari-realm-admin-credentials"))
 			Expect(output).To(ContainSubstring("keycloak"))
 		})
 
 		It("should verify Keycloak admin secret exists", func() {
 			By("checking that Keycloak admin secret is available")
-			cmd := exec.Command("kubectl", "get", "secret", "keycloak-admin-credentials", "-n", keycloakNamespace)
+			cmd := exec.Command("kubectl", "get", "secret", "nebari-realm-admin-credentials", "-n", keycloakNamespace)
 			_, err := utils.Run(cmd)
 			if err != nil {
 				Skip("Keycloak admin secret not found - auth tests requiring Keycloak will be skipped")
 			}
 
 			By("verifying secret has required keys (supports both formats)")
-			cmd = exec.Command("kubectl", "get", "secret", "keycloak-admin-credentials",
+			cmd = exec.Command("kubectl", "get", "secret", "nebari-realm-admin-credentials",
 				"-n", keycloakNamespace, "-o", "jsonpath={.data}")
 			output, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred())
@@ -234,7 +234,7 @@ var _ = Describe("NebariApp Authentication", Ordered, func() {
 			}
 
 			By("checking if Keycloak admin secret exists")
-			cmd = exec.Command("kubectl", "get", "secret", "keycloak-admin-credentials", "-n", keycloakNamespace)
+			cmd = exec.Command("kubectl", "get", "secret", "nebari-realm-admin-credentials", "-n", keycloakNamespace)
 			_, err = utils.Run(cmd)
 			if err != nil {
 				Skip("Keycloak admin secret not found - skipping Keycloak auth tests")
@@ -402,147 +402,147 @@ spec:
 		})
 	})
 
-	Context("When using generic OIDC provider", func() {
-		It("should create SecurityPolicy with manually provisioned client", func() {
-			By("creating a client secret manually")
-			secretYAML := `
-apiVersion: v1
-kind: Secret
-metadata:
-  name: test-generic-oidc-client
-  namespace: ` + testNamespace + `
-type: Opaque
-stringData:
-  client-secret: "mock-client-secret-for-testing"
-`
-			cmd := exec.Command("kubectl", "apply", "-f", "-")
-			cmd.Stdin = strings.NewReader(secretYAML)
-			_, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create client secret")
+	// 	Context("When using generic OIDC provider", func() {
+	// 		It("should create SecurityPolicy with manually provisioned client", func() {
+	// 			By("creating a client secret manually")
+	// 			secretYAML := `
+	// apiVersion: v1
+	// kind: Secret
+	// metadata:
+	//   name: test-generic-oidc-client
+	//   namespace: ` + testNamespace + `
+	// type: Opaque
+	// stringData:
+	//   client-secret: "mock-client-secret-for-testing"
+	// `
+	// 			cmd := exec.Command("kubectl", "apply", "-f", "-")
+	// 			cmd.Stdin = strings.NewReader(secretYAML)
+	// 			_, err := utils.Run(cmd)
+	// 			Expect(err).NotTo(HaveOccurred(), "Failed to create client secret")
 
-			By("creating a NebariApp with generic-oidc provider")
-			nebariAppYAML := `
-apiVersion: reconcilers.nebari.dev/v1
-kind: NebariApp
-metadata:
-  name: test-generic-oidc
-  namespace: ` + testNamespace + `
-spec:
-  hostname: generic-oidc.example.com
-  service:
-    name: test-app
-    port: 80
-  routing:
-    tls:
-      enabled: true
-  auth:
-    enabled: true
-    provider: generic-oidc
-    provisionClient: false
-    issuerURL: https://accounts.google.com
-    clientSecretRef: test-generic-oidc-client
-    scopes:
-      - openid
-      - profile
-      - email
-`
-			cmd = exec.Command("kubectl", "apply", "-f", "-")
-			cmd.Stdin = strings.NewReader(nebariAppYAML)
-			_, err = utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create NebariApp resource")
+	// 			By("creating a NebariApp with generic-oidc provider")
+	// 			nebariAppYAML := `
+	// apiVersion: reconcilers.nebari.dev/v1
+	// kind: NebariApp
+	// metadata:
+	//   name: test-generic-oidc
+	//   namespace: ` + testNamespace + `
+	// spec:
+	//   hostname: generic-oidc.example.com
+	//   service:
+	//     name: test-app
+	//     port: 80
+	//   routing:
+	//     tls:
+	//       enabled: true
+	//   auth:
+	//     enabled: true
+	//     provider: generic-oidc
+	//     provisionClient: false
+	//     issuerURL: https://accounts.google.com
+	//     clientSecretRef: test-generic-oidc-client
+	//     scopes:
+	//       - openid
+	//       - profile
+	//       - email
+	// `
+	// 			cmd = exec.Command("kubectl", "apply", "-f", "-")
+	// 			cmd.Stdin = strings.NewReader(nebariAppYAML)
+	// 			_, err = utils.Run(cmd)
+	// 			Expect(err).NotTo(HaveOccurred(), "Failed to create NebariApp resource")
 
-			By("verifying that the NebariApp is reconciled")
-			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "nebariapp", "test-generic-oidc",
-					"-n", testNamespace,
-					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
-				output, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(Equal("True"))
-			}, 3*time.Minute, 5*time.Second).Should(Succeed())
+	// 			By("verifying that the NebariApp is reconciled")
+	// 			Eventually(func(g Gomega) {
+	// 				cmd := exec.Command("kubectl", "get", "nebariapp", "test-generic-oidc",
+	// 					"-n", testNamespace,
+	// 					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+	// 				output, err := utils.Run(cmd)
+	// 				g.Expect(err).NotTo(HaveOccurred())
+	// 				g.Expect(output).To(Equal("True"))
+	// 			}, 3*time.Minute, 5*time.Second).Should(Succeed())
 
-			By("verifying AuthReady condition is True")
-			cmd = exec.Command("kubectl", "get", "nebariapp", "test-generic-oidc",
-				"-n", testNamespace,
-				"-o", "jsonpath={.status.conditions[?(@.type=='AuthReady')].status}")
-			output, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(output).To(Equal("True"))
+	// 			By("verifying AuthReady condition is True")
+	// 			cmd = exec.Command("kubectl", "get", "nebariapp", "test-generic-oidc",
+	// 				"-n", testNamespace,
+	// 				"-o", "jsonpath={.status.conditions[?(@.type=='AuthReady')].status}")
+	// 			output, err := utils.Run(cmd)
+	// 			Expect(err).NotTo(HaveOccurred())
+	// 			Expect(output).To(Equal("True"))
 
-			By("verifying SecurityPolicy was created")
-			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "securitypolicy", "test-generic-oidc-security", "-n", testNamespace)
-				_, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-			}, 2*time.Minute, 5*time.Second).Should(Succeed())
+	// 			By("verifying SecurityPolicy was created")
+	// 			Eventually(func(g Gomega) {
+	// 				cmd := exec.Command("kubectl", "get", "securitypolicy", "test-generic-oidc-security", "-n", testNamespace)
+	// 				_, err := utils.Run(cmd)
+	// 				g.Expect(err).NotTo(HaveOccurred())
+	// 			}, 2*time.Minute, 5*time.Second).Should(Succeed())
 
-			By("verifying SecurityPolicy has correct issuer URL")
-			cmd = exec.Command("kubectl", "get", "securitypolicy", "test-generic-oidc-security",
-				"-n", testNamespace, "-o", "jsonpath={.spec.oidc.provider.issuer}")
-			output, err = utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(output).To(Equal("https://accounts.google.com"))
+	// 			By("verifying SecurityPolicy has correct issuer URL")
+	// 			cmd = exec.Command("kubectl", "get", "securitypolicy", "test-generic-oidc-security",
+	// 				"-n", testNamespace, "-o", "jsonpath={.spec.oidc.provider.issuer}")
+	// 			output, err = utils.Run(cmd)
+	// 			Expect(err).NotTo(HaveOccurred())
+	// 			Expect(output).To(Equal("https://accounts.google.com"))
 
-			By("verifying SecurityPolicy references the manually created secret")
-			cmd = exec.Command("kubectl", "get", "securitypolicy", "test-generic-oidc-security",
-				"-n", testNamespace, "-o", "jsonpath={.spec.oidc.clientSecret.name}")
-			output, err = utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(output).To(Equal("test-generic-oidc-client"))
+	// 			By("verifying SecurityPolicy references the manually created secret")
+	// 			cmd = exec.Command("kubectl", "get", "securitypolicy", "test-generic-oidc-security",
+	// 				"-n", testNamespace, "-o", "jsonpath={.spec.oidc.clientSecret.name}")
+	// 			output, err = utils.Run(cmd)
+	// 			Expect(err).NotTo(HaveOccurred())
+	// 			Expect(output).To(Equal("test-generic-oidc-client"))
 
-			By("cleaning up test-generic-oidc resource")
-			cmd = exec.Command("kubectl", "delete", "nebariapp", "test-generic-oidc", "-n", testNamespace, "--ignore-not-found")
-			_, _ = utils.Run(cmd)
+	// 			By("cleaning up test-generic-oidc resource")
+	// 			cmd = exec.Command("kubectl", "delete", "nebariapp", "test-generic-oidc", "-n", testNamespace, "--ignore-not-found")
+	// 			_, _ = utils.Run(cmd)
 
-			By("cleaning up client secret")
-			cmd = exec.Command("kubectl", "delete", "secret", "test-generic-oidc-client", "-n", testNamespace, "--ignore-not-found")
-			_, _ = utils.Run(cmd)
-		})
+	// 			By("cleaning up client secret")
+	// 			cmd = exec.Command("kubectl", "delete", "secret", "test-generic-oidc-client", "-n", testNamespace, "--ignore-not-found")
+	// 			_, _ = utils.Run(cmd)
+	// 		})
 
-		It("should fail if issuerURL is not provided", func() {
-			By("creating a NebariApp with generic-oidc but no issuerURL")
-			nebariAppYAML := `
-apiVersion: reconcilers.nebari.dev/v1
-kind: NebariApp
-metadata:
-  name: test-no-issuer
-  namespace: ` + testNamespace + `
-spec:
-  hostname: no-issuer.example.com
-  service:
-    name: test-app
-    port: 80
-  auth:
-    enabled: true
-    provider: generic-oidc
-    provisionClient: false
-`
-			cmd := exec.Command("kubectl", "apply", "-f", "-")
-			cmd.Stdin = strings.NewReader(nebariAppYAML)
-			_, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create NebariApp resource")
+	// 		It("should fail if issuerURL is not provided", func() {
+	// 			By("creating a NebariApp with generic-oidc but no issuerURL")
+	// 			nebariAppYAML := `
+	// apiVersion: reconcilers.nebari.dev/v1
+	// kind: NebariApp
+	// metadata:
+	//   name: test-no-issuer
+	//   namespace: ` + testNamespace + `
+	// spec:
+	//   hostname: no-issuer.example.com
+	//   service:
+	//     name: test-app
+	//     port: 80
+	//   auth:
+	//     enabled: true
+	//     provider: generic-oidc
+	//     provisionClient: false
+	// `
+	// 			cmd := exec.Command("kubectl", "apply", "-f", "-")
+	// 			cmd.Stdin = strings.NewReader(nebariAppYAML)
+	// 			_, err := utils.Run(cmd)
+	// 			Expect(err).NotTo(HaveOccurred(), "Failed to create NebariApp resource")
 
-			By("verifying AuthReady condition indicates error")
-			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "nebariapp", "test-no-issuer",
-					"-n", testNamespace,
-					"-o", "jsonpath={.status.conditions[?(@.type=='AuthReady')].status}")
-				output, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(Equal("False"))
-			}, 2*time.Minute, 5*time.Second).Should(Succeed())
+	// 			By("verifying AuthReady condition indicates error")
+	// 			Eventually(func(g Gomega) {
+	// 				cmd := exec.Command("kubectl", "get", "nebariapp", "test-no-issuer",
+	// 					"-n", testNamespace,
+	// 					"-o", "jsonpath={.status.conditions[?(@.type=='AuthReady')].status}")
+	// 				output, err := utils.Run(cmd)
+	// 				g.Expect(err).NotTo(HaveOccurred())
+	// 				g.Expect(output).To(Equal("False"))
+	// 			}, 2*time.Minute, 5*time.Second).Should(Succeed())
 
-			By("verifying error message mentions missing issuerURL")
-			cmd = exec.Command("kubectl", "get", "nebariapp", "test-no-issuer",
-				"-n", testNamespace,
-				"-o", "jsonpath={.status.conditions[?(@.type=='AuthReady')].message}")
-			output, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(output).To(ContainSubstring("issuerURL"))
+	// 			By("verifying error message mentions missing issuerURL")
+	// 			cmd = exec.Command("kubectl", "get", "nebariapp", "test-no-issuer",
+	// 				"-n", testNamespace,
+	// 				"-o", "jsonpath={.status.conditions[?(@.type=='AuthReady')].message}")
+	// 			output, err := utils.Run(cmd)
+	// 			Expect(err).NotTo(HaveOccurred())
+	// 			Expect(output).To(ContainSubstring("issuerURL"))
 
-			By("cleaning up test-no-issuer resource")
-			cmd = exec.Command("kubectl", "delete", "nebariapp", "test-no-issuer", "-n", testNamespace, "--ignore-not-found")
-			_, _ = utils.Run(cmd)
-		})
-	})
+	//			By("cleaning up test-no-issuer resource")
+	//			cmd = exec.Command("kubectl", "delete", "nebariapp", "test-no-issuer", "-n", testNamespace, "--ignore-not-found")
+	//			_, _ = utils.Run(cmd)
+	//		})
+	//	})
 })

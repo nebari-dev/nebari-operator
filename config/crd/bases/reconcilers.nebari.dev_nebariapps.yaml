@@ -94,6 +94,7 @@ spec:
                       an OIDC client in the provider. When true, the operator will create a client
                       (e.g., in Keycloak) and store the credentials in a Secret.
                       Only supported for provider="keycloak".
+                      Defaults to true if not specified.
                     type: boolean
                   redirectURI:
                     description: |-

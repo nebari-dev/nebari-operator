@@ -39,7 +39,7 @@ func TestLoadAuthConfig(t *testing.T) {
 			expected: AuthConfig{
 				Keycloak: KeycloakConfig{
 					Enabled:              true,
-					URL:                  "http://keycloak.keycloak.svc.cluster.local:8080",
+					URL:                  "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:80/auth",
 					Realm:                "nebari",
 					AdminSecretName:      "nebari-realm-admin-credentials",
 					AdminSecretNamespace: "keycloak",
@@ -74,7 +74,7 @@ func TestLoadAuthConfig(t *testing.T) {
 			expected: AuthConfig{
 				Keycloak: KeycloakConfig{
 					Enabled:              true,
-					URL:                  "http://keycloak.keycloak.svc.cluster.local:8080",
+					URL:                  "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:80/auth",
 					Realm:                "nebari",
 					AdminSecretName:      "nebari-realm-admin-credentials",
 					AdminSecretNamespace: "keycloak",

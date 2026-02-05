@@ -34,6 +34,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
+// boolPtr returns a pointer to a bool value
+func boolPtr(b bool) *bool {
+	return &b
+}
+
 // mockProvider implements OIDCProvider for testing
 type mockProvider struct {
 	issuerURL            string
@@ -491,7 +496,7 @@ func TestReconcileAuth(t *testing.T) {
 					Auth: &appsv1.AuthConfig{
 						Enabled:         true,
 						Provider:        constants.ProviderKeycloak,
-						ProvisionClient: false,
+						ProvisionClient: boolPtr(false),
 					},
 				},
 			},
@@ -523,7 +528,7 @@ func TestReconcileAuth(t *testing.T) {
 					Auth: &appsv1.AuthConfig{
 						Enabled:         true,
 						Provider:        constants.ProviderKeycloak,
-						ProvisionClient: false,
+						ProvisionClient: boolPtr(false),
 					},
 				},
 			},
@@ -622,7 +627,7 @@ func TestCleanupAuth(t *testing.T) {
 					Auth: &appsv1.AuthConfig{
 						Enabled:         true,
 						Provider:        constants.ProviderKeycloak,
-						ProvisionClient: true,
+						ProvisionClient: boolPtr(true),
 					},
 				},
 			},
@@ -643,7 +648,7 @@ func TestCleanupAuth(t *testing.T) {
 					Auth: &appsv1.AuthConfig{
 						Enabled:         true,
 						Provider:        constants.ProviderKeycloak,
-						ProvisionClient: true,
+						ProvisionClient: boolPtr(true),
 					},
 				},
 			},

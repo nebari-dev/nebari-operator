@@ -159,9 +159,10 @@ type AuthConfig struct {
 	// an OIDC client in the provider. When true, the operator will create a client
 	// (e.g., in Keycloak) and store the credentials in a Secret.
 	// Only supported for provider="keycloak".
+	// Defaults to true if not specified.
 	// +kubebuilder:default=true
 	// +optional
-	ProvisionClient bool `json:"provisionClient,omitempty"`
+	ProvisionClient *bool `json:"provisionClient,omitempty"`
 
 	// IssuerURL specifies the OIDC issuer URL for generic-oidc provider.
 	// Required when provider="generic-oidc", ignored for other providers.

@@ -37,10 +37,10 @@ func TestKeycloakProvider_GetIssuerURL(t *testing.T) {
 		{
 			name: "Default configuration",
 			config: KeycloakConfig{
-				URL:   "http://keycloak.keycloak.svc.cluster.local:8080",
+				URL:   "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:80/auth",
 				Realm: "nebari",
 			},
-			expectedURL: "http://keycloak.keycloak.svc.cluster.local:8080/realms/nebari",
+			expectedURL: "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:80/realms/nebari",
 		},
 		{
 			name: "Custom realm",
@@ -49,7 +49,7 @@ func TestKeycloakProvider_GetIssuerURL(t *testing.T) {
 				Realm: "custom-realm",
 			},
 			// Implementation always uses internal cluster URL regardless of config.URL
-			expectedURL: "http://keycloak.keycloak.svc.cluster.local:8080/realms/custom-realm",
+			expectedURL: "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:80/realms/custom-realm",
 		},
 	}
 

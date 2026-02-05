@@ -47,6 +47,15 @@ type AuthReconciler struct {
 	Providers map[string]providers.OIDCProvider // Provider name -> provider implementation
 }
 
+// shouldProvisionClient returns true if the operator should automatically provision an OIDC client.
+// Defaults to true if not explicitly set to false.
+func shouldProvisionClient(auth *appsv1.AuthConfig) bool {
+	if auth == nil || auth.ProvisionClient == nil {
+		return true // default
+	}
+	return *auth.ProvisionClient
+}
+
 // ReconcileAuth handles authentication configuration for a NebariApp.
 // It validates the auth configuration, provisions OIDC clients if needed,
 // and creates/updates Envoy SecurityPolicy resources.
@@ -64,7 +73,7 @@ func (r *AuthReconciler) ReconcileAuth(ctx context.Context, nebariApp *appsv1.Ne
 	logger.Info("Reconciling auth",
 		"provider", nebariApp.Spec.Auth.Provider,
 		"hostname", nebariApp.Spec.Hostname,
-		"provisionClient", nebariApp.Spec.Auth.ProvisionClient)
+		"provisionClient", shouldProvisionClient(nebariApp.Spec.Auth))
 
 	// Get the OIDC provider
 	provider, err := r.getProvider(nebariApp)
@@ -75,7 +84,7 @@ func (r *AuthReconciler) ReconcileAuth(ctx context.Context, nebariApp *appsv1.Ne
 	}
 
 	// Provision OIDC client if requested and supported
-	if nebariApp.Spec.Auth.ProvisionClient {
+	if shouldProvisionClient(nebariApp.Spec.Auth) {
 		if !provider.SupportsProvisioning() {
 			err := fmt.Errorf("provider %s does not support automatic client provisioning", nebariApp.Spec.Auth.Provider)
 			conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionFalse,
@@ -127,7 +136,7 @@ func (r *AuthReconciler) CleanupAuth(ctx context.Context, nebariApp *appsv1.Neba
 	provider, err := r.getProvider(nebariApp)
 	if err != nil {
 		logger.Error(err, "Failed to get provider for cleanup, continuing anyway")
-	} else if nebariApp.Spec.Auth.ProvisionClient && provider.SupportsProvisioning() {
+	} else if shouldProvisionClient(nebariApp.Spec.Auth) && provider.SupportsProvisioning() {
 		// Delete the provisioned client
 		logger.Info("Deleting provisioned OIDC client")
 		if err := provider.DeleteClient(ctx, nebariApp); err != nil {
