@@ -240,58 +240,16 @@ kubectl wait --for=condition=Programmed gateway/nebari-gateway -n envoy-gateway-
     log_warning "Gateway not yet programmed, continuing..."
 
 # ============================================
-# 7. Install Keycloak
+# 7. Keycloak (skipped - install manually if needed)
 # ============================================
-log_info "Installing Keycloak for authentication..."
-
-# Create keycloak namespace
-kubectl create namespace keycloak --dry-run=client -o yaml | kubectl apply -f -
-
-# Add Keycloak Helm repository
-helm repo add codecentric https://codecentric.github.io/helm-charts 2>/dev/null || true
-helm repo update
-
-# Install Keycloak with keycloakx chart
-log_info "Installing Keycloak via Helm (this may take a few minutes)..."
-helm upgrade --install keycloak codecentric/keycloakx \
-    --namespace keycloak \
-    --set replicas=1 \
-    --set image.tag="26.0.7" \
-    --set command[0]="/opt/keycloak/bin/kc.sh" \
-    --set command[1]="start-dev" \
-    --set extraEnv[0].name="KEYCLOAK_ADMIN" \
-    --set extraEnv[0].value="admin" \
-    --set extraEnv[1].name="KEYCLOAK_ADMIN_PASSWORD" \
-    --set extraEnv[1].value="admin" \
-    --set extraEnv[2].name="KC_PROXY_HEADERS" \
-    --set extraEnv[2].value="xforwarded" \
-    --set service.type="ClusterIP" \
-    --set service.httpPort=80 \
-    --set ingress.enabled=false \
-    --wait \
-    --timeout 5m
-
-wait_for_deployment "keycloak" "keycloak-keycloakx"
-
-log_success "Keycloak installed"
+# Keycloak installation has been moved to CI workflows and can be installed
+# manually when needed for local development or auth testing:
+#   cd dev && ./install-keycloak.sh
+#   cd dev && ./setup-keycloak-realm.sh
 echo ""
 
 # ============================================
-# 8. Create Keycloak admin credentials secret
-# ============================================
-log_info "Creating Keycloak admin credentials secret..."
-
-kubectl create secret generic nebari-realm-admin-credentials \
-    --namespace keycloak \
-    --from-literal=username=admin \
-    --from-literal=password=admin \
-    --dry-run=client -o yaml | kubectl apply -f -
-
-log_success "Keycloak admin credentials secret created"
-echo ""
-
-# ============================================
-# 9. Configure /etc/hosts for nebari.local
+# 8. Configure /etc/hosts for nebari.local
 # ============================================
 GATEWAY_IP=$(kubectl get svc -n envoy-gateway-system -l gateway.envoyproxy.io/owning-gateway-name=nebari-gateway -o jsonpath='{.items[0].status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
 
@@ -331,11 +289,12 @@ echo "  ✅ cert-manager (v1.16.2) with Gateway API support"
 echo "  ✅ Self-signed CA ClusterIssuer"
 echo "  ✅ Wildcard certificate (*.nebari.local)"
 echo "  ✅ Shared Gateway (nebari-gateway)"
-echo "  ✅ Keycloak (v26.0.7)"
-echo "  ✅ Keycloak admin credentials (nebari-realm-admin-credentials)"
 if [ -n "${GATEWAY_IP}" ] && [ "${GATEWAY_IP}" != "pending" ]; then
     echo "  ✅ /etc/hosts configured for nebari.local"
 fi
+echo ""
+echo "📝 Optional (not installed):"
+echo "  ⚪ Keycloak - Run ./dev/install-keycloak.sh if needed for auth testing"
 echo ""
 echo "🌐 Gateway Information:"
 echo "  Name: nebari-gateway"
