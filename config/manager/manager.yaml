@@ -75,7 +75,7 @@ spec:
           - name: KEYCLOAK_REALM
             value: "nebari"
           - name: KEYCLOAK_ADMIN_SECRET_NAME
-            value: "keycloak-admin-credentials"
+            value: "nebari-realm-admin-credentials"
           - name: KEYCLOAK_ADMIN_SECRET_NAMESPACE
             value: "keycloak"
           # Alternative: Use direct credentials (not recommended for production)
