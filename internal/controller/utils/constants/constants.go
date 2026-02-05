@@ -17,15 +17,24 @@ limitations under the License.
 package constants
 
 // Gateway configuration constants
+// These match the foundational infrastructure setup via ArgoCD
 const (
 	// PublicGatewayName is the name of the public-facing gateway
-	PublicGatewayName = "nebari-public-gateway"
+	// Corresponds to the nebari-gateway Gateway resource in envoy-gateway-system
+	PublicGatewayName = "nebari-gateway"
 
-	// InternalGatewayName is the name of the internal gateway
+	// InternalGatewayName is the name of the internal gateway (if deployed)
 	InternalGatewayName = "nebari-internal-gateway"
 
 	// GatewayNamespace is the namespace where gateways are deployed
 	GatewayNamespace = "envoy-gateway-system"
+
+	// GatewayClassName is the GatewayClass used by the gateway
+	GatewayClassName = "envoy-gateway"
+
+	// DefaultTLSSecretName is the wildcard certificate used by the gateway
+	// This corresponds to the nebari-gateway-tls secret created by cert-manager
+	DefaultTLSSecretName = "nebari-gateway-tls"
 )
 
 // Resource naming suffixes

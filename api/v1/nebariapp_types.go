@@ -23,7 +23,7 @@ import (
 // NebariAppSpec defines the desired state of NebariApp
 type NebariAppSpec struct {
 	// Hostname is the fully qualified domain name where the application should be accessible.
-	// This will be used to generate HTTPRoute and configure TLS.
+	// This will be used to generate HTTPRoute.
 	// Example: "myapp.nebari.local" or "api.example.com"
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
@@ -34,17 +34,9 @@ type NebariAppSpec struct {
 	// +kubebuilder:validation:Required
 	Service ServiceReference `json:"service"`
 
-	// Routes defines path-based routing rules for the application.
-	// If not specified, all traffic to the hostname will be routed to the service.
-	// When specified, only traffic matching these path prefixes will be routed.
-	// Example: ["/app-1", "/api/v1"]
+	// Routing configures routing behavior including path-based rules and TLS.
 	// +optional
-	Routes []RouteMatch `json:"routes,omitempty"`
-
-	// TLS configures TLS/HTTPS for the application.
-	// If not specified, the application will use the default wildcard certificate.
-	// +optional
-	TLS *TLSConfig `json:"tls,omitempty"`
+	Routing *RoutingConfig `json:"routing,omitempty"`
 
 	// Auth configures authentication/authorization for the application.
 	// When enabled, the application will require OIDC authentication via supporting OIDC Provider.
@@ -73,6 +65,23 @@ type ServiceReference struct {
 	Port int32 `json:"port"`
 }
 
+// RoutingConfig configures routing behavior for the application.
+type RoutingConfig struct {
+	// Routes defines path-based routing rules for the application.
+	// If not specified, all traffic to the hostname will be routed to the service.
+	// When specified, only traffic matching these path prefixes will be routed.
+	// Example: ["/app-1", "/api/v1"]
+	// +optional
+	Routes []RouteMatch `json:"routes,omitempty"`
+
+	// TLS configures TLS termination behavior for the HTTPRoute.
+	// Note: The operator does not manage TLS certificates or Gateway TLS configuration.
+	// cert-manager and envoy-gateway handle certificate provisioning and TLS termination.
+	// This setting only controls whether the HTTPRoute should reference HTTPS listeners.
+	// +optional
+	TLS *RoutingTLSConfig `json:"tls,omitempty"`
+}
+
 // RouteMatch defines a path-based routing rule.
 type RouteMatch struct {
 	// PathPrefix specifies the path prefix to match for routing.
@@ -92,40 +101,15 @@ type RouteMatch struct {
 	PathType string `json:"pathType,omitempty"`
 }
 
-// TLSConfig specifies TLS certificate configuration for the application.
-type TLSConfig struct {
-	// Enabled determines whether TLS should be configured for this application.
-	// When true, the operator will ensure HTTPS is available.
+// RoutingTLSConfig controls TLS termination for the HTTPRoute.
+type RoutingTLSConfig struct {
+	// Enabled determines whether TLS termination should be used.
+	// When nil or true, the HTTPRoute will reference HTTPS listeners on the Gateway.
+	// When explicitly set to false, only HTTP listeners will be used.
+	// Note: The Gateway's TLS certificates are managed by cert-manager, not by this operator.
 	// +kubebuilder:default=true
 	// +optional
-	Enabled bool `json:"enabled,omitempty"`
-
-	// Mode determines how TLS certificates are provisioned.
-	// Valid values:
-	//   - "wildcard" (default): Use the shared wildcard certificate (*.nebari.local)
-	//   - "perHost": Request a dedicated certificate from cert-manager for this hostname
-	// +kubebuilder:validation:Enum=wildcard;perHost
-	// +kubebuilder:default=wildcard
-	// +optional
-	Mode string `json:"mode,omitempty"`
-
-	// IssuerRef specifies the cert-manager Issuer/ClusterIssuer to use when mode is "perHost".
-	// If not specified, uses the default ClusterIssuer "nebari-ca-issuer".
-	// +optional
-	IssuerRef *IssuerReference `json:"issuerRef,omitempty"`
-}
-
-// IssuerReference identifies a cert-manager Issuer or ClusterIssuer.
-type IssuerReference struct {
-	// Name of the Issuer or ClusterIssuer.
-	// +kubebuilder:validation:Required
-	Name string `json:"name"`
-
-	// Kind of the issuer (Issuer or ClusterIssuer).
-	// +kubebuilder:validation:Enum=Issuer;ClusterIssuer
-	// +kubebuilder:default=ClusterIssuer
-	// +optional
-	Kind string `json:"kind,omitempty"`
+	Enabled *bool `json:"enabled,omitempty"`
 }
 
 // AuthConfig specifies authentication/authorization configuration.
@@ -225,9 +209,9 @@ const (
 	// and the Gateway is routing traffic to the application.
 	ConditionTypeRoutingReady = "RoutingReady"
 
-	// ConditionTypeTLSReady indicates that TLS is properly configured.
-	// For wildcard mode, this means the wildcard certificate exists.
-	// For perHost mode, this means the Certificate is Ready.
+	// ConditionTypeTLSReady indicates that TLS termination is functioning.
+	// This verifies that the Gateway's TLS listeners are accessible and working.
+	// Note: TLS certificates are managed by cert-manager, not by this operator.
 	ConditionTypeTLSReady = "TLSReady"
 
 	// ConditionTypeAuthReady indicates that authentication is properly configured.
