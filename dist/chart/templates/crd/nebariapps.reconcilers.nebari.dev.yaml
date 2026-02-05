@@ -55,7 +55,7 @@ spec:
                                             The secret must be in the same namespace as the NebariApp and contain:
                                               - client-id: The OIDC client ID
                                               - client-secret: The OIDC client secret
-                                            If not specified and Keycloak provisioning is enabled, the operator will create
+                                            If not specified and ProvisionClient is enabled, the operator will create
                                             a secret named "<nebariapp-name>-oidc-client".
                                         type: string
                                     enabled:
@@ -64,25 +64,50 @@ spec:
                                             Enabled determines whether authentication should be enforced for this application.
                                             When true, users must authenticate via OIDC before accessing the application.
                                         type: boolean
+                                    groups:
+                                        description: |-
+                                            Groups specifies the list of groups that should have access to this application.
+                                            When specified, only users belonging to these groups will be authorized.
+                                            Group matching is case-sensitive and depends on the OIDC provider's group claim.
+                                        items:
+                                            type: string
+                                        type: array
+                                    issuerURL:
+                                        description: |-
+                                            IssuerURL specifies the OIDC issuer URL for generic-oidc provider.
+                                            Required when provider="generic-oidc", ignored for other providers.
+                                            Example: https://accounts.google.com, https://login.microsoftonline.com/<tenant>/v2.0
+                                        type: string
                                     provider:
                                         default: keycloak
                                         description: |-
-                                            Provider specifies the authentication provider to use.
-                                            Currently only "keycloak" is supported.
+                                            Provider specifies the OIDC authentication provider to use.
+                                            Supported values: keycloak, generic-oidc
                                         enum:
                                             - keycloak
+                                            - generic-oidc
                                         type: string
                                     provisionClient:
                                         default: true
                                         description: |-
                                             ProvisionClient determines whether the operator should automatically provision
-                                            an OIDC client in Keycloak. When true, the operator will create a Keycloak client
-                                            and store the credentials in a Secret.
+                                            an OIDC client in the provider. When true, the operator will create a client
+                                            (e.g., in Keycloak) and store the credentials in a Secret.
+                                            Only supported for provider="keycloak".
+                                            Defaults to true if not specified.
                                         type: boolean
+                                    redirectURI:
+                                        description: |-
+                                            RedirectURI specifies the OAuth2 callback path for the application.
+                                            If not specified, defaults to "/oauth2/callback" which is the Envoy Gateway default.
+                                            For application-level auth handling, specify the app's callback path (e.g., "/auth/callback").
+                                            The full redirect URL will be: https://<hostname><redirectURI>
+                                        type: string
                                     scopes:
                                         description: |-
                                             Scopes defines the OIDC scopes to request during authentication.
-                                            Common scopes: openid, profile, email, roles
+                                            Common scopes: openid, profile, email, roles, groups
+                                            If not specified, defaults to: ["openid", "profile", "email"]
                                         items:
                                             type: string
                                         type: array
@@ -99,42 +124,62 @@ spec:
                             hostname:
                                 description: |-
                                     Hostname is the fully qualified domain name where the application should be accessible.
-                                    This will be used to generate HTTPRoute and configure TLS.
+                                    This will be used to generate HTTPRoute.
                                     Example: "myapp.nebari.local" or "api.example.com"
                                 minLength: 1
                                 pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
                                 type: string
-                            routes:
-                                description: |-
-                                    Routes defines path-based routing rules for the application.
-                                    If not specified, all traffic to the hostname will be routed to the service.
-                                    When specified, only traffic matching these path prefixes will be routed.
-                                    Example: ["/app-1", "/api/v1"]
-                                items:
-                                    description: RouteMatch defines a path-based routing rule.
-                                    properties:
-                                        pathPrefix:
-                                            description: |-
-                                                PathPrefix specifies the path prefix to match for routing.
-                                                Traffic matching this prefix will be routed to the service.
-                                                Must start with "/". Example: "/app-1", "/api/v1"
-                                            pattern: ^/.*
-                                            type: string
-                                        pathType:
-                                            default: PathPrefix
-                                            description: |-
-                                                PathType specifies how the path should be matched.
-                                                Valid values:
-                                                  - "PathPrefix" (default): Match requests with the specified path prefix
-                                                  - "Exact": Match requests with the exact path
-                                            enum:
-                                                - PathPrefix
-                                                - Exact
-                                            type: string
-                                    required:
-                                        - pathPrefix
-                                    type: object
-                                type: array
+                            routing:
+                                description: Routing configures routing behavior including path-based rules and TLS.
+                                properties:
+                                    routes:
+                                        description: |-
+                                            Routes defines path-based routing rules for the application.
+                                            If not specified, all traffic to the hostname will be routed to the service.
+                                            When specified, only traffic matching these path prefixes will be routed.
+                                            Example: ["/app-1", "/api/v1"]
+                                        items:
+                                            description: RouteMatch defines a path-based routing rule.
+                                            properties:
+                                                pathPrefix:
+                                                    description: |-
+                                                        PathPrefix specifies the path prefix to match for routing.
+                                                        Traffic matching this prefix will be routed to the service.
+                                                        Must start with "/". Example: "/app-1", "/api/v1"
+                                                    pattern: ^/.*
+                                                    type: string
+                                                pathType:
+                                                    default: PathPrefix
+                                                    description: |-
+                                                        PathType specifies how the path should be matched.
+                                                        Valid values:
+                                                          - "PathPrefix" (default): Match requests with the specified path prefix
+                                                          - "Exact": Match requests with the exact path
+                                                    enum:
+                                                        - PathPrefix
+                                                        - Exact
+                                                    type: string
+                                            required:
+                                                - pathPrefix
+                                            type: object
+                                        type: array
+                                    tls:
+                                        description: |-
+                                            TLS configures TLS termination behavior for the HTTPRoute.
+                                            Note: The operator does not manage TLS certificates or Gateway TLS configuration.
+                                            cert-manager and envoy-gateway handle certificate provisioning and TLS termination.
+                                            This setting only controls whether the HTTPRoute should reference HTTPS listeners.
+                                        properties:
+                                            enabled:
+                                                default: true
+                                                description: |-
+                                                    Enabled determines whether TLS termination should be used.
+                                                    When nil or true, the HTTPRoute will reference HTTPS listeners on the Gateway.
+                                                    When explicitly set to false, only HTTP listeners will be used.
+                                                    Note: The Gateway's TLS certificates are managed by cert-manager, not by this operator.
+                                                type: boolean
+                                        type: object
+                                type: object
                             service:
                                 description: Service defines the backend Kubernetes Service that should receive traffic.
                                 properties:
@@ -151,47 +196,6 @@ spec:
                                 required:
                                     - name
                                     - port
-                                type: object
-                            tls:
-                                description: |-
-                                    TLS configures TLS/HTTPS for the application.
-                                    If not specified, the application will use the default wildcard certificate.
-                                properties:
-                                    enabled:
-                                        default: true
-                                        description: |-
-                                            Enabled determines whether TLS should be configured for this application.
-                                            When true, the operator will ensure HTTPS is available.
-                                        type: boolean
-                                    issuerRef:
-                                        description: |-
-                                            IssuerRef specifies the cert-manager Issuer/ClusterIssuer to use when mode is "perHost".
-                                            If not specified, uses the default ClusterIssuer "nebari-ca-issuer".
-                                        properties:
-                                            kind:
-                                                default: ClusterIssuer
-                                                description: Kind of the issuer (Issuer or ClusterIssuer).
-                                                enum:
-                                                    - Issuer
-                                                    - ClusterIssuer
-                                                type: string
-                                            name:
-                                                description: Name of the Issuer or ClusterIssuer.
-                                                type: string
-                                        required:
-                                            - name
-                                        type: object
-                                    mode:
-                                        default: wildcard
-                                        description: |-
-                                            Mode determines how TLS certificates are provisioned.
-                                            Valid values:
-                                              - "wildcard" (default): Use the shared wildcard certificate (*.nebari.local)
-                                              - "perHost": Request a dedicated certificate from cert-manager for this hostname
-                                        enum:
-                                            - wildcard
-                                            - perHost
-                                        type: string
                                 type: object
                         required:
                             - hostname
@@ -295,6 +299,12 @@ spec:
                                     Hostname is the actual hostname where the application is accessible.
                                     This mirrors the spec.hostname for easy reference.
                                 type: string
+                            observedGeneration:
+                                description: |-
+                                    ObservedGeneration is the most recent generation observed for this NebariApp.
+                                    It corresponds to the NebariApp's generation, which is updated on mutation by the API Server.
+                                format: int64
+                                type: integer
                         type: object
                 required:
                     - spec

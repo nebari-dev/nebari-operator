@@ -3,13 +3,15 @@ kind: ClusterRoleBinding
 metadata:
     labels:
         app.kubernetes.io/managed-by: {{ .Release.Service }}
-        app.kubernetes.io/name: nic-operator
-    name: nic-operator-manager-rolebinding
+        app.kubernetes.io/name: {{ include "nebari-operator.name" . }}
+        helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    name: {{ include "nebari-operator.resourceName" (dict "suffix" "manager-rolebinding" "context" $) }}
 roleRef:
     apiGroup: rbac.authorization.k8s.io
     kind: ClusterRole
-    name: nic-operator-manager-role
+    name: {{ include "nebari-operator.resourceName" (dict "suffix" "manager-role" "context" $) }}
 subjects:
     - kind: ServiceAccount
-      name: nic-operator-controller-manager
+      name: {{ include "nebari-operator.resourceName" (dict "suffix" "controller-manager" "context" $) }}
       namespace: {{ .Release.Namespace }}
