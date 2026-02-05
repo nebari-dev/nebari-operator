@@ -78,17 +78,21 @@ jobs:
           retention-days: 1
 
   docker-build-push:
-    name: Build and Push Docker Image
-    runs-on: ubuntu-latest
+    name: Build & Push (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
     needs: tests
+    strategy:
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -116,12 +120,23 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ matrix.platform }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
+          provenance: false
+
+      - name: Build summary
+        if: matrix.platform == 'linux/amd64'
+        run: |
+          echo "### Release Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Release**: ${{ github.event.release.tag_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Image**: \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Platforms**: linux/amd64, linux/arm64" >> $GITHUB_STEP_SUMMARY
+          echo "**Tags**: latest, ${{ github.event.release.tag_name }}" >> $GITHUB_STEP_SUMMARY
 
   goreleaser:
     name: Release Go Binaries
@@ -184,16 +199,29 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
       - name: Install Helm
         uses: azure/setup-helm@v4
         with:
           version: 'latest'
 
+      - name: Build installer manifests
+        run: make build-installer IMG="${REGISTRY}/${IMAGE_NAME}:${GITHUB_REF_NAME}"
+
+      - name: Generate Helm chart from manifests
+        run: |
+          kubebuilder edit --plugins=helm/v2-alpha --force
+
       - name: Update Chart version
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           sed -i "s/^version:.*/version: ${VERSION}/" dist/chart/Chart.yaml
-          sed -i "s/^appVersion:.*/appVersion: \"${VERSION}\"/" dist/chart/Chart.yaml
+          sed -i "s/^appVersion:.*/appVersion: \"${GITHUB_REF_NAME}\"/" dist/chart/Chart.yaml
 
       - name: Package Helm chart
         run: |
