@@ -20,12 +20,13 @@ fi
 
 echo "Using Keycloak pod: $KEYCLOAK_POD"
 
-# Create realm admin credentials secret
-echo "Creating realm admin credentials secret..."
+# Create master realm admin credentials secret for the operator
+# The operator needs master realm credentials to provision OIDC clients
+echo "Creating master realm admin credentials secret for operator..."
 kubectl create secret generic nebari-realm-admin-credentials \
     --namespace "$KEYCLOAK_NAMESPACE" \
-    --from-literal=username="$REALM_ADMIN_USER" \
-    --from-literal=password="$REALM_ADMIN_PASSWORD" \
+    --from-literal=username="$KEYCLOAK_ADMIN" \
+    --from-literal=password="$KEYCLOAK_ADMIN_PASSWORD" \
     --dry-run=client -o yaml | kubectl apply -f -
 
 # Create realm setup job
@@ -79,5 +80,6 @@ run_kcadm add-roles -r "$REALM_NAME" --uusername "$REALM_ADMIN_USER" --rolename 
 run_kcadm add-roles -r "$REALM_NAME" --uusername "$REALM_ADMIN_USER" --rolename user || true
 
 echo "✓ Keycloak realm '$REALM_NAME' setup completed successfully!"
-echo "  Realm admin credentials: $REALM_ADMIN_USER/$REALM_ADMIN_PASSWORD"
-echo "  Secret: nebari-realm-admin-credentials in namespace $KEYCLOAK_NAMESPACE"
+echo "  Realm admin user: $REALM_ADMIN_USER/$REALM_ADMIN_PASSWORD"
+echo "  Operator credentials secret: nebari-realm-admin-credentials (master realm: $KEYCLOAK_ADMIN/$KEYCLOAK_ADMIN_PASSWORD)"
+echo "  Secret namespace: $KEYCLOAK_NAMESPACE"
