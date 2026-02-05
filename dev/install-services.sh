@@ -267,24 +267,12 @@ else
 fi
 
 # ============================================
-# 8. Install Keycloak (optional, for auth testing)
+# 8. Keycloak (skipped - install manually if needed)
 # ============================================
-log_info "Installing Keycloak for authentication testing..."
-
-if ${SCRIPT_DIR}/install-keycloak.sh; then
-    log_success "Keycloak installed"
-
-    # Set up the nebari realm
-    log_info "Setting up Keycloak nebari realm..."
-    if ${SCRIPT_DIR}/setup-keycloak-realm.sh; then
-        log_success "Keycloak realm configured"
-    else
-        log_warning "Keycloak realm setup failed, but continuing..."
-    fi
-else
-    log_warning "Keycloak installation failed, but continuing..."
-    log_info "You can manually install Keycloak later with: ${SCRIPT_DIR}/install-keycloak.sh"
-fi
+# Keycloak installation has been moved to CI workflows and can be installed
+# manually when needed for local development:
+#   ./dev/install-keycloak.sh
+#   ./dev/setup-keycloak-realm.sh
 echo ""
 
 # ============================================
@@ -301,10 +289,12 @@ echo "  ✅ cert-manager (v1.16.2) with Gateway API support"
 echo "  ✅ Self-signed CA ClusterIssuer"
 echo "  ✅ Wildcard certificate (*.nebari.local)"
 echo "  ✅ Shared Gateway (nebari-gateway)"
-echo "  ✅ Keycloak (with nebari realm for auth testing)"
 if [ -n "${GATEWAY_IP}" ] && [ "${GATEWAY_IP}" != "pending" ]; then
     echo "  ✅ /etc/hosts configured for nebari.local"
 fi
+echo ""
+echo "📝 Optional (not installed):"
+echo "  ⚪ Keycloak - Run ./dev/install-keycloak.sh if needed for auth testing"
 echo ""
 echo "🌐 Gateway Information:"
 echo "  Name: nebari-gateway"
