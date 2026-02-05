@@ -18,11 +18,13 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/tools/record"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -30,16 +32,21 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+
 	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/core"
+	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/routing"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/conditions"
+	"github.com/nebari-dev/nebari-operator/internal/controller/utils/constants"
 )
 
 // NebariAppReconciler reconciles a NebariApp object
 type NebariAppReconciler struct {
 	client.Client
-	Scheme         *runtime.Scheme
-	Recorder       record.EventRecorder
-	CoreReconciler *core.CoreReconciler
+	Scheme            *runtime.Scheme
+	Recorder          record.EventRecorder
+	CoreReconciler    *core.CoreReconciler
+	RoutingReconciler *routing.RoutingReconciler
 }
 
 // +kubebuilder:rbac:groups=reconcilers.nebari.dev,resources=nebariapps,verbs=get;list;watch;create;update;patch;delete
@@ -49,6 +56,10 @@ type NebariAppReconciler struct {
 // +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways,verbs=get;list;watch
+// +kubebuilder:rbac:groups=cert-manager.io,resources=certificates,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=gateway.envoyproxy.io,resources=securitypolicies,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -79,6 +90,42 @@ func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 	}
 
+	// Initialize routing reconciler if needed
+	if r.RoutingReconciler == nil {
+		r.RoutingReconciler = &routing.RoutingReconciler{
+			Client:   r.Client,
+			Scheme:   r.Scheme,
+			Recorder: r.Recorder,
+		}
+	}
+
+	// Handle finalizer
+	if nebariApp.DeletionTimestamp.IsZero() {
+		// Object is not being deleted, ensure finalizer is present
+		if !controllerutil.ContainsFinalizer(nebariApp, constants.NebariAppFinalizer) {
+			controllerutil.AddFinalizer(nebariApp, constants.NebariAppFinalizer)
+			if err := r.Update(ctx, nebariApp); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+	} else {
+		// Object is being deleted
+		if controllerutil.ContainsFinalizer(nebariApp, constants.NebariAppFinalizer) {
+			// Run cleanup logic
+			if err := r.cleanup(ctx, nebariApp); err != nil {
+				logger.Error(err, "Failed to cleanup resources")
+				return ctrl.Result{}, err
+			}
+
+			// Remove finalizer
+			controllerutil.RemoveFinalizer(nebariApp, constants.NebariAppFinalizer)
+			if err := r.Update(ctx, nebariApp); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+		return ctrl.Result{}, nil
+	}
+
 	// Initialize status if needed
 	if nebariApp.Status.ObservedGeneration == 0 {
 		nebariApp.Status.ObservedGeneration = nebariApp.Generation
@@ -99,6 +146,27 @@ func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
 	}
 
+	// Core validation completed successfully (logged by CoreReconciler)
+
+	// Reconcile routing (HTTPRoute creation/update) if routing is configured
+	if nebariApp.Spec.Routing != nil {
+		if err := r.RoutingReconciler.ReconcileRouting(ctx, nebariApp); err != nil {
+			logger.Error(err, "Routing reconciliation failed")
+			conditions.SetCondition(nebariApp, appsv1.ConditionTypeReady, metav1.ConditionFalse,
+				appsv1.ReasonFailed, fmt.Sprintf("Routing reconciliation failed: %v", err))
+			if err := r.Status().Update(ctx, nebariApp); err != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{RequeueAfter: time.Minute}, nil
+		}
+		logger.Info("Routing reconciled successfully", "nebariapp", nebariApp.Name)
+	} else {
+		// Routing not configured - set condition to indicate routing is not enabled
+		conditions.SetCondition(nebariApp, appsv1.ConditionTypeRoutingReady, metav1.ConditionFalse,
+			"RoutingNotConfigured", "Routing configuration not provided in spec")
+		logger.Info("Routing not configured, skipping HTTPRoute reconciliation", "nebariapp", nebariApp.Name)
+	}
+
 	// Validation succeeded, set Ready condition to True
 	conditions.SetCondition(nebariApp, appsv1.ConditionTypeReady, metav1.ConditionTrue,
 		appsv1.ReasonReconcileSuccess, "NebariApp reconciled successfully")
@@ -115,6 +183,26 @@ func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	logger.Info("Successfully reconciled NebariApp")
 	// Requeue after 1 minute for now (until full implementation)
 	return ctrl.Result{RequeueAfter: time.Minute}, nil
+}
+
+// cleanup removes resources created by this NebariApp
+func (r *NebariAppReconciler) cleanup(ctx context.Context, nebariApp *appsv1.NebariApp) error {
+	logger := logf.FromContext(ctx)
+	logger.Info("Cleaning up resources for NebariApp", "name", nebariApp.Name, "namespace", nebariApp.Namespace)
+
+	r.Recorder.Event(nebariApp, corev1.EventTypeNormal, "Cleanup", "Starting resource cleanup")
+	// Delete HTTPRoute explicitly (also has ownerReferences for GC)
+	if r.RoutingReconciler != nil {
+		if err := r.RoutingReconciler.CleanupHTTPRoute(ctx, nebariApp); err != nil {
+			logger.Error(err, "Failed to delete HTTPRoute")
+			return err
+		}
+	}
+
+	// Additional cleanup handled automatically:
+
+	logger.Info("Cleanup completed")
+	return nil
 }
 
 // SetupWithManager sets up the controller with the Manager.

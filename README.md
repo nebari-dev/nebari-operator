@@ -175,6 +175,154 @@ make lint
 make run
 ```
 
+### Manual Testing with Development Environment
+
+The `dev/` folder contains scripts and sample resources for manual testing of the operator.
+
+#### 1. Setup Development Cluster
+
+Create a Kind cluster with all required infrastructure (Envoy Gateway, cert-manager, Gateway):
+
+```bash
+# Create cluster and install all services
+cd dev
+make setup
+cd ..
+```
+
+This will:
+- Create a Kind cluster named `nic-operator-dev`
+- Install Envoy Gateway with Gateway API support
+- Install cert-manager with self-signed certificates
+- Deploy a shared Gateway (`nebari-gateway`) with HTTP/HTTPS listeners
+- Configure TLS with wildcard certificate for `*.nebari.local`
+
+#### 2. Build and Deploy the Operator
+
+Build the operator image and deploy it to the cluster:
+
+```bash
+# Build and load operator image to Kind
+make docker-build IMG=quay.io/nebari/nebari-operator:dev
+kind load docker-image quay.io/nebari/nebari-operator:dev --name nic-operator-dev
+
+# Install CRDs and deploy operator
+make install
+make deploy IMG=quay.io/nebari/nebari-operator:dev
+```
+
+Verify the operator is running:
+
+```bash
+kubectl get pods -n nebari-operator-system
+kubectl logs -n nebari-operator-system -l control-plane=controller-manager -f
+```
+
+#### 3. Deploy Sample Application
+
+Use the provided samples to test the operator:
+
+```bash
+# Deploy sample app (nginx) with service
+kubectl apply -f dev/sample-app-deployment.yaml
+
+# Test basic NebariApp (no routing)
+kubectl apply -f dev/sample-nebariapp-basic.yaml
+
+# Check status
+kubectl get nebariapp -n dev-test
+kubectl describe nebariapp sample-app-basic -n dev-test
+
+# Test NebariApp with HTTPS routing
+kubectl apply -f dev/sample-nebariapp-with-routing.yaml
+
+# Verify HTTPRoute was created
+kubectl get httproute -n dev-test
+kubectl describe httproute sample-app-routing-route -n dev-test
+
+# Test HTTP-only routing (TLS disabled)
+kubectl apply -f dev/sample-nebariapp-http-only.yaml
+
+# Verify HTTP listener is used
+kubectl get httproute sample-app-http-route -n dev-test -o jsonpath='{.spec.parentRefs[0].sectionName}'
+# Should output: http
+
+# Test advanced routing (multiple paths)
+kubectl apply -f dev/sample-nebariapp-advanced.yaml
+```
+
+#### 4. Verify Routing
+
+Check that the operator created the HTTPRoute correctly:
+
+```bash
+# View all HTTPRoutes
+kubectl get httproute -n dev-test
+
+# Check specific HTTPRoute details
+kubectl get httproute sample-app-routing-route -n dev-test -o yaml
+
+# Verify Gateway reference
+kubectl get httproute sample-app-routing-route -n dev-test \
+  -o jsonpath='{.spec.parentRefs[0]}' | jq
+
+# Check NebariApp status conditions
+kubectl get nebariapp sample-app-routing -n dev-test \
+  -o jsonpath='{.status.conditions}' | jq
+```
+
+#### 5. Test Changes
+
+To test your code changes:
+
+```bash
+# Rebuild and reload image
+make docker-build IMG=quay.io/nebari/nebari-operator:dev
+kind load docker-image quay.io/nebari/nebari-operator:dev --name nic-operator-dev
+
+# Restart the operator to pick up new image
+kubectl rollout restart deployment nebari-operator-controller-manager -n nebari-operator-system
+
+# Watch logs
+kubectl logs -n nebari-operator-system -l control-plane=controller-manager -f
+```
+
+#### 6. Cleanup
+
+Remove test resources and tear down the environment:
+
+```bash
+# Delete sample applications
+kubectl delete -f dev/sample-nebariapp-advanced.yaml
+kubectl delete -f dev/sample-nebariapp-http-only.yaml
+kubectl delete -f dev/sample-nebariapp-with-routing.yaml
+kubectl delete -f dev/sample-nebariapp-basic.yaml
+kubectl delete -f dev/sample-app-deployment.yaml
+
+# Or delete entire namespace
+kubectl delete namespace dev-test
+
+# Undeploy operator
+make undeploy
+
+# Teardown development environment
+cd dev
+make teardown
+cd ..
+```
+
+#### Available Sample Resources
+
+The `dev/` folder includes:
+
+- **`sample-app-deployment.yaml`** - Basic nginx deployment with service
+- **`sample-nebariapp-basic.yaml`** - Minimal NebariApp (no routing)
+- **`sample-nebariapp-with-routing.yaml`** - NebariApp with HTTPS routing
+- **`sample-nebariapp-http-only.yaml`** - NebariApp with HTTP routing (TLS disabled)
+- **`sample-nebariapp-advanced.yaml`** - NebariApp with multiple path rules
+
+See [dev/README.md](dev/README.md) for detailed testing scenarios.
+
 ### Building
 
 ```bash

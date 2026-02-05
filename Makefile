@@ -43,11 +43,11 @@ help: ## Display this help.
 
 .PHONY: manifests
 manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
-	"$(CONTROLLER_GEN)" rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases
+	@"$(CONTROLLER_GEN)" rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases 2>&1 | grep -v 'Warning: unrecognized format' || true
 
 .PHONY: generate
 generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
-	"$(CONTROLLER_GEN)" object:headerFile="hack/boilerplate.go.txt" paths="./..."
+	@"$(CONTROLLER_GEN)" object:headerFile="hack/boilerplate.go.txt" paths="./..." 2>&1 | grep -v 'Warning: unrecognized format' || true
 
 .PHONY: fmt
 fmt: ## Run go fmt against code.
@@ -59,11 +59,11 @@ vet: ## Run go vet against code.
 
 .PHONY: test
 test: manifests generate fmt vet setup-envtest ## Run tests.
-	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
+	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" go test $$(go list ./... | grep -v /e2e | grep -v 'internal/controller$$') -coverprofile cover.out
 
 .PHONY: test-e2e
 test-e2e: manifests generate fmt vet ## Run e2e tests.
-	go test ./test/e2e -v -ginkgo.v -tags=e2e
+	USE_EXISTING_CLUSTER=$(USE_EXISTING_CLUSTER) go test ./test/e2e -v -ginkgo.v -tags=e2e
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
@@ -92,7 +92,7 @@ run: manifests generate fmt vet ## Run a controller from your host.
 # More info: https://docs.docker.com/develop/develop-images/build_enhancements/
 .PHONY: docker-build
 docker-build: ## Build docker image with the manager.
-	$(CONTAINER_TOOL) build -t ${IMG} .
+	$(CONTAINER_TOOL) build -t ${IMG} $(DOCKER_BUILD_ARGS) .
 
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.

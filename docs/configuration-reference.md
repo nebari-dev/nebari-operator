@@ -10,8 +10,7 @@ Resource Definition (CRD).
 - [Spec Fields](#spec-fields)
   - [hostname](#hostname)
   - [service](#service)
-  - [routes](#routes)
-  - [tls](#tls)
+  - [routing](#routing)
   - [auth](#auth)
   - [gateway](#gateway)
 - [Status Fields](#status-fields)
@@ -21,7 +20,7 @@ Resource Definition (CRD).
 
 The `NebariApp` resource represents an application onboarding intent, specifying how an application should be:
 - **Exposed** (routing via HTTPRoute)
-- **Secured** (TLS/HTTPS certificates)
+- **Secured** (TLS/HTTPS via Gateway)
 - **Protected** (OIDC authentication)
 
 ## Basic Structure
@@ -47,7 +46,7 @@ spec:
 **Type:** `string` (required)
 
 The fully qualified domain name (FQDN) where the application should be accessible. This will be used to generate the
-HTTPRoute and configure TLS.
+HTTPRoute resource.
 
 **Validation:**
 - Minimum length: 1
@@ -97,14 +96,21 @@ spec:
 
 
 
-### routes
+### routing
+
+**Type:** `object` (optional)
+
+Configures routing behavior including path-based rules and TLS termination.
+
+#### routing.routes
 
 **Type:** `array` (optional)
 
-Defines path-based routing rules for the application. If not specified, all traffic to the hostname will be routed to
-the service. When specified, only traffic matching these path prefixes will be routed.
+Defines path-based routing rules for the application. If not specified, the Gateway API automatically adds a default path match of `"/"` (PathPrefix), which routes all traffic to the hostname to the service. When specified, only traffic matching these path prefixes will be routed.
 
-#### routes[].pathPrefix
+**Important:** When no routes are specified, the operator creates an HTTPRoute with an empty matches array, and the Gateway API implementation (Envoy Gateway) automatically adds the default `"/"` path match.
+
+##### routing.routes[].pathPrefix
 
 **Type:** `string` (required)
 
@@ -114,7 +120,7 @@ The path prefix to match for routing. Traffic matching this prefix will be route
 - Must start with `/`
 - Examples: `/app-1`, `/api/v1`
 
-#### routes[].pathType
+##### routing.routes[].pathType
 
 **Type:** `string` (optional)
 
@@ -129,76 +135,50 @@ Specifies how the path should be matched.
 **Example:**
 ```yaml
 spec:
-  routes:
-    - pathPrefix: /api/v1
-      pathType: PathPrefix
-    - pathPrefix: /admin
-      pathType: Exact
+  routing:
+    routes:
+      - pathPrefix: /api/v1
+        pathType: PathPrefix
+      - pathPrefix: /admin
+        pathType: Exact
 ```
 
-
-
-### tls
+#### routing.tls
 
 **Type:** `object` (optional)
 
-Configures TLS/HTTPS for the application. If not specified, the application will use the default wildcard certificate.
+Controls TLS termination behavior for the HTTPRoute.
 
-#### tls.enabled
+**Important:** The operator does not manage TLS certificates or Gateway TLS configuration. cert-manager and
+envoy-gateway handle certificate provisioning and TLS termination. This setting only controls whether the HTTPRoute
+should reference HTTPS listeners on the Gateway.
+
+##### routing.tls.enabled
 
 **Type:** `boolean` (optional)
 
-Determines whether TLS should be configured for this application. When true, the operator will ensure HTTPS is
-available.
+Determines whether TLS termination should be used. This controls which Gateway listener the HTTPRoute references:
+
+- **`true` (default)**: HTTPRoute uses `sectionName: https` to reference the HTTPS listener (port 443)
+- **`false`**: HTTPRoute uses `sectionName: http` to reference the HTTP listener (port 80)
+
+**Generated HTTPRoute behavior:**
+- When `enabled: true` (or omitted): `spec.parentRefs[0].sectionName: "https"`
+- When `enabled: false`: `spec.parentRefs[0].sectionName: "http"` and annotation `nebari.dev/tls-enabled: "false"`
+
+**Note:** The Gateway's TLS certificates are managed by cert-manager, not by this operator. This setting only affects
+which listener the HTTPRoute references.
 
 **Default:** `true`
-
-#### tls.mode
-
-**Type:** `string` (optional)
-
-Determines how TLS certificates are provisioned.
-
-**Valid values:**
-- `wildcard` (default): Use the shared wildcard certificate (e.g., `*.nebari.local`)
-- `perHost`: Request a dedicated certificate from cert-manager for this hostname
-
-**Default:** `wildcard`
-
-#### tls.issuerRef
-
-**Type:** `object` (optional)
-
-Specifies the cert-manager Issuer/ClusterIssuer to use when `mode` is `perHost`. If not specified, uses the default
-ClusterIssuer `nebari-ca-issuer`.
-
-##### tls.issuerRef.name
-
-**Type:** `string` (required)
-
-Name of the Issuer or ClusterIssuer.
-
-##### tls.issuerRef.kind
-
-**Type:** `string` (optional)
-
-Kind of the issuer.
-
-**Valid values:**
-- `Issuer`
-- `ClusterIssuer`
-
-**Default:** `ClusterIssuer`
 
 **Example:**
 ```yaml
 spec:
-  tls:
-    enabled: true
-    mode: perHost
-    issuerRef:
-      name: letsencrypt-prod
-      kind: ClusterIssuer
+  routing:
+    routes:
+      - pathPrefix: /api
+    tls:
+      enabled: true
 ```
 
 
@@ -306,7 +286,7 @@ Represents the current state of the NebariApp resource.
 
 **Standard condition types:**
 - `RoutingReady`: HTTPRoute has been created and is functioning
-- `TLSReady`: TLS certificate is available and configured
+- `TLSReady`: TLS termination is functioning (Gateway's TLS listeners are accessible)
 - `AuthReady`: Authentication policy is configured (if auth is enabled)
 - `Ready`: All components are ready (aggregate condition)
 
@@ -318,7 +298,6 @@ Represents the current state of the NebariApp resource.
 - `ServiceNotFound`: The referenced service doesn't exist
 - `SecretNotFound`: The referenced secret doesn't exist
 - `GatewayNotFound`: The target gateway doesn't exist
-- `CertificateNotReady`: The cert-manager Certificate is not ready
 
 ### hostname
 
@@ -390,38 +369,38 @@ spec:
   service:
     name: api-service
     port: 3000
-  routes:
-    - pathPrefix: /api/v1
-      pathType: PathPrefix
-    - pathPrefix: /api/v2
-      pathType: PathPrefix
-    - pathPrefix: /health
-      pathType: Exact
+  routing:
+    routes:
+      - pathPrefix: /api/v1
+        pathType: PathPrefix
+      - pathPrefix: /api/v2
+        pathType: PathPrefix
+      - pathPrefix: /health
+        pathType: Exact
+    tls:
+      enabled: true
 ```
 
 
 
-### Custom TLS Certificate
+### Disable TLS Termination
 
-Using a dedicated certificate from a specific issuer:
+Use HTTP only (no TLS termination at the Gateway):
 
 ```yaml
 apiVersion: reconcilers.nebari.dev/v1
 kind: NebariApp
 metadata:
-  name: secure-app
-  namespace: production
+  name: http-only-app
+  namespace: default
 spec:
-  hostname: secure.example.com
+  hostname: http-app.nebari.local
   service:
-    name: secure-service
-    port: 443
-  tls:
-    enabled: true
-    mode: perHost
-    issuerRef:
-      name: letsencrypt-prod
-      kind: ClusterIssuer
+    name: http-service
+    port: 8080
+  routing:
+    tls:
+      enabled: false
 ```
 
 
@@ -469,17 +448,14 @@ spec:
   service:
     name: backend-service
     port: 8080
-  routes:
-    - pathPrefix: /app
-      pathType: PathPrefix
-    - pathPrefix: /api
-      pathType: PathPrefix
-  tls:
-    enabled: true
-    mode: perHost
-    issuerRef:
-      name: letsencrypt-prod
-      kind: ClusterIssuer
+  routing:
+    routes:
+      - pathPrefix: /app
+        pathType: PathPrefix
+      - pathPrefix: /api
+        pathType: PathPrefix
+    tls:
+      enabled: true
   auth:
     enabled: true
     provider: keycloak
@@ -511,9 +487,9 @@ spec:
     name: internal-service
     port: 8080
   gateway: internal
-  tls:
-    enabled: true
-    mode: wildcard
+  routing:
+    tls:
+      enabled: true
 ```
 
 
