@@ -1,4 +1,0 @@
-## Append samples of your project ##
-resources:
-- reconcilers_v1_nebariapp.yaml
-# +kubebuilder:scaffold:manifestskustomizesamples
