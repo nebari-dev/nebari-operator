@@ -81,5 +81,3 @@ run_kcadm add-roles -r "$REALM_NAME" --uusername "$REALM_ADMIN_USER" --rolename 
 echo "✓ Keycloak realm '$REALM_NAME' setup completed successfully!"
 echo "  Realm admin credentials: $REALM_ADMIN_USER/$REALM_ADMIN_PASSWORD"
 echo "  Secret: nebari-realm-admin-credentials in namespace $KEYCLOAK_NAMESPACE"
-    exit 1
-fi
