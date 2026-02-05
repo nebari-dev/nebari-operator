@@ -199,28 +199,11 @@ func (r *RoutingReconciler) buildHTTPRouteRules(nebariApp *appsv1.NebariApp) []g
 		routes = nebariApp.Spec.Routing.Routes
 	}
 
-	// If no routes specified, route all traffic to the service
-	if len(routes) == 0 {
-		pathPrefix := gatewayv1.PathMatchPathPrefix
-		pathValue := "/"
-
-		return []gatewayv1.HTTPRouteRule{
-			{
-				Matches: []gatewayv1.HTTPRouteMatch{
-					{
-						Path: &gatewayv1.HTTPPathMatch{
-							Type:  &pathPrefix,
-							Value: &pathValue,
-						},
-					},
-				},
-				BackendRefs: r.buildBackendRefs(nebariApp),
-			},
-		}
-	}
-
-	// Build rules for each specified route
-	rules := make([]gatewayv1.HTTPRouteRule, 0, len(routes))
+	// Build a single rule with multiple matches (one per route)
+	// All matches route to the same backend, so we use one rule
+	// If no routes specified, we create an empty matches array. Gateway API will automatically
+	// add a default path match of "/" (PathPrefix) when matches is empty or null.
+	matches := make([]gatewayv1.HTTPRouteMatch, 0, len(routes))
 	for _, route := range routes {
 		pathType := gatewayv1.PathMatchPathPrefix
 		if route.PathType == "Exact" {
@@ -228,21 +211,21 @@ func (r *RoutingReconciler) buildHTTPRouteRules(nebariApp *appsv1.NebariApp) []g
 		}
 
 		pathValue := route.PathPrefix
-		rule := gatewayv1.HTTPRouteRule{
-			Matches: []gatewayv1.HTTPRouteMatch{
-				{
-					Path: &gatewayv1.HTTPPathMatch{
-						Type:  &pathType,
-						Value: &pathValue,
-					},
-				},
+		match := gatewayv1.HTTPRouteMatch{
+			Path: &gatewayv1.HTTPPathMatch{
+				Type:  &pathType,
+				Value: &pathValue,
 			},
-			BackendRefs: r.buildBackendRefs(nebariApp),
 		}
-		rules = append(rules, rule)
+		matches = append(matches, match)
 	}
 
-	return rules
+	return []gatewayv1.HTTPRouteRule{
+		{
+			Matches:     matches,
+			BackendRefs: r.buildBackendRefs(nebariApp),
+		},
+	}
 }
 
 // buildBackendRefs generates backend references for the HTTPRoute

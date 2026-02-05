@@ -58,6 +58,26 @@ Tests that validate the operator's core functionality:
 - Validate routing to backend services
 - Test deletion and cleanup
 
+### Routing Schema Variation Tests
+
+Comprehensive tests covering all routing schema variations (**NEW**):
+
+- **TLS Configuration**: HTTP vs HTTPS listeners, default TLS behavior
+- **Path-Based Routing**: PathPrefix and Exact match types, multiple path rules
+- **Combined Scenarios**: TLS + path routing combinations
+- **Hostname Variations**: Different hostname formats
+- **Edge Cases**: No routing config, TLS-only, root path, etc.
+
+See [ROUTING_TEST_COVERAGE.md](./ROUTING_TEST_COVERAGE.md) for detailed test coverage matrix.
+
+### HTTP/HTTPS Connectivity Tests
+
+End-to-end connectivity tests:
+
+- HTTP connectivity via Gateway IP
+- HTTPS connectivity with TLS via Gateway IP
+- Response validation
+
 ## Prerequisites
 
 The tests assume the following infrastructure exists:

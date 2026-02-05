@@ -106,8 +106,9 @@ Configures routing behavior including path-based rules and TLS termination.
 
 **Type:** `array` (optional)
 
-Defines path-based routing rules for the application. If not specified, all traffic to the hostname will be routed to
-the service. When specified, only traffic matching these path prefixes will be routed.
+Defines path-based routing rules for the application. If not specified, the Gateway API automatically adds a default path match of `"/"` (PathPrefix), which routes all traffic to the hostname to the service. When specified, only traffic matching these path prefixes will be routed.
+
+**Important:** When no routes are specified, the operator creates an HTTPRoute with an empty matches array, and the Gateway API implementation (Envoy Gateway) automatically adds the default `"/"` path match.
 
 ##### routing.routes[].pathPrefix
 

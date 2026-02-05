@@ -110,9 +110,9 @@ if [ "${TLS_ENABLED}" == "true" ]; then
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "Testing HTTPS connectivity:"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    
+
     HTTPS_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 -k --resolve "${HOSTNAME}:443:${GATEWAY_IP}" "https://${HOSTNAME}/" 2>/dev/null || echo "000")
-    
+
     if [ "${HTTPS_CODE}" == "200" ]; then
         echo -e "${GREEN}HTTPS ${HTTPS_CODE}${NC} - Success!"
     elif [ "${HTTPS_CODE}" == "000" ]; then
@@ -120,7 +120,7 @@ if [ "${TLS_ENABLED}" == "true" ]; then
     else
         echo -e "${YELLOW}HTTPS ${HTTPS_CODE}${NC}"
     fi
-    
+
     echo ""
     echo "Command to test manually:"
     echo "  curl -k --resolve '${HOSTNAME}:443:${GATEWAY_IP}' https://${HOSTNAME}/"

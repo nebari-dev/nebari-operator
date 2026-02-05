@@ -196,8 +196,24 @@ spec:
 
 #### Default Routing (No Paths Specified)
 
-When no routes are specified, all traffic to the hostname is routed to the service:
+When no routes are specified in the NebariApp, the operator creates an HTTPRoute with an empty `matches` array. The Gateway API (Envoy Gateway) automatically adds a default path match of `"/"` with type `PathPrefix` when the matches array is empty or null.
 
+**NebariApp spec (no routes):**
+```yaml
+apiVersion: reconcilers.nebari.dev/v1
+kind: NebariApp
+spec:
+  hostname: myapp.nebari.local
+  service:
+    name: myapp-service
+    port: 8080
+  routing:
+    tls:
+      enabled: true
+  # No routes specified
+```
+
+**Resulting HTTPRoute (after Gateway API adds default):**
 ```yaml
 rules:
   - matches:
@@ -208,6 +224,8 @@ rules:
       - name: myapp-service
         port: 8080
 ```
+
+**Note:** The `"/"` path match is added automatically by the Gateway API implementation, not by the operator.
 
 #### Custom Path Routing
 
@@ -229,7 +247,7 @@ spec:
         pathType: Exact
 ```
 
-Generates:
+**Generates (single rule with multiple matches):**
 
 ```yaml
 rules:
@@ -237,10 +255,6 @@ rules:
       - path:
           type: PathPrefix
           value: /api/v1
-    backendRefs:
-      - name: myapp-service
-        port: 8080
-  - matches:
       - path:
           type: Exact
           value: /app
@@ -248,6 +262,8 @@ rules:
       - name: myapp-service
         port: 8080
 ```
+
+**Note:** All path rules are combined into a single HTTPRoute rule with multiple matches, following Gateway API best practices. All matches route to the same backend service.
 
 ### Backend References
 

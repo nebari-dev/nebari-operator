@@ -20,12 +20,9 @@ dev/
 │   │   └── port-forward.sh    # Setup port forwarding for local access
 │   └── testing/               # Testing utilities
 │       └── test-connectivity.sh  # Test HTTP/HTTPS connectivity to apps
-└── examples/                   # Example NebariApp manifests
-    ├── basic.yaml
-    ├── advanced.yaml
-    ├── http-only.yaml
-    ├── with-routing.yaml
-    └── app-deployment.yaml     # Test application deployment
+└── examples/                   # Example manifests for local development
+    ├── app-deployment.yaml     # Test application deployment (nginx)
+    └── nebariapp.yaml          # Simple NebariApp example with TLS and routing
 ```
 
 ## Quick Start
@@ -89,6 +86,10 @@ make port-forward       # Setup port forwarding for local access
 
 ### Local Development
 
+> **Note**: The `examples/` directory contains simplified manifests for quick local development.
+> For comprehensive test variations (HTTP-only, multiple paths, TLS disabled, etc.), see the
+> E2E test files in `test/e2e/` which create these programmatically.
+
 1. **Setup environment**:
    ```bash
    cd dev
@@ -101,26 +102,28 @@ make port-forward       # Setup port forwarding for local access
    make deploy
    ```
 
-3. **Create test application**:
+3. **Deploy test application and NebariApp**:
    ```bash
-   kubectl create namespace test-app
-   kubectl label namespace test-app nebari.dev/managed=true
+   # Deploy the test app (nginx)
+   kubectl apply -f examples/app-deployment.yaml
 
-   kubectl apply -f - <<EOF
-   apiVersion: reconcilers.nebari.dev/v1
-   kind: NebariApp
-   metadata:
-     name: my-app
-     namespace: test-app
-   spec:
-     hostname: my-app.nebari.local
-     service:
-       name: my-app-service
-       port: 8080
-     routing:
-       tls:
-         enabled: true
-   EOF
+   # Deploy the NebariApp to expose it via the Gateway
+   kubectl apply -f examples/nebariapp.yaml
+
+   # Wait for the app to be ready
+   kubectl wait --for=condition=Ready nebariapp/sample-app -n dev-test --timeout=60s
+
+   # Update /etc/hosts for local access
+   make update-hosts
+   ```
+
+4. **Test connectivity**:
+   ```bash
+   # Test the app
+   curl -k https://sample-app.nebari.local
+
+   # Or use the test script
+   make test-connectivity APP=sample-app NS=dev-test
    ```
 
 ### E2E Tests
@@ -164,16 +167,16 @@ The `services-install` script automatically:
 After creating NebariApp resources, add their hostnames to `/etc/hosts`:
 
 ```bash
-# Add specific app hostname
-./scripts/networking/update-hosts.sh sample-app-routing
-
-# Or scan and add all NebariApp hostnames automatically
+# Scan and add all NebariApp hostnames automatically
 ./scripts/networking/update-hosts.sh
+
+# Or add specific app hostname
+./scripts/networking/update-hosts.sh sample-app
 ```
 
 This adds entries like:
 ```
-172.18.255.200 sample-app-routing.nebari.local # nebari-gateway
+172.18.255.200 sample-app.nebari.local # nebari-gateway
 ```
 
 #### Manual Configuration
@@ -196,16 +199,16 @@ Once DNS is configured, test your apps:
 
 ```bash
 # HTTP (redirects to HTTPS if TLS enabled)
-curl http://sample-app-routing.nebari.local
+curl http://sample-app.nebari.local
 
 # HTTPS (use -k for self-signed cert)
-curl -k https://sample-app-routing.nebari.local
+curl -k https://sample-app.nebari.local
 
 # View headers and follow redirects
-curl -v -L -k https://sample-app-routing.nebari.local
+curl -v -L -k https://sample-app.nebari.local
 
 # Test from browser
-# Open: https://sample-app-routing.nebari.local
+# Open: https://sample-app.nebari.local
 # (Accept the self-signed certificate warning)
 ```
 
@@ -214,11 +217,11 @@ curl -v -L -k https://sample-app-routing.nebari.local
 Use the test-connectivity script to check if an app is reachable:
 
 ```bash
-# Test specific app
-make test-connectivity APP=sample-app-routing NS=default
+# Test the sample app from examples/
+make test-connectivity APP=sample-app NS=dev-test
 
 # Or use the script directly
-./scripts/testing/test-connectivity.sh sample-app-routing default
+./scripts/testing/test-connectivity.sh sample-app dev-test
 ```
 
 This will:

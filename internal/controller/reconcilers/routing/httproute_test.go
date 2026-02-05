@@ -202,7 +202,7 @@ func TestBuildHTTPRoute(t *testing.T) {
 			gatewayName:         constants.PublicGatewayName,
 			expectedHostname:    "test.nebari.local",
 			expectedBackendPort: 8080,
-			expectedRulesCount:  2,
+			expectedRulesCount:  1, // Single rule with multiple matches
 		},
 	}
 
@@ -271,11 +271,12 @@ func TestBuildHTTPRouteRules(t *testing.T) {
 	}
 
 	tests := []struct {
-		name               string
-		nebariApp          *appsv1.NebariApp
-		expectedRulesCount int
-		checkPathType      bool
-		expectedPathType   gatewayv1.PathMatchType
+		name                 string
+		nebariApp            *appsv1.NebariApp
+		expectedRulesCount   int
+		expectedMatchesCount int
+		checkPathType        bool
+		expectedPathType     gatewayv1.PathMatchType
 	}{
 		{
 			name: "Default route (no routes specified)",
@@ -287,9 +288,10 @@ func TestBuildHTTPRouteRules(t *testing.T) {
 					},
 				},
 			},
-			expectedRulesCount: 1,
-			checkPathType:      true,
-			expectedPathType:   gatewayv1.PathMatchPathPrefix,
+			expectedRulesCount:   1,
+			expectedMatchesCount: 0, // Empty matches - Gateway API will add default "/" path
+			checkPathType:        false,
+			expectedPathType:     gatewayv1.PathMatchPathPrefix, // Not checked when checkPathType=false
 		},
 		{
 			name: "Multiple custom routes with different path types",
@@ -313,8 +315,9 @@ func TestBuildHTTPRouteRules(t *testing.T) {
 					},
 				},
 			},
-			expectedRulesCount: 2,
-			checkPathType:      false,
+			expectedRulesCount:   1, // Single rule with multiple matches
+			expectedMatchesCount: 2,
+			checkPathType:        false,
 		},
 	}
 
@@ -324,6 +327,13 @@ func TestBuildHTTPRouteRules(t *testing.T) {
 
 			if len(rules) != tt.expectedRulesCount {
 				t.Errorf("expected %d rules, got %d", tt.expectedRulesCount, len(rules))
+			}
+
+			// Check matches count for first rule
+			if len(rules) > 0 {
+				if len(rules[0].Matches) != tt.expectedMatchesCount {
+					t.Errorf("expected %d matches in first rule, got %d", tt.expectedMatchesCount, len(rules[0].Matches))
+				}
 			}
 
 			if tt.checkPathType && len(rules) > 0 {

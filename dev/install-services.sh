@@ -261,9 +261,9 @@ if [ -n "${GATEWAY_IP}" ] && [ "${GATEWAY_IP}" != "pending" ]; then
     echo "${GATEWAY_IP} nebari.local # nebari-gateway" | ${SUDO_CMD} tee -a /etc/hosts > /dev/null
 
     log_success "/etc/hosts configured with Gateway IP: ${GATEWAY_IP}"
-    log_info "To add app-specific hostnames, use: ${SCRIPT_DIR}/../networking/update-hosts.sh <app-name>"
+    log_info "To add app-specific hostnames, use: ${SCRIPT_DIR}/update-hosts.sh <app-name>"
 else
-    log_warning "Gateway IP not available yet. Run '${SCRIPT_DIR}/../networking/update-hosts.sh' later to configure /etc/hosts"
+    log_warning "Gateway IP not available yet. Run '${SCRIPT_DIR}/update-hosts.sh' later to configure /etc/hosts"
 fi
 
 # ============================================
