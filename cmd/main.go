@@ -25,6 +25,7 @@ import (
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	egv1alpha1 "github.com/envoyproxy/gateway/api/v1alpha1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -37,7 +38,11 @@ import (
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
+	"github.com/nebari-dev/nebari-operator/internal/config"
 	"github.com/nebari-dev/nebari-operator/internal/controller"
+	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/auth"
+	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/auth/providers"
+	"github.com/nebari-dev/nebari-operator/internal/controller/utils/constants"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -51,6 +56,7 @@ func init() {
 
 	utilruntime.Must(appsv1.AddToScheme(scheme))
 	utilruntime.Must(gatewayapiv1.Install(scheme))
+	utilruntime.Must(egv1alpha1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -180,9 +186,51 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Load authentication configuration
+	authConfig := config.LoadAuthConfig()
+
+	// Initialize OIDC providers map
+	oidcProviders := make(map[string]providers.OIDCProvider)
+
+	// Initialize Keycloak provider if enabled
+	if authConfig.Keycloak.Enabled {
+		setupLog.Info("Initializing Keycloak OIDC provider",
+			"url", authConfig.Keycloak.URL,
+			"realm", authConfig.Keycloak.Realm,
+			"adminSecretName", authConfig.Keycloak.AdminSecretName,
+			"adminSecretNamespace", authConfig.Keycloak.AdminSecretNamespace)
+
+		// Initialize provider with config - credentials will be loaded from secret when needed
+		keycloakProvider := &providers.KeycloakProvider{
+			Client: mgr.GetClient(),
+			Config: providers.KeycloakConfig{
+				URL:                  authConfig.Keycloak.URL,
+				Realm:                authConfig.Keycloak.Realm,
+				AdminSecretName:      authConfig.Keycloak.AdminSecretName,
+				AdminSecretNamespace: authConfig.Keycloak.AdminSecretNamespace,
+			},
+		}
+		oidcProviders[constants.ProviderKeycloak] = keycloakProvider
+		setupLog.Info("Keycloak OIDC provider initialized successfully")
+	}
+
+	// Initialize generic OIDC provider
+	genericProvider := &providers.GenericOIDCProvider{}
+	oidcProviders[constants.ProviderGenericOIDC] = genericProvider
+	setupLog.Info("Generic OIDC provider initialized")
+
+	// Initialize auth reconciler
+	authReconciler := &auth.AuthReconciler{
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		Recorder:  mgr.GetEventRecorderFor("nebariapp-auth"),
+		Providers: oidcProviders,
+	}
+
 	if err := (&controller.NebariAppReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:         mgr.GetClient(),
+		Scheme:         mgr.GetScheme(),
+		AuthReconciler: authReconciler,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "NebariApp")
 		os.Exit(1)

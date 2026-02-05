@@ -80,3 +80,34 @@ func TestHTTPRouteName(t *testing.T) {
 		t.Errorf("HTTPRouteName() = %q, want %q", result, expected)
 	}
 }
+
+func TestClientSecretName(t *testing.T) {
+	nebariApp := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "auth-app",
+		},
+	}
+
+	expected := "auth-app-oidc-client"
+	result := ClientSecretName(nebariApp)
+
+	if result != expected {
+		t.Errorf("ClientSecretName() = %q, want %q", result, expected)
+	}
+}
+
+func TestClientID(t *testing.T) {
+	nebariApp := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "my-app",
+			Namespace: "staging",
+		},
+	}
+
+	expected := "staging-my-app"
+	result := ClientID(nebariApp)
+
+	if result != expected {
+		t.Errorf("ClientID() = %q, want %q", result, expected)
+	}
+}
