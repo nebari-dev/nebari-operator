@@ -135,17 +135,6 @@ jobs:
             - kind-pool
           EOF
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build and load Docker image
-        run: |
-          docker buildx build \
-            --load \
-            -t quay.io/nebari/nebari-operator:v0.0.1 \
-            .
-          kind load docker-image quay.io/nebari/nebari-operator:v0.0.1 --name test-cluster
-
       - name: Install foundational services
         env:
           CLUSTER_NAME: test-cluster

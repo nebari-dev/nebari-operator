@@ -233,6 +233,9 @@ const (
 	// ReasonReconcileSuccess indicates successful reconciliation
 	ReasonReconcileSuccess = "ReconcileSuccess"
 
+	// ReasonValidationSuccess indicates validation passed successfully
+	ReasonValidationSuccess = "ValidationSuccess"
+
 	// ReasonFailed indicates reconciliation failed
 	ReasonFailed = "Failed"
 

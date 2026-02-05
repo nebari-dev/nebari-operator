@@ -65,6 +65,11 @@ func (r *CoreReconciler) ValidateSpec(ctx context.Context, nebariApp *appsv1.Neb
 	r.Recorder.Event(nebariApp, corev1.EventTypeNormal, appsv1.EventReasonValidationSuccess,
 		"NebariApp validation completed successfully")
 
+	// Set Ready condition to True since core validation passed
+	// Note: This may be overridden by routing reconciliation failures
+	conditions.SetCondition(nebariApp, appsv1.ConditionTypeReady, metav1.ConditionTrue,
+		appsv1.ReasonValidationSuccess, "Core validation passed")
+
 	return nil
 }
 

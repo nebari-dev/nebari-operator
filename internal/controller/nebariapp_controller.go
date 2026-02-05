@@ -146,8 +146,7 @@ func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
 	}
 
-	logger.Info("Core validation passed", "nebariapp", nebariApp.Name)
-	r.Recorder.Event(nebariApp, corev1.EventTypeNormal, appsv1.EventReasonValidationSuccess, "NebariApp validation completed successfully")
+	// Core validation completed successfully (logged by CoreReconciler)
 
 	// Reconcile routing (HTTPRoute creation/update) if routing is configured
 	if nebariApp.Spec.Routing != nil {
