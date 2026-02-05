@@ -199,19 +199,34 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
+      - name: Generate manifests and config
+        run: |
+          make manifests
+          make generate
+
       - name: Install Helm
         uses: azure/setup-helm@v4
         with:
           version: 'latest'
+
+      - name: Build installer manifests
+        run: make build-installer IMG="${REGISTRY}/${IMAGE_NAME}:${GITHUB_REF_NAME}"
+
+      - name: Generate Helm chart from manifests
+        run: |
+          kubebuilder edit --plugins=helm/v2-alpha --force
 
       - name: Update Chart version and appVersion
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           sed -i "s/^version:.*/version: ${VERSION}/" dist/chart/Chart.yaml
           sed -i "s/^appVersion:.*/appVersion: \"${GITHUB_REF_NAME}\"/" dist/chart/Chart.yaml
-          
-          # Update image tag in values.yaml
-          sed -i "s|tag:.*|tag: ${GITHUB_REF_NAME}|" dist/chart/values.yaml
 
       - name: Package Helm chart
         run: |
