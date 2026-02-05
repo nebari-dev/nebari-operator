@@ -4,14 +4,55 @@ metadata:
   name: sample-app
   namespace: dev-test
 spec:
+  # Hostname where the application will be accessible
   hostname: sample-app.nebari.local
+
+  # Gateway to use for routing (public or internal)
   gateway: public
+
+  # Backend Kubernetes Service
   service:
     name: sample-app
     port: 80
+
+  # Routing configuration
   routing:
     tls:
+      # Enable TLS termination (default: true)
       enabled: true
     routes:
+      # Route all traffic to the service
       - pathPrefix: /
         pathType: PathPrefix
+
+  # Authentication configuration (optional)
+  # Uncomment to enable OIDC authentication
+  # auth:
+  #   # Enable authentication (default: false)
+  #   enabled: true
+  #
+  #   # OIDC provider: "keycloak" or "generic-oidc" (default: keycloak)
+  #   provider: keycloak
+  #
+  #   # Automatically provision OIDC client (keycloak only, default: true)
+  #   provisionClient: true
+  #
+  #   # OAuth2 callback path (default: /oauth2/callback)
+  #   redirectURI: /oauth2/callback
+  #
+  #   # OIDC scopes to request (default: [openid, profile, email])
+  #   scopes:
+  #     - openid
+  #     - profile
+  #     - email
+  #     - groups
+  #
+  #   # Groups authorized to access this app (optional)
+  #   # When specified, only users in these groups can access the app
+  #   groups:
+  #     - developers
+  #     - data-scientists
+  #
+  #   # For generic-oidc provider:
+  #   # issuerURL: https://accounts.google.com
+  #   # clientSecretRef: my-app-oidc-client

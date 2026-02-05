@@ -267,6 +267,27 @@ else
 fi
 
 # ============================================
+# 8. Install Keycloak (optional, for auth testing)
+# ============================================
+log_info "Installing Keycloak for authentication testing..."
+
+if ${SCRIPT_DIR}/install-keycloak.sh; then
+    log_success "Keycloak installed"
+
+    # Set up the nebari realm
+    log_info "Setting up Keycloak nebari realm..."
+    if ${SCRIPT_DIR}/setup-keycloak-realm.sh; then
+        log_success "Keycloak realm configured"
+    else
+        log_warning "Keycloak realm setup failed, but continuing..."
+    fi
+else
+    log_warning "Keycloak installation failed, but continuing..."
+    log_info "You can manually install Keycloak later with: ${SCRIPT_DIR}/install-keycloak.sh"
+fi
+echo ""
+
+# ============================================
 # Summary
 # ============================================
 echo ""
@@ -280,6 +301,7 @@ echo "  ✅ cert-manager (v1.16.2) with Gateway API support"
 echo "  ✅ Self-signed CA ClusterIssuer"
 echo "  ✅ Wildcard certificate (*.nebari.local)"
 echo "  ✅ Shared Gateway (nebari-gateway)"
+echo "  ✅ Keycloak (with nebari realm for auth testing)"
 if [ -n "${GATEWAY_IP}" ] && [ "${GATEWAY_IP}" != "pending" ]; then
     echo "  ✅ /etc/hosts configured for nebari.local"
 fi
@@ -297,6 +319,13 @@ echo ""
 echo "📜 TLS Certificate:"
 echo "  Secret: nebari-gateway-tls (namespace: envoy-gateway-system)"
 echo "  DNS Names: *.nebari.local, nebari.local"
+echo ""
+echo "🔐 Keycloak Authentication:"
+echo "  URL: http://keycloak-keycloakx-http.keycloak.svc.cluster.local/auth"
+echo "  Admin credentials: admin/admin"
+echo "  Realm: nebari"
+echo "  Realm admin: admin/nebari-admin"
+echo "  Secret: nebari-realm-admin-credentials (namespace: keycloak)"
 echo ""
 echo "Next steps:"
 echo "  1. Deploy the operator: cd .. && make deploy"
