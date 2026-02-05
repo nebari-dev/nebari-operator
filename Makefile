@@ -63,7 +63,7 @@ test: manifests generate fmt vet setup-envtest ## Run tests.
 
 .PHONY: test-e2e
 test-e2e: manifests generate fmt vet ## Run e2e tests.
-	go test ./test/e2e -v -ginkgo.v -tags=e2e
+	USE_EXISTING_CLUSTER=$(USE_EXISTING_CLUSTER) go test ./test/e2e -v -ginkgo.v -tags=e2e
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter

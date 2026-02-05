@@ -110,12 +110,18 @@ jobs:
             .
           kind load docker-image quay.io/nebari/nebari-operator:v0.0.1 --name test-cluster
 
+      - name: Install foundational services
+        env:
+          CLUSTER_NAME: test-cluster
+        run: |
+          cd dev
+          make services-install
+          cd ..
+
       - name: Running Test e2e
         env:
-          DOCKER_BUILD_SKIP: "true"
-          IMAGE_LOAD_SKIP: "true"
-          KIND_CLUSTER_SKIP: "true"
-          KIND_CLUSTER: "test-cluster"
+          USE_EXISTING_CLUSTER: "true"
+          CLUSTER_NAME: test-cluster
         run: |
           go mod tidy
           make test-e2e

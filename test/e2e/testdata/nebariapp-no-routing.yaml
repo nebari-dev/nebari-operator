@@ -9,4 +9,3 @@ spec:
   service:
     name: test-app
     port: 80
-  routing: {}

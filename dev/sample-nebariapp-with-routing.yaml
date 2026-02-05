@@ -1,0 +1,16 @@
+apiVersion: reconcilers.nebari.dev/v1
+kind: NebariApp
+metadata:
+  name: sample-app-routing
+  namespace: dev-test
+spec:
+  hostname: sample-app-routing.nebari.local
+  gateway: public
+  service:
+    name: sample-app
+    port: 80
+  routing:
+    # TLS enabled by default (will use HTTPS listener)
+    routes:
+      - pathPrefix: /
+        pathType: PathPrefix

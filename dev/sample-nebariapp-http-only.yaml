@@ -1,0 +1,19 @@
+apiVersion: reconcilers.nebari.dev/v1
+kind: NebariApp
+metadata:
+  name: sample-app-http
+  namespace: dev-test
+  annotations:
+    nebari.dev/tls-enabled: "false"
+spec:
+  hostname: sample-app-http.local.nebari.dev
+  gateway: public
+  service:
+    name: sample-app
+    port: 80
+  routing:
+    tls:
+      enabled: false  # Use HTTP listener instead of HTTPS
+    routes:
+      - pathPrefix: /
+        pathType: PathPrefix

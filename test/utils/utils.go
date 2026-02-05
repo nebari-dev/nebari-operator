@@ -22,22 +22,16 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2" // nolint:revive,staticcheck
 )
 
 const (
-	certmanagerVersion = "v1.19.1"
-	certmanagerURLTmpl = "https://github.com/cert-manager/cert-manager/releases/download/%s/cert-manager.yaml"
-
 	defaultKindBinary  = "kind"
 	defaultKindCluster = "kind"
 )
-
-func warnError(err error) {
-	_, _ = fmt.Fprintf(GinkgoWriter, "warning: %v\n", err)
-}
 
 // Run executes the provided command within this context
 func Run(cmd *exec.Cmd) (string, error) {
@@ -59,78 +53,32 @@ func Run(cmd *exec.Cmd) (string, error) {
 	return string(output), nil
 }
 
-// UninstallCertManager uninstalls the cert manager
-func UninstallCertManager() {
-	url := fmt.Sprintf(certmanagerURLTmpl, certmanagerVersion)
-	cmd := exec.Command("kubectl", "delete", "-f", url)
-	if _, err := Run(cmd); err != nil {
-		warnError(err)
-	}
-
-	// Delete leftover leases in kube-system (not cleaned by default)
-	kubeSystemLeases := []string{
-		"cert-manager-cainjector-leader-election",
-		"cert-manager-controller",
-	}
-	for _, lease := range kubeSystemLeases {
-		cmd = exec.Command("kubectl", "delete", "lease", lease,
-			"-n", "kube-system", "--ignore-not-found", "--force", "--grace-period=0")
-		if _, err := Run(cmd); err != nil {
-			warnError(err)
-		}
-	}
-}
-
-// InstallCertManager installs the cert manager bundle.
-func InstallCertManager() error {
-	url := fmt.Sprintf(certmanagerURLTmpl, certmanagerVersion)
-	cmd := exec.Command("kubectl", "apply", "-f", url)
-	if _, err := Run(cmd); err != nil {
-		return err
-	}
-	// Wait for cert-manager-webhook to be ready, which can take time if cert-manager
-	// was re-installed after uninstalling on a cluster.
-	cmd = exec.Command("kubectl", "wait", "deployment.apps/cert-manager-webhook",
-		"--for", "condition=Available",
-		"--namespace", "cert-manager",
-		"--timeout", "5m",
-	)
-
+// IsCertManagerInstalled checks if cert-manager is installed by checking for its CRDs.
+func IsCertManagerInstalled() bool {
+	cmd := exec.Command("kubectl", "get", "crd", "certificates.cert-manager.io")
 	_, err := Run(cmd)
-	return err
+	return err == nil
 }
 
-// IsCertManagerCRDsInstalled checks if any Cert Manager CRDs are installed
-// by verifying the existence of key CRDs related to Cert Manager.
-func IsCertManagerCRDsInstalled() bool {
-	// List of common Cert Manager CRDs
-	certManagerCRDs := []string{
-		"certificates.cert-manager.io",
-		"issuers.cert-manager.io",
-		"clusterissuers.cert-manager.io",
-		"certificaterequests.cert-manager.io",
-		"orders.acme.cert-manager.io",
-		"challenges.acme.cert-manager.io",
-	}
+// IsEnvoyGatewayInstalled checks if Envoy Gateway is installed.
+func IsEnvoyGatewayInstalled() bool {
+	cmd := exec.Command("kubectl", "get", "deployment", "envoy-gateway", "-n", "envoy-gateway-system")
+	_, err := Run(cmd)
+	return err == nil
+}
 
-	// Execute the kubectl command to get all CRDs
-	cmd := exec.Command("kubectl", "get", "crds")
-	output, err := Run(cmd)
-	if err != nil {
-		return false
-	}
+// IsGatewayAPIInstalled checks if Gateway API CRDs are installed.
+func IsGatewayAPIInstalled() bool {
+	cmd := exec.Command("kubectl", "get", "crd", "gateways.gateway.networking.k8s.io")
+	_, err := Run(cmd)
+	return err == nil
+}
 
-	// Check if any of the Cert Manager CRDs are present
-	crdList := GetNonEmptyLines(output)
-	for _, crd := range certManagerCRDs {
-		for _, line := range crdList {
-			if strings.Contains(line, crd) {
-				return true
-			}
-		}
-	}
-
-	return false
+// IsGatewayReady checks if the nebari-gateway exists and is ready.
+func IsGatewayReady() bool {
+	cmd := exec.Command("kubectl", "get", "gateway", "nebari-gateway", "-n", "envoy-gateway-system")
+	_, err := Run(cmd)
+	return err == nil
 }
 
 // CreateKindCluster creates a kind cluster with the given name
@@ -298,8 +246,19 @@ func LoadTestDataFile(filename string, replacements map[string]string) (string, 
 	}
 
 	result := string(content)
-	for placeholder, value := range replacements {
-		result = strings.ReplaceAll(result, placeholder, value)
+
+	// Sort placeholders by length (descending) to avoid partial replacements
+	// e.g., replace "HOSTNAME_PLACEHOLDER" before "NAME_PLACEHOLDER"
+	placeholders := make([]string, 0, len(replacements))
+	for placeholder := range replacements {
+		placeholders = append(placeholders, placeholder)
+	}
+	sort.Slice(placeholders, func(i, j int) bool {
+		return len(placeholders[i]) > len(placeholders[j])
+	})
+
+	for _, placeholder := range placeholders {
+		result = strings.ReplaceAll(result, placeholder, replacements[placeholder])
 	}
 
 	return result, nil

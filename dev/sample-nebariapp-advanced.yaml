@@ -1,0 +1,23 @@
+apiVersion: reconcilers.nebari.dev/v1
+kind: NebariApp
+metadata:
+  name: sample-app-advanced
+  namespace: dev-test
+spec:
+  hostname: sample-app-advanced.local.nebari.dev
+  gateway: public
+  service:
+    name: sample-app
+    port: 80
+  routing:
+    # TLS enabled (will use HTTPS listener on Gateway)
+    tls:
+      enabled: true
+    # Multiple route rules
+    routes:
+      - pathPrefix: /api
+        pathType: PathPrefix
+      - pathPrefix: /app
+        pathType: PathPrefix
+      - pathPrefix: /health
+        pathType: PathPrefix
