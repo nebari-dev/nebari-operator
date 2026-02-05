@@ -94,10 +94,46 @@ jobs:
           cache: true
 
       - name: Create KinD Cluster
-        id: kind
         uses: helm/kind-action@v1
         with:
           cluster_name: test-cluster
+
+      - name: Install MetalLB
+        run: |
+          kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.14.8/config/manifests/metallb-native.yaml
+
+          kubectl wait --namespace metallb-system \
+            --for=condition=available deployment/controller \
+            --timeout=90s
+
+          kubectl wait --namespace metallb-system \
+            --for=jsonpath='{.status.numberReady}'=1 \
+            daemonset/speaker \
+            --timeout=90s
+
+          # Configure MetalLB IP address pool
+          KIND_NET_CIDR=$(docker network inspect kind -f '{{range .IPAM.Config}}{{.Subnet}}{{"\n"}}{{end}}' | grep '\.' | head -n1)
+          BASE_IP=$(echo ${KIND_NET_CIDR} | awk -F. '{print $1"."$2}')
+
+          kubectl apply -f - <<EOF
+          apiVersion: metallb.io/v1beta1
+          kind: IPAddressPool
+          metadata:
+            name: kind-pool
+            namespace: metallb-system
+          spec:
+            addresses:
+            - ${BASE_IP}.255.200-${BASE_IP}.255.250
+          ---
+          apiVersion: metallb.io/v1beta1
+          kind: L2Advertisement
+          metadata:
+            name: kind-l2
+            namespace: metallb-system
+          spec:
+            ipAddressPools:
+            - kind-pool
+          EOF
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3

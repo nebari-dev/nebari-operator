@@ -29,7 +29,7 @@ go.work.sum
 
 # Editor/IDE
 # .idea/
-# .vscode/
+.vscode/
 
 # Go build files
 bin
@@ -40,5 +40,6 @@ dist/
 !dist/chart/
 Dockerfile.cross
 
-#
+# MacOS files
 .DS_Store
+

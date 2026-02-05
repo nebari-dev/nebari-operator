@@ -52,13 +52,18 @@ var _ = Describe("HTTPRoute Connectivity", Ordered, func() {
 			Skip("Gateway 'nebari-gateway' not found - run 'make setup' in dev/ first")
 		}
 
-		By("getting Gateway LoadBalancer IP")
-		cmd = exec.Command("kubectl", "get", "svc", "-n", "envoy-gateway-system",
-			"-l", "gateway.envoyproxy.io/owning-gateway-name=nebari-gateway",
-			"-o", "jsonpath={.items[0].status.loadBalancer.ingress[0].ip}")
-		gatewayIP, err = utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to get Gateway IP")
-		Expect(gatewayIP).NotTo(BeEmpty(), "Gateway IP is empty")
+		By("waiting for Gateway LoadBalancer IP")
+		Eventually(func() string {
+			cmd := exec.Command("kubectl", "get", "svc", "-n", "envoy-gateway-system",
+				"-l", "gateway.envoyproxy.io/owning-gateway-name=nebari-gateway",
+				"-o", "jsonpath={.items[0].status.loadBalancer.ingress[0].ip}")
+			output, err := utils.Run(cmd)
+			if err != nil {
+				return ""
+			}
+			gatewayIP = strings.TrimSpace(output)
+			return gatewayIP
+		}, 3*time.Minute, 5*time.Second).ShouldNot(BeEmpty(), "Gateway LoadBalancer IP not assigned")
 
 		By(fmt.Sprintf("Gateway IP: %s", gatewayIP))
 
