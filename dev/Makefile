@@ -14,19 +14,19 @@ help: ## Show this help message
 
 cluster-create: ## Create Kind cluster for development
 	@echo "Creating Kind cluster: $(CLUSTER_NAME)..."
-	@./setup-cluster.sh
+	@./scripts/cluster/create.sh
 
 cluster-delete: ## Delete Kind cluster
 	@echo "Deleting Kind cluster: $(CLUSTER_NAME)..."
-	@kind delete cluster --name $(CLUSTER_NAME)
+	@./scripts/cluster/delete.sh
 
 services-install: ## Install foundational services (Envoy Gateway, cert-manager, etc.)
 	@echo "Installing foundational services..."
-	@./install-services.sh
+	@./scripts/services/install.sh
 
 services-uninstall: ## Uninstall foundational services
 	@echo "Uninstalling foundational services..."
-	@./uninstall-services.sh
+	@./scripts/services/uninstall.sh
 
 setup: cluster-create services-install ## Full setup: create cluster and install services
 	@echo ""
@@ -60,3 +60,17 @@ status: ## Show status of development environment
 		echo ""; \
 		echo "Run 'make cluster-create' to create it"; \
 	fi
+
+update-hosts: ## Update /etc/hosts with NebariApp hostnames
+	@./scripts/networking/update-hosts.sh
+
+test-connectivity: ## Test connectivity to a NebariApp (usage: make test-connectivity APP=<name> NS=<namespace>)
+	@if [ -z "$(APP)" ]; then \
+		echo "Usage: make test-connectivity APP=<app-name> NS=<namespace>"; \
+		echo "Example: make test-connectivity APP=sample-app-routing NS=default"; \
+		exit 1; \
+	fi
+	@./scripts/testing/test-connectivity.sh $(APP) $(NS)
+
+port-forward: ## Setup port forwarding for local access
+	@./scripts/networking/port-forward.sh

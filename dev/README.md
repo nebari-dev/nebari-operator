@@ -2,6 +2,32 @@
 
 This directory contains scripts and tools for setting up a local development environment for the NIC Operator.
 
+## Directory Structure
+
+```
+dev/
+├── Makefile                    # Main automation interface
+├── README.md                   # This file
+├── scripts/                    # Development automation scripts
+│   ├── cluster/               # Cluster lifecycle management
+│   │   ├── create.sh          # Create Kind cluster with MetalLB
+│   │   └── delete.sh          # Delete Kind cluster
+│   ├── services/              # Service installation
+│   │   ├── install.sh         # Install Envoy Gateway, cert-manager, Gateway
+│   │   └── uninstall.sh       # Uninstall all services
+│   ├── networking/            # Network configuration
+│   │   ├── update-hosts.sh    # Manage /etc/hosts entries for NebariApps
+│   │   └── port-forward.sh    # Setup port forwarding for local access
+│   └── testing/               # Testing utilities
+│       └── test-connectivity.sh  # Test HTTP/HTTPS connectivity to apps
+└── examples/                   # Example NebariApp manifests
+    ├── basic.yaml
+    ├── advanced.yaml
+    ├── http-only.yaml
+    ├── with-routing.yaml
+    └── app-deployment.yaml     # Test application deployment
+```
+
 ## Quick Start
 
 ```bash
@@ -24,6 +50,10 @@ make services-install    # Install Envoy Gateway, cert-manager, etc.
 make setup              # Full setup (cluster + services)
 make teardown           # Full cleanup
 make status             # Check environment status
+make update-hosts       # Update /etc/hosts with all NebariApp hostnames
+make test-connectivity  # Test HTTP/HTTPS connectivity to an app
+                        # Usage: make test-connectivity APP=<name> NS=<namespace>
+make port-forward       # Setup port forwarding for local access
 ```
 
 ## What Gets Installed
@@ -119,18 +149,36 @@ make test-e2e
 
 ## Accessing Services
 
-### Gateway LoadBalancer IP
+### DNS Configuration
 
-Get the external IP assigned by MetalLB:
+The setup automatically configures `/etc/hosts` to resolve `*.nebari.local` domains to the Gateway's LoadBalancer IP.
+
+#### Automatic Setup (during `make setup`)
+
+The `services-install` script automatically:
+1. Gets the Gateway's LoadBalancer IP from MetalLB
+2. Adds a base entry: `<GATEWAY_IP> nebari.local # nebari-gateway`
+
+#### Adding App-Specific Hostnames
+
+After creating NebariApp resources, add their hostnames to `/etc/hosts`:
 
 ```bash
-kubectl get svc -n envoy-gateway-system \
-  -l gateway.envoyproxy.io/owning-gateway-name=nebari-gateway
+# Add specific app hostname
+./scripts/networking/update-hosts.sh sample-app-routing
+
+# Or scan and add all NebariApp hostnames automatically
+./scripts/networking/update-hosts.sh
 ```
 
-### Testing Routes
+This adds entries like:
+```
+172.18.255.200 sample-app-routing.nebari.local # nebari-gateway
+```
 
-Add to `/etc/hosts` (macOS/Linux):
+#### Manual Configuration
+
+If needed, you can manually add entries:
 
 ```bash
 # Get Gateway IP
@@ -138,15 +186,54 @@ GATEWAY_IP=$(kubectl get svc -n envoy-gateway-system \
   -l gateway.envoyproxy.io/owning-gateway-name=nebari-gateway \
   -o jsonpath='{.items[0].status.loadBalancer.ingress[0].ip}')
 
-# Add entries
-echo "${GATEWAY_IP} my-app.nebari.local" | sudo tee -a /etc/hosts
+# Add entry
+echo "${GATEWAY_IP} my-app.nebari.local # nebari-gateway" | sudo tee -a /etc/hosts
 ```
 
-Then test:
+### Testing Routes
+
+Once DNS is configured, test your apps:
 
 ```bash
-curl http://my-app.nebari.local
-curl -k https://my-app.nebari.local  # -k for self-signed cert
+# HTTP (redirects to HTTPS if TLS enabled)
+curl http://sample-app-routing.nebari.local
+
+# HTTPS (use -k for self-signed cert)
+curl -k https://sample-app-routing.nebari.local
+
+# View headers and follow redirects
+curl -v -L -k https://sample-app-routing.nebari.local
+
+# Test from browser
+# Open: https://sample-app-routing.nebari.local
+# (Accept the self-signed certificate warning)
+```
+
+**Automated Testing**
+
+Use the test-connectivity script to check if an app is reachable:
+
+```bash
+# Test specific app
+make test-connectivity APP=sample-app-routing NS=default
+
+# Or use the script directly
+./scripts/testing/test-connectivity.sh sample-app-routing default
+```
+
+This will:
+- Check if the NebariApp exists and is ready
+- Test HTTP and HTTPS connectivity
+- Show curl commands for manual testing
+- Check if hostname is in /etc/hosts
+
+### Gateway LoadBalancer IP
+
+To view the Gateway's external IP:
+
+```bash
+kubectl get svc -n envoy-gateway-system \
+  -l gateway.envoyproxy.io/owning-gateway-name=nebari-gateway
 ```
 
 ## Troubleshooting

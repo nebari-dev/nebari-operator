@@ -63,7 +63,7 @@ helm upgrade --install eg oci://docker.io/envoyproxy/gateway-helm \
     --version v1.2.4 \
     --namespace envoy-gateway-system \
     --wait \
-    --timeout 5m
+    --timeout 5m 2>&1 | grep -v "unrecognized format"
 
 # Wait for Gateway API CRDs to be established
 log_info "Waiting for Gateway API CRDs to be established..."
@@ -240,6 +240,33 @@ kubectl wait --for=condition=Programmed gateway/nebari-gateway -n envoy-gateway-
     log_warning "Gateway not yet programmed, continuing..."
 
 # ============================================
+# 7. Configure /etc/hosts for nebari.local
+# ============================================
+GATEWAY_IP=$(kubectl get svc -n envoy-gateway-system -l gateway.envoyproxy.io/owning-gateway-name=nebari-gateway -o jsonpath='{.items[0].status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+
+if [ -n "${GATEWAY_IP}" ] && [ "${GATEWAY_IP}" != "pending" ]; then
+    log_info "Configuring /etc/hosts for nebari.local domains..."
+    
+    # Check if we need sudo
+    if [ -w "/etc/hosts" ]; then
+        SUDO_CMD=""
+    else
+        SUDO_CMD="sudo"
+    fi
+    
+    # Remove old nebari.local entries
+    ${SUDO_CMD} sed -i.bak '/# nebari-gateway$/d' /etc/hosts 2>/dev/null || true
+    
+    # Add base nebari.local entry
+    echo "${GATEWAY_IP} nebari.local # nebari-gateway" | ${SUDO_CMD} tee -a /etc/hosts > /dev/null
+    
+    log_success "/etc/hosts configured with Gateway IP: ${GATEWAY_IP}"
+    log_info "To add app-specific hostnames, use: ${SCRIPT_DIR}/../networking/update-hosts.sh <app-name>"
+else
+    log_warning "Gateway IP not available yet. Run '${SCRIPT_DIR}/../networking/update-hosts.sh' later to configure /etc/hosts"
+fi
+
+# ============================================
 # Summary
 # ============================================
 echo ""
@@ -253,14 +280,19 @@ echo "  ✅ cert-manager (v1.16.2) with Gateway API support"
 echo "  ✅ Self-signed CA ClusterIssuer"
 echo "  ✅ Wildcard certificate (*.nebari.local)"
 echo "  ✅ Shared Gateway (nebari-gateway)"
+if [ -n "${GATEWAY_IP}" ] && [ "${GATEWAY_IP}" != "pending" ]; then
+    echo "  ✅ /etc/hosts configured for nebari.local"
+fi
 echo ""
 echo "🌐 Gateway Information:"
 echo "  Name: nebari-gateway"
 echo "  Namespace: envoy-gateway-system"
 echo "  GatewayClass: envoy-gateway"
-echo ""
-GATEWAY_IP=$(kubectl get svc -n envoy-gateway-system -l gateway.envoyproxy.io/owning-gateway-name=nebari-gateway -o jsonpath='{.items[0].status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "pending")
-echo "  LoadBalancer IP: ${GATEWAY_IP}"
+if [ -n "${GATEWAY_IP}" ] && [ "${GATEWAY_IP}" != "pending" ]; then
+    echo "  LoadBalancer IP: ${GATEWAY_IP}"
+else
+    echo "  LoadBalancer IP: pending"
+fi
 echo ""
 echo "📜 TLS Certificate:"
 echo "  Secret: nebari-gateway-tls (namespace: envoy-gateway-system)"

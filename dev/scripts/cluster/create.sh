@@ -53,8 +53,6 @@ nodes:
     nodeRegistration:
       kubeletExtraArgs:
         node-labels: "ingress-ready=true"
-- role: worker
-- role: worker
 EOF
 
 if [ $? -eq 0 ]; then
@@ -67,12 +65,16 @@ fi
 # Install MetalLB for LoadBalancer support
 log_info "Installing MetalLB for LoadBalancer services..."
 
-kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.14.8/config/manifests/metallb-native.yaml
+kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.14.8/config/manifests/metallb-native.yaml 2>&1 | grep -v "unrecognized format"
 
 log_info "Waiting for MetalLB to be ready..."
 kubectl wait --namespace metallb-system \
-    --for=condition=ready pod \
-    --selector=app=metallb \
+    --for=condition=available deployment/controller \
+    --timeout=90s
+
+kubectl wait --namespace metallb-system \
+    --for=jsonpath='{.status.numberReady}'=1 \
+    daemonset/speaker \
     --timeout=90s
 
 # Get the kind network subnet - ensure we get IPv4
