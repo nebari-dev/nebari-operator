@@ -5,8 +5,8 @@ applications in the Nebari App Ecosystem.
 
 ## Overview
 
-The Nebari Operator enables **self-service application onboarding** in GitOps-friendly Kubernetes platforms. When a new app
-is deployed via Helm or Argo CD, the operator automatically configures:
+The Nebari Operator enables **self-service application onboarding** in GitOps-friendly Kubernetes platforms. When a new
+app is deployed via Helm or Argo CD, the operator automatically configures:
 
 - **HTTP/HTTPS Routes** (Gateway API HTTPRoute)
 - **TLS Certificates** (via cert-manager)
