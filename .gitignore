@@ -30,14 +30,12 @@ go.work.sum
 # Editor/IDE
 # .idea/
 .vscode/
-.devcontainer/
 
 # Go build files
 bin
 
 # Release artifacts
 dist/
-config/
 
 # But keep the helm chart in git
 !dist/chart/
