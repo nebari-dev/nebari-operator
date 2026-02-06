@@ -172,9 +172,9 @@ jobs:
       - name: Install/Setup Keycloak
         run: |
           cd dev
-          ./install-keycloak.sh
-
-          ./setup-keycloak-realm.sh
+          # Keycloak is now installed as part of services-install
+          # Just run realm setup
+          ./scripts/services/keycloak/setup.sh
           cd ..
 
       - name: Running Test e2e
