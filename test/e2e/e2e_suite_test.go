@@ -69,7 +69,7 @@ var _ = BeforeSuite(func() {
 	// Set cluster name for Kind utilities
 	clusterName := os.Getenv("CLUSTER_NAME")
 	if clusterName == "" {
-		clusterName = "nic-operator-dev"
+		clusterName = "nebari-operator-dev"
 	}
 	os.Setenv("KIND_CLUSTER", clusterName)
 	os.Setenv("CLUSTER_NAME", clusterName)
