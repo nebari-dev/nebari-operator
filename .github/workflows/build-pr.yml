@@ -70,6 +70,7 @@ jobs:
       - name: Check for generated code changes
         run: |
           git diff --exit-code || (echo "Generated code is out of date. Run 'make generate'" && exit 1)
+
   test:
     name: Unit Tests
     runs-on: ubuntu-latest
@@ -203,8 +204,8 @@ jobs:
         run: |
           curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 
-      - name: Verify Helm installation
-        run: helm version
+      - name: Generate Helm chart
+        run: make helm-chart
 
       - name: Lint Helm Chart
         run: helm lint ./dist/chart

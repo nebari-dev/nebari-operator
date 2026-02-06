@@ -216,19 +216,18 @@ jobs:
         with:
           version: 'latest'
 
-      - name: Generate Helm chart from manifests
+      - name: Generate Helm chart
         run: |
-          kubebuilder edit --plugins=helm/v2-alpha --force
+          make build-installer IMG="${REGISTRY}/${IMAGE_NAME}:${GITHUB_REF_NAME}"
+          make helm-chart
 
       - name: Update Chart version and appVersion
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          sed -i "s/^version:.*/version: ${VERSION}/" dist/chart/Chart.yaml
-          sed -i "s/^appVersion:.*/appVersion: \"${GITHUB_REF_NAME}\"/" dist/chart/Chart.yaml
+          make helm-chart-version VERSION="${VERSION}" APP_VERSION="${GITHUB_REF_NAME}"
 
       - name: Package Helm chart
-        run: |
-          helm package dist/chart --destination dist/
+        run: make helm-package
 
       - name: Upload Helm chart to release
         uses: softprops/action-gh-release@v2

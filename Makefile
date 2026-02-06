@@ -121,6 +121,38 @@ build-installer: manifests generate kustomize ## Generate a consolidated YAML wi
 	cd config/manager && "$(KUSTOMIZE)" edit set image controller=${IMG}
 	"$(KUSTOMIZE)" build config/default > dist/install.yaml
 
+.PHONY: helm-chart
+helm-chart: build-installer ## Generate Helm chart from manifests using kubebuilder.
+	@command -v kubebuilder >/dev/null 2>&1 || { echo >&2 "kubebuilder is required but not installed. See https://book.kubebuilder.io/quick-start.html#installation"; exit 1; }
+	kubebuilder edit --plugins=helm/v2-alpha --force
+	@echo "✅ Helm chart generated in dist/chart/"
+	@echo ""
+	@echo "To package the chart:"
+	@echo "  make helm-package"
+	@echo ""
+	@echo "To update chart version:"
+	@echo "  make helm-chart-version VERSION=1.0.0 APP_VERSION=v1.0.0"
+
+.PHONY: helm-package
+helm-package: ## Package the Helm chart (run helm-chart first).
+	@command -v helm >/dev/null 2>&1 || { echo >&2 "helm is required but not installed. See https://helm.sh/docs/intro/install/"; exit 1; }
+	@if [ ! -d "dist/chart" ]; then echo "Error: dist/chart/ not found. Run 'make helm-chart' first."; exit 1; fi
+	helm package dist/chart --destination dist/
+	@echo "✅ Helm chart packaged in dist/"
+
+.PHONY: helm-chart-version
+helm-chart-version: ## Update Helm chart version and appVersion (requires VERSION and APP_VERSION vars).
+	@if [ -z "$(VERSION)" ] || [ -z "$(APP_VERSION)" ]; then \
+		echo "Error: VERSION and APP_VERSION must be set"; \
+		echo "Usage: make helm-chart-version VERSION=1.0.0 APP_VERSION=v1.0.0"; \
+		exit 1; \
+	fi
+	@if [ ! -f "dist/chart/Chart.yaml" ]; then echo "Error: dist/chart/Chart.yaml not found. Run 'make helm-chart' first."; exit 1; fi
+	sed -i.bak "s/^version:.*/version: $(VERSION)/" dist/chart/Chart.yaml
+	sed -i.bak "s/^appVersion:.*/appVersion: \"$(APP_VERSION)\"/" dist/chart/Chart.yaml
+	rm -f dist/chart/Chart.yaml.bak
+	@echo "✅ Updated chart version to $(VERSION) and appVersion to $(APP_VERSION)"
+
 ##@ Deployment
 
 ifndef ignore-not-found
