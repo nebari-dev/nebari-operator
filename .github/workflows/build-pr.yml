@@ -170,6 +170,8 @@ jobs:
           cd ..
 
       - name: Install/Setup Keycloak
+        env:
+          CLUSTER_NAME: test-cluster
         run: |
           cd dev
           # Keycloak is now installed as part of services-install
