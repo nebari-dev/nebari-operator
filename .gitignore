@@ -44,3 +44,8 @@ Dockerfile.cross
 # MacOS files
 .DS_Store
 
+
+# Backup files
+*~
+*.swp
+*.bak

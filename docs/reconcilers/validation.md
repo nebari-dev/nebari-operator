@@ -1,4 +1,7 @@
-# Core Validation Structure
+# Validation Reconciler
+
+> **Part of:** [Reconciler Architecture](README.md) **Phase:** 1 of 3 (Validation → Routing → Authentication)
+> **Purpose:** Ensure all prerequisites are met before resource provisioning
 
 ## Overview
 
