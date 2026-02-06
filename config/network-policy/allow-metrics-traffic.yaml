@@ -9,6 +9,7 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: allow-metrics-traffic
   namespace: system
+# this is a check to see if the action will prompt the user to not make changes here...
 spec:
   podSelector:
     matchLabels:
