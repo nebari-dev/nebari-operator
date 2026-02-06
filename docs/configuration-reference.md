@@ -231,6 +231,7 @@ specify your app's callback path (e.g., `/auth/callback`).
 
 References a Kubernetes Secret containing OIDC client credentials. The secret must be in the same namespace as the
 NebariApp and contain:
+- `client-id`: The OIDC client ID
 - `client-secret`: The OIDC client secret
 
 If not specified and `provisionClient` is enabled, the operator will create a secret named
@@ -588,14 +589,16 @@ administrator for namespace requirements.
 
 ### Certificate Requirements
 
-When using `tls.mode: perHost`:
-- The specified cert-manager Issuer/ClusterIssuer must exist
-- The Issuer must be able to provision certificates for the specified hostname
-- DNS must be properly configured for certificate validation (if using ACME/Let's Encrypt)
+When using TLS (`routing.tls.enabled: true` or omitted):
+- The Gateway must have a valid TLS certificate configured
+- For development: Use self-signed certificates via cert-manager
+- For production: Use Let's Encrypt or your organization's CA
+- The operator does not manage certificates - cert-manager handles this
 
 ### Authentication Requirements
 
 When `auth.enabled: true`:
-- A Keycloak instance must be available and configured
-- If `provisionClient: true`, the operator needs permissions to create Keycloak clients
-- If `clientSecretRef` is specified, the secret must exist and contain valid credentials
+- An OIDC provider must be available (Keycloak or generic-oidc)
+- For Keycloak with `provisionClient: true`: Operator needs admin credentials
+- For generic-oidc or `provisionClient: false`: Client secret must exist
+- Client secret must contain `client-id` and `client-secret` keys

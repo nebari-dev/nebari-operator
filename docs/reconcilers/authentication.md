@@ -1,4 +1,7 @@
-# Authentication Reconciler Structure
+# Authentication Reconciler
+
+> **Part of:** [Reconciler Architecture](README.md) **Phase:** 3 of 3 (Validation → Routing → Authentication)
+> **Purpose:** Configure OIDC authentication and authorization
 
 ## Overview
 

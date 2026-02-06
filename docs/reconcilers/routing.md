@@ -1,4 +1,7 @@
-# Routing Integration with Foundational Infrastructure
+# Routing Reconciler
+
+> **Part of:** [Reconciler Architecture](README.md) **Phase:** 2 of 3 (Validation → Routing → Authentication)
+> **Purpose:** Configure HTTP/HTTPS routing via Gateway API
 
 ## Overview
 
@@ -196,7 +199,9 @@ spec:
 
 #### Default Routing (No Paths Specified)
 
-When no routes are specified in the NebariApp, the operator creates an HTTPRoute with an empty `matches` array. The Gateway API (Envoy Gateway) automatically adds a default path match of `"/"` with type `PathPrefix` when the matches array is empty or null.
+When no routes are specified in the NebariApp, the operator creates an HTTPRoute with an empty `matches` array. The
+Gateway API (Envoy Gateway) automatically adds a default path match of `"/"` with type `PathPrefix` when the matches
+array is empty or null.
 
 **NebariApp spec (no routes):**
 ```yaml
@@ -263,7 +268,8 @@ rules:
         port: 8080
 ```
 
-**Note:** All path rules are combined into a single HTTPRoute rule with multiple matches, following Gateway API best practices. All matches route to the same backend service.
+**Note:** All path rules are combined into a single HTTPRoute rule with multiple matches, following Gateway API best
+practices. All matches route to the same backend service.
 
 ### Backend References
 
