@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 
-# Uninstall foundational services from nic-operator development cluster
+# Uninstall foundational services from nebari-operator development cluster
 
 set -euo pipefail
 
-export CLUSTER_NAME="${CLUSTER_NAME:-nic-operator-dev}"
+export CLUSTER_NAME="${CLUSTER_NAME:-nebari-operator-dev}"
 
 # Color codes
 RED='\033[0;31m'
@@ -36,9 +36,9 @@ kubectl delete certificate nebari-gateway-cert -n envoy-gateway-system --ignore-
 
 log_success "Gateway resources deleted"
 
-# Uninstall Keycloak
+# Uninstall Keycloak (if installed)
 log_info "Uninstalling Keycloak..."
-helm uninstall keycloak -n keycloak 2>/dev/null || true
+helm uninstall keycloak -n keycloak 2>/dev/null || log_warning "Keycloak not installed"
 kubectl delete namespace keycloak --ignore-not-found --timeout=60s
 
 log_success "Keycloak uninstalled"

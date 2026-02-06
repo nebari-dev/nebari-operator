@@ -1,46 +1,12 @@
-# NIC Operator
+# Nebari Operator
 
-Kubernetes Operator that streamlines **routing**, **TLS certificates**, and **SSO authentication** configuration for
-applications in the Nebari NIC ecosystem.
-
-## Overview
-
-The NIC Operator enables **self-service application onboarding** in GitOps-friendly Kubernetes platforms. When a new app
-is deployed via Helm or Argo CD, the operator automatically configures:
+The Nebari Operator enables **self-service application onboarding** in GitOps-friendly Kubernetes platforms. When a new
+app is deployed via Helm or Argo CD, the operator automatically configures:
 
 - **HTTP/HTTPS Routes** (Gateway API HTTPRoute)
-- **TLS Certificates** (via cert-manager)
+- **TLS Termination** (via cert-manager)
 - **SSO Authentication** (OIDC with Keycloak)
 - **Security Policies** (Envoy Gateway SecurityPolicy)
-
-### Platform Architecture
-
-This operator works within a platform that includes:
-- **Argo CD** - GitOps application deployment
-- **Envoy Gateway** - Gateway API implementation (north/south traffic)
-- **cert-manager** - TLS certificate provisioning and renewal
-- **Keycloak** - OIDC authentication provider (optional)
-
-```mermaid
-flowchart TB
-  Helm[Helm/Argo CD Deploy] --> K8s[(Kubernetes API)]
-  K8s --> AppCR[NebariApp CR]
-
-  subgraph Operator[nebari-operator]
-    Core[Core Validator]
-    Routing[Routing Reconciler]
-    Auth[Auth Reconciler]
-  end
-
-  AppCR --> Core
-  Core --> Routing --> HTTPRoute[HTTPRoute]
-  HTTPRoute --> Gateway[Gateway + TLS]
-
-  Core --> Auth --> SecPol[SecurityPolicy OIDC]
-  Auth --> KC[Keycloak Client Optional]
-  KC --> Secret[K8s Secret]
-  Secret --> SecPol
-```
 
 ## Quick Start
 
@@ -55,10 +21,13 @@ Get started in 5 minutes! Follow our [Quick Start Guide](docs/quickstart.md) to:
 
 ## Features
 
-✅ **Declarative Configuration** - Single CRD defines routing, TLS, and auth ✅ **Automatic Route Generation** - HTTPRoute
-resources created automatically ✅ **TLS Management** - Seamless cert-manager integration ✅ **OIDC Authentication** -
-Optional SSO with Keycloak ✅ **GitOps Compatible** - Continuously reconciled with desired state ✅ **Multi-Platform** -
-Works with any Kubernetes (cloud, on-prem, local) ✅ **Namespace Isolation** - Opt-in per namespace with labels
+- ✅ **Declarative Configuration** - Single CRD defines routing, TLS, and auth
+- ✅ **Automatic Route Generation** - HTTPRoute resources created automatically
+- ✅ **TLS Management** - Seamless cert-manager integration
+- ✅ **OIDC Authentication** - Optional SSO with Keycloak
+- ✅ **GitOps Compatible** - Continuously reconciled with desired state
+- ✅ **Multi-Platform** - Works with any Kubernetes (cloud, on-prem, local)
+- ✅ **Namespace Isolation** - Opt-in per namespace with labels
 
 ## Documentation
 
@@ -175,7 +144,7 @@ make setup
 # Build and deploy operator
 cd ..
 make docker-build IMG=quay.io/nebari/nebari-operator:dev
-kind load docker-image quay.io/nebari/nebari-operator:dev --name nic-operator-dev
+kind load docker-image quay.io/nebari/nebari-operator:dev --name nebari-operator-dev
 make install deploy IMG=quay.io/nebari/nebari-operator:dev
 
 # Deploy sample application
@@ -184,7 +153,7 @@ kubectl apply -f dev/sample-nebariapp-with-routing.yaml
 
 # Test changes
 make docker-build IMG=quay.io/nebari/nebari-operator:dev
-kind load docker-image quay.io/nebari/nebari-operator:dev --name nic-operator-dev
+kind load docker-image quay.io/nebari/nebari-operator:dev --name nebari-operator-dev
 kubectl rollout restart deployment nebari-operator-controller-manager -n nebari-operator-system
 
 # Cleanup

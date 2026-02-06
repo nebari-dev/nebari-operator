@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 
-# Delete Kind cluster for nic-operator development
+# Delete Kind cluster for nebari-operator development
 
 set -euo pipefail
 
-export CLUSTER_NAME="${CLUSTER_NAME:-nic-operator-dev}"
+export CLUSTER_NAME="${CLUSTER_NAME:-nebari-operator-dev}"
 
 # Color codes
 RED='\033[0;31m'

@@ -118,7 +118,36 @@ var _ = Describe("NebariApp Reconciliation", Ordered, func() {
 			output, err := utils.Run(cmd)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(output).To(Equal("1"))
-		}, 2*time.Minute, time.Second).Should(Succeed())
+		}, 2*time.Minute, time.Second).Should(Succeed(), func() string {
+			// Collect diagnostic information when deployment fails
+			diagnostics := "\n=== Deployment Diagnostic Information ===\n"
+
+			// Get deployment details
+			cmd := exec.Command("kubectl", "get", "deployment", "test-app", "-n", testNamespace, "-o", "yaml")
+			if output, err := utils.Run(cmd); err == nil {
+				diagnostics += "\nDeployment YAML:\n" + output + "\n"
+			}
+
+			// Get pod status
+			cmd = exec.Command("kubectl", "get", "pods", "-n", testNamespace, "-l", "app=test-app")
+			if output, err := utils.Run(cmd); err == nil {
+				diagnostics += "\nPod Status:\n" + output + "\n"
+			}
+
+			// Get pod details
+			cmd = exec.Command("kubectl", "describe", "pods", "-n", testNamespace, "-l", "app=test-app")
+			if output, err := utils.Run(cmd); err == nil {
+				diagnostics += "\nPod Details:\n" + output + "\n"
+			}
+
+			// Get events
+			cmd = exec.Command("kubectl", "get", "events", "-n", testNamespace, "--sort-by=.lastTimestamp")
+			if output, err := utils.Run(cmd); err == nil {
+				diagnostics += "\nNamespace Events:\n" + output + "\n"
+			}
+
+			return diagnostics
+		})
 	})
 
 	AfterAll(func() {

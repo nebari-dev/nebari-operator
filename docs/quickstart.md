@@ -1,6 +1,7 @@
 # Quick Start Guide
 
-Get started with the NIC Operator in 5 minutes. This guide walks you through setting up a local development environment and deploying your first application.
+Get started with the Nebari Operator in 5 minutes. This guide walks you through setting up a local development
+environment and deploying your first application.
 
 ## Prerequisites
 
@@ -19,7 +20,7 @@ make setup
 ```
 
 This command:
-1. Creates a Kind cluster (`nic-operator-dev`) with MetalLB
+1. Creates a Kind cluster (`nebari-operator-dev`) with MetalLB
 2. Installs Envoy Gateway v1.2.4
 3. Installs cert-manager v1.16.2 with Gateway API support
 4. Creates a shared Gateway (`nebari-gateway`) with HTTP/HTTPS listeners
@@ -34,7 +35,7 @@ make status
 
 **Expected output:**
 ```
-✅ Cluster 'nic-operator-dev' exists
+✅ Cluster 'nebari-operator-dev' exists
 
 Checking services...
 ...
@@ -56,7 +57,7 @@ cd ..
 make docker-build IMG=quay.io/nebari/nebari-operator:dev
 
 # Load image into Kind cluster
-kind load docker-image quay.io/nebari/nebari-operator:dev --name nic-operator-dev
+kind load docker-image quay.io/nebari/nebari-operator:dev --name nebari-operator-dev
 
 # Install CRDs
 make install
@@ -68,11 +69,11 @@ make deploy IMG=quay.io/nebari/nebari-operator:dev
 Verify the operator is running:
 
 ```bash
-kubectl get pods -n nic-operator-system
+kubectl get pods -n nebari-operator-system
 
 # Expected output:
 # NAME                                                    READY   STATUS    RESTARTS   AGE
-# nic-operator-controller-manager-xxxxxxxxxx-xxxxx       2/2     Running   0          30s
+# nebari-operator-controller-manager-xxxxxxxxxx-xxxxx       2/2     Running   0          30s
 ```
 
 ## Step 3: Deploy Your First Application
@@ -105,7 +106,7 @@ spec:
       - name: hello
         image: hashicorp/http-echo
         args:
-          - "-text=Hello from NIC Operator!"
+          - "-text=Hello from Nebari Operator!"
         ports:
         - containerPort: 5678
 ---
@@ -182,7 +183,7 @@ curl -k https://hello.nebari.local
 
 **Expected output:**
 ```
-Hello from NIC Operator!
+Hello from Nebari Operator!
 ```
 
 > **Note:** The `-k` flag skips certificate validation since we're using self-signed certificates in development.

@@ -153,3 +153,81 @@ func TestIsConditionUnknown(t *testing.T) {
 		t.Error("expected Ready condition to not be unknown")
 	}
 }
+
+func TestSetCondition_PreservesLastTransitionTime(t *testing.T) {
+	nebariApp := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "test-app",
+			Namespace:  "default",
+			Generation: 1,
+		},
+	}
+
+	// Set initial condition
+	SetCondition(nebariApp, "Ready", metav1.ConditionTrue, "AllGood", "Everything is working")
+
+	if len(nebariApp.Status.Conditions) != 1 {
+		t.Fatalf("expected 1 condition, got %d", len(nebariApp.Status.Conditions))
+	}
+
+	initialTime := nebariApp.Status.Conditions[0].LastTransitionTime
+
+	// Update the same condition with same status - LastTransitionTime should be preserved
+	SetCondition(nebariApp, "Ready", metav1.ConditionTrue, "StillGood", "Still working fine")
+
+	if len(nebariApp.Status.Conditions) != 1 {
+		t.Fatalf("expected 1 condition, got %d", len(nebariApp.Status.Conditions))
+	}
+
+	cond := nebariApp.Status.Conditions[0]
+	if cond.LastTransitionTime != initialTime {
+		t.Errorf("expected LastTransitionTime to be preserved (%v), but got %v",
+			initialTime, cond.LastTransitionTime)
+	}
+
+	// Verify reason and message were updated
+	if cond.Reason != "StillGood" {
+		t.Errorf("expected reason 'StillGood', got '%s'", cond.Reason)
+	}
+	if cond.Message != "Still working fine" {
+		t.Errorf("expected message 'Still working fine', got '%s'", cond.Message)
+	}
+}
+
+func TestSetCondition_UpdatesLastTransitionTimeOnStatusChange(t *testing.T) {
+	nebariApp := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "test-app",
+			Namespace:  "default",
+			Generation: 1,
+		},
+	}
+
+	// Set initial condition
+	SetCondition(nebariApp, "Ready", metav1.ConditionTrue, "AllGood", "Everything is working")
+
+	if len(nebariApp.Status.Conditions) != 1 {
+		t.Fatalf("expected 1 condition, got %d", len(nebariApp.Status.Conditions))
+	}
+
+	initialTime := nebariApp.Status.Conditions[0].LastTransitionTime
+
+	// Change the condition status - LastTransitionTime should be updated
+	SetCondition(nebariApp, "Ready", metav1.ConditionFalse, "NotGood", "Something went wrong")
+
+	if len(nebariApp.Status.Conditions) != 1 {
+		t.Fatalf("expected 1 condition, got %d", len(nebariApp.Status.Conditions))
+	}
+
+	cond := nebariApp.Status.Conditions[0]
+	if cond.LastTransitionTime == initialTime {
+		t.Error("expected LastTransitionTime to be updated when status changes")
+	}
+
+	if cond.Status != metav1.ConditionFalse {
+		t.Errorf("expected status False, got %s", cond.Status)
+	}
+	if cond.Reason != "NotGood" {
+		t.Errorf("expected reason 'NotGood', got '%s'", cond.Reason)
+	}
+}

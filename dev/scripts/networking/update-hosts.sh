@@ -8,7 +8,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export CLUSTER_NAME="${CLUSTER_NAME:-nic-operator-dev}"
+export CLUSTER_NAME="${CLUSTER_NAME:-nebari-operator-dev}"
 
 # Color codes
 RED='\033[0;31m'
@@ -46,13 +46,13 @@ fi
 # Function to add hostname to /etc/hosts
 add_hostname() {
     local hostname=$1
-    
+
     # Check if hostname already exists in /etc/hosts
     if grep -q "^[0-9.]\+[[:space:]]\+${hostname}[[:space:]]*# nebari-gateway" /etc/hosts 2>/dev/null; then
         log_info "Hostname ${hostname} already in /etc/hosts"
         return 0
     fi
-    
+
     # Add hostname
     echo "${GATEWAY_IP} ${hostname} # nebari-gateway" | ${SUDO_CMD} tee -a /etc/hosts > /dev/null
     log_success "Added ${hostname} -> ${GATEWAY_IP}"
@@ -62,10 +62,10 @@ add_hostname() {
 if [ $# -eq 1 ]; then
     APP_NAME=$1
     HOSTNAME="${APP_NAME}.nebari.local"
-    
+
     log_info "Adding hostname for app: ${APP_NAME}"
     add_hostname "${HOSTNAME}"
-    
+
     log_success "Done! You can now access: https://${HOSTNAME}"
     exit 0
 fi

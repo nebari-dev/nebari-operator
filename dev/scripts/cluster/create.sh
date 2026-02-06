@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Create Kind cluster for nic-operator development
+# Create Kind cluster for nebari-operator development
 # This script creates a Kind cluster with:
 # - Multiple worker nodes
 # - Port mappings for ingress traffic
@@ -8,7 +8,7 @@
 
 set -euo pipefail
 
-export CLUSTER_NAME="${CLUSTER_NAME:-nic-operator-dev}"
+export CLUSTER_NAME="${CLUSTER_NAME:-nebari-operator-dev}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Color codes

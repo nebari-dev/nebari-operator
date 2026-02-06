@@ -5,8 +5,8 @@
 
 ## Overview
 
-The NIC Operator integrates with the foundational infrastructure's Gateway API resources to provide dynamic routing for
-NebariApp instances. This document explains how the operator interacts with the pre-configured Envoy Gateway,
+The Nebari Operator integrates with the foundational infrastructure's Gateway API resources to provide dynamic routing
+for NebariApp instances. This document explains how the operator interacts with the pre-configured Envoy Gateway,
 cert-manager, and related resources.
 
 ## Foundational Infrastructure Components
@@ -138,7 +138,7 @@ metadata:
   labels:
     app.kubernetes.io/name: nicapp
     app.kubernetes.io/instance: myapp
-    app.kubernetes.io/managed-by: nic-operator
+    app.kubernetes.io/managed-by: nebari-operator
 spec:
   parentRefs:
     - name: nebari-gateway

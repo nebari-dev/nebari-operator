@@ -1,6 +1,6 @@
 # Automated Release Setup - Summary
 
-This document provides an overview of the automated release system for the NIC Operator.
+This document provides an overview of the automated release system for the Nebari Operator.
 
 ## What Was Set Up
 
@@ -358,7 +358,3 @@ If you encounter issues:
 2. Review the troubleshooting section
 3. Consult the detailed guides in `docs/`
 4. Create an issue if you find a bug in the automation
-
-
-
-**Last Updated**: 2026-02-03 **Maintained By**: NIC Operator Team
