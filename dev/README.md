@@ -1,6 +1,6 @@
 # Development Environment
 
-This directory contains scripts and tools for setting up a local development environment for the NIC Operator.
+This directory contains scripts and tools for setting up a local development environment for the Nebari Operator.
 
 ## Directory Structure
 
@@ -56,7 +56,7 @@ make port-forward       # Setup port forwarding for local access
 ## What Gets Installed
 
 ### 1. Kind Cluster
-- Name: `nic-operator-dev` (configurable via `CLUSTER_NAME`)
+- Name: `nebari-operator-dev` (configurable via `CLUSTER_NAME`)
 - 1 control-plane node + 2 worker nodes
 - MetalLB for LoadBalancer services
 - Port forwarding: 80, 443
@@ -86,9 +86,9 @@ make port-forward       # Setup port forwarding for local access
 
 ### Local Development
 
-> **Note**: The `examples/` directory contains simplified manifests for quick local development.
-> For comprehensive test variations (HTTP-only, multiple paths, TLS disabled, etc.), see the
-> E2E test files in `test/e2e/` which create these programmatically.
+> **Note**: The `examples/` directory contains simplified manifests for quick local development. For comprehensive test
+> variations (HTTP-only, multiple paths, TLS disabled, etc.), see the E2E test files in `test/e2e/` which create these
+> programmatically.
 
 1. **Setup environment**:
    ```bash
@@ -147,7 +147,7 @@ make test-e2e
 
 ## Environment Variables
 
-- `CLUSTER_NAME`: Name of the Kind cluster (default: `nic-operator-dev`)
+- `CLUSTER_NAME`: Name of the Kind cluster (default: `nebari-operator-dev`)
 - `KUBECONFIG`: Path to kubeconfig file (default: `~/.kube/config`)
 
 ## Accessing Services

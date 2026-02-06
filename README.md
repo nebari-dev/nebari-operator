@@ -1,11 +1,11 @@
-# NIC Operator
+# Nebari Operator
 
 Kubernetes Operator that streamlines **routing**, **TLS certificates**, and **SSO authentication** configuration for
-applications in the Nebari NIC ecosystem.
+applications in the Nebari App Ecosystem.
 
 ## Overview
 
-The NIC Operator enables **self-service application onboarding** in GitOps-friendly Kubernetes platforms. When a new app
+The Nebari Operator enables **self-service application onboarding** in GitOps-friendly Kubernetes platforms. When a new app
 is deployed via Helm or Argo CD, the operator automatically configures:
 
 - **HTTP/HTTPS Routes** (Gateway API HTTPRoute)
@@ -175,7 +175,7 @@ make setup
 # Build and deploy operator
 cd ..
 make docker-build IMG=quay.io/nebari/nebari-operator:dev
-kind load docker-image quay.io/nebari/nebari-operator:dev --name nic-operator-dev
+kind load docker-image quay.io/nebari/nebari-operator:dev --name nebari-operator-dev
 make install deploy IMG=quay.io/nebari/nebari-operator:dev
 
 # Deploy sample application
@@ -184,7 +184,7 @@ kubectl apply -f dev/sample-nebariapp-with-routing.yaml
 
 # Test changes
 make docker-build IMG=quay.io/nebari/nebari-operator:dev
-kind load docker-image quay.io/nebari/nebari-operator:dev --name nic-operator-dev
+kind load docker-image quay.io/nebari/nebari-operator:dev --name nebari-operator-dev
 kubectl rollout restart deployment nebari-operator-controller-manager -n nebari-operator-system
 
 # Cleanup

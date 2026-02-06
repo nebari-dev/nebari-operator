@@ -1,6 +1,6 @@
 # Release Process
 
-This document describes the automated release process for the NIC Operator.
+This document describes the automated release process for the Nebari Operator.
 
 ## Overview
 
@@ -134,7 +134,7 @@ A consolidated installation file:
 - `install.yaml` - Contains all CRDs, RBAC, and deployment manifests Helm Chart (GitHub Release)
 
 The Helm chart package:
-- `nic-operator-<version>.tgz` - Helm chart for deploying the operator
+- `nebari-operator-<version>.tgz` - Helm chart for deploying the operator
 
 ### 5.
 ### 4. Checksums
@@ -144,10 +144,10 @@ Install the operator using the Helm chart:
 
 ```bash
 # Add the release as a Helm repository (download the chart first)
-curl -LO https://github.com/nebari-dev/nic-operator/releases/download/v1.0.0/nic-operator-1.0.0.tgz
+curl -LO https://github.com/nebari-dev/nebari-operator/releases/download/v1.0.0/nebari-operator-1.0.0.tgz
 
 # Install the chart
-helm install nebari-operator nic-operator-1.0.0.tgz \
+helm install nebari-operator nebari-operator-1.0.0.tgz \
   --create-namespace \
   --namespace nebari-operator-system
 ```
@@ -156,17 +156,12 @@ Or install directly from URL:
 
 ```bash
 helm install nebari-operator \
-  https://github.com/nebari-dev/nic-operator/releases/download/v1.0.0/nic-operator-1.0.0.tgz \
+  https://github.com/nebari-dev/nebari-operator/releases/download/v1.0.0/nebari-operator-1.0.0.tgz \
   --create-namespace \
   --namespace nebari-operator-system
 ```
 
 ### Using kubectl
-
-Install the operator using kubectl:
-
-```bash
-kubectl apply -f https://github.com/nebari-dev/nic
 
 Install the operator using kubectl:
 
@@ -292,7 +287,7 @@ export VERSION=1.0.0  # Note: no 'v' prefix for Helm chart version
 Manually upload the files to the GitHub Release:
 - Binaries from `dist/`
 - `dist/install.yaml`
-- `dist/nic-operator-<version>.tgz`rt --destination dist/
+- `dist/nebari-operator-<version>.tgz`rt --destination dist/
 ```
 
 ### 4.

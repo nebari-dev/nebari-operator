@@ -6,7 +6,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export CLUSTER_NAME="${CLUSTER_NAME:-nic-operator-dev}"
+export CLUSTER_NAME="${CLUSTER_NAME:-nebari-operator-dev}"
 
 # Color codes
 RED='\033[0;31m'

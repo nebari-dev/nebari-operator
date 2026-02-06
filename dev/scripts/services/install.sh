@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Install foundational services for nic-operator development
+# Install foundational services for nebari-operator development
 # This script installs:
 # - Envoy Gateway (Gateway API provider)
 # - cert-manager (TLS certificate management)
@@ -9,7 +9,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export CLUSTER_NAME="${CLUSTER_NAME:-nic-operator-dev}"
+export CLUSTER_NAME="${CLUSTER_NAME:-nebari-operator-dev}"
 
 # Color codes
 RED='\033[0;31m'

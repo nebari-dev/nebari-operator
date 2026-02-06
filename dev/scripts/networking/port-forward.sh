@@ -28,7 +28,7 @@ log_error() {
     echo -e "${RED}❌ $1${NC}"
 }
 
-CLUSTER_NAME="${CLUSTER_NAME:-nic-operator-dev}"
+CLUSTER_NAME="${CLUSTER_NAME:-nebari-operator-dev}"
 
 log_info "Setting up traffic forwarding for LoadBalancer access on macOS"
 echo ""

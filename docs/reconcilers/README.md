@@ -1,11 +1,11 @@
 # Reconciler Architecture
 
-This directory contains detailed documentation for each reconciler component in the NIC Operator.
+This directory contains detailed documentation for each reconciler component in the Nebari Operator.
 
 ## What Are Reconcilers?
 
-**Reconcilers** are the core building blocks of the NIC Operator. Each reconciler is responsible for a specific aspect
-of application onboarding:
+**Reconcilers** are the core building blocks of the Nebari Operator. Each reconciler is responsible for a specific
+aspect of application onboarding:
 
 - **Validation Reconciler** - Ensures prerequisites are met (namespace opt-in, service exists)
 - **Routing Reconciler** - Creates and manages Gateway API HTTPRoutes for traffic routing
@@ -294,7 +294,7 @@ Dive deeper into each reconciler:
 ### View Operator Logs
 
 ```bash
-kubectl logs -n nic-operator-system -l control-plane=controller-manager -f
+kubectl logs -n nebari-operator-system -l control-plane=controller-manager -f
 ```
 
 ### Increase Log Verbosity
@@ -302,7 +302,7 @@ kubectl logs -n nic-operator-system -l control-plane=controller-manager -f
 Edit the operator deployment:
 
 ```bash
-kubectl edit deployment -n nic-operator-system nic-operator-controller-manager
+kubectl edit deployment -n nebari-operator-system nebari-operator-controller-manager
 ```
 
 Add `--zap-log-level=2` to increase verbosity (1=info, 2=debug).
