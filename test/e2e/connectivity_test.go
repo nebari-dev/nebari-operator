@@ -268,7 +268,7 @@ spec:
 			// Try direct access first, fall back to port-forward if needed
 			var testURL string
 			var portForwardCmd *exec.Cmd
-			
+
 			// Test if LoadBalancer IP is directly accessible from host
 			cmd = exec.Command("curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
 				"--connect-timeout", "2", "--max-time", "3",
@@ -281,26 +281,26 @@ spec:
 			} else {
 				// Need port-forward (typical on macOS)
 				fmt.Fprintf(GinkgoWriter, "LoadBalancer IP not accessible from host, using port-forward\n")
-				
+
 				// Get Gateway service name dynamically
 				cmd = exec.Command("kubectl", "get", "svc", "-n", "envoy-gateway-system",
 					"-l", "gateway.envoyproxy.io/owning-gateway-name=nebari-gateway",
 					"-o", "jsonpath={.items[0].metadata.name}")
 				gatewaySvcName, err := utils.Run(cmd)
 				Expect(err).NotTo(HaveOccurred(), "Failed to get Gateway service name")
-				
+
 				// Start port-forward in background
 				portForwardCmd = exec.Command("kubectl", "port-forward",
 					"-n", "envoy-gateway-system",
 					fmt.Sprintf("svc/%s", gatewaySvcName),
 					"8888:80") // Forward to local port 8888
-				
+
 				err = portForwardCmd.Start()
 				Expect(err).NotTo(HaveOccurred(), "Failed to start port-forward")
-				
+
 				// Give port-forward time to establish
 				time.Sleep(3 * time.Second)
-				
+
 				testURL = "http://localhost:8888/"
 			}
 
@@ -384,7 +384,7 @@ spec:
 			var httpsTestURL string
 			var httpsPortForwardCmd *exec.Cmd
 			var useHTTPSPortForward bool
-			
+
 			// Test if LoadBalancer IP is directly accessible from host
 			cmd = exec.Command("curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
 				"--connect-timeout", "2", "--max-time", "3", "-k",
@@ -398,26 +398,26 @@ spec:
 				// Need port-forward (typical on macOS)
 				fmt.Fprintf(GinkgoWriter, "LoadBalancer IP not accessible for HTTPS from host, using port-forward\n")
 				useHTTPSPortForward = true
-				
+
 				// Get Gateway service name dynamically
 				cmd = exec.Command("kubectl", "get", "svc", "-n", "envoy-gateway-system",
 					"-l", "gateway.envoyproxy.io/owning-gateway-name=nebari-gateway",
 					"-o", "jsonpath={.items[0].metadata.name}")
 				gatewaySvcName, err := utils.Run(cmd)
 				Expect(err).NotTo(HaveOccurred(), "Failed to get Gateway service name")
-				
+
 				// Start port-forward in background for HTTPS
 				httpsPortForwardCmd = exec.Command("kubectl", "port-forward",
 					"-n", "envoy-gateway-system",
 					fmt.Sprintf("svc/%s", gatewaySvcName),
 					"8443:443") // Forward to local port 8443
-				
+
 				err = httpsPortForwardCmd.Start()
 				Expect(err).NotTo(HaveOccurred(), "Failed to start HTTPS port-forward")
-				
+
 				// Give port-forward time to establish
 				time.Sleep(3 * time.Second)
-				
+
 				httpsTestURL = "https://localhost:8443/"
 			}
 

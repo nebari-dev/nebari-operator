@@ -4,6 +4,10 @@
 CLUSTER_NAME ?= nebari-operator-dev
 KUBECONFIG ?= $(HOME)/.kube/config
 
+# Export variables so they're available to shell scripts
+export CLUSTER_NAME
+export KUBECONFIG
+
 help: ## Show this help message
 	@echo "Nebari Operator Development Environment"
 	@echo ""
