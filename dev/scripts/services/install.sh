@@ -240,12 +240,12 @@ kubectl wait --for=condition=Programmed gateway/nebari-gateway -n envoy-gateway-
     log_warning "Gateway not yet programmed, continuing..."
 
 # ============================================
-# 7. Keycloak (skipped - install manually if needed)
+# 7. Install Keycloak
 # ============================================
-# Keycloak installation has been moved to CI workflows and can be installed
-# manually when needed for local development or auth testing:
-#   cd dev && ./install-keycloak.sh
-#   cd dev && ./setup-keycloak-realm.sh
+log_info "Installing Keycloak..."
+${SCRIPT_DIR}/keycloak/install.sh
+
+log_success "Keycloak installed"
 echo ""
 
 # ============================================
@@ -289,12 +289,13 @@ echo "  ✅ cert-manager (v1.16.2) with Gateway API support"
 echo "  ✅ Self-signed CA ClusterIssuer"
 echo "  ✅ Wildcard certificate (*.nebari.local)"
 echo "  ✅ Shared Gateway (nebari-gateway)"
+echo "  ✅ Keycloak (admin/admin)"
 if [ -n "${GATEWAY_IP}" ] && [ "${GATEWAY_IP}" != "pending" ]; then
     echo "  ✅ /etc/hosts configured for nebari.local"
 fi
 echo ""
-echo "📝 Optional (not installed):"
-echo "  ⚪ Keycloak - Run ./dev/install-keycloak.sh if needed for auth testing"
+echo "📝 Next (optional):"
+echo "  ⚪ Setup Keycloak realm: ${SCRIPT_DIR}/keycloak/setup.sh"
 echo ""
 echo "🌐 Gateway Information:"
 echo "  Name: nebari-gateway"
@@ -307,9 +308,10 @@ else
 fi
 echo ""
 echo "🔐 Keycloak Information:"
-echo "  Service: keycloak-keycloakx-http.keycloak.svc.cluster.local"
-echo "  Admin credentials: admin / admin (secret: nebari-realm-admin-credentials)"
-echo "  URL: http://keycloak-keycloakx-http.keycloak.svc.cluster.local/auth"
+echo "  Admin credentials: admin/admin"
+echo "  Internal URL: http://keycloak-keycloakx-http.keycloak.svc.cluster.local/auth"
+echo "  Port-forward: kubectl port-forward -n keycloak svc/keycloak-keycloakx-http 8080:80"
+echo "  Setup realm: ${SCRIPT_DIR}/keycloak/setup.sh"
 echo ""
 echo "📜 TLS Certificate:"
 echo "  Secret: nebari-gateway-tls (namespace: envoy-gateway-system)"

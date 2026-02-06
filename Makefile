@@ -61,9 +61,30 @@ vet: ## Run go vet against code.
 test: manifests generate fmt vet setup-envtest ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" go test $$(go list ./... | grep -v /e2e | grep -v 'internal/controller$$') -coverprofile cover.out 2>&1 | grep -v "compile: version.*does not match" | grep -v "^# " || true
 
+.PHONY: test-unit
+test-unit: ## Run controller unit tests with coverage.
+	@echo "Running unit tests..."
+	@go test ./internal/controller/... -v -coverprofile=unit-coverage.out
+	@echo "\nCoverage Summary:"
+	@go tool cover -func=unit-coverage.out | tail -1
+
+.PHONY: test-unit-html
+test-unit-html: test-unit ## Generate HTML coverage report for unit tests.
+	@go tool cover -html=unit-coverage.out -o unit-coverage.html
+	@echo "Coverage report generated: unit-coverage.html"
+	@open unit-coverage.html 2>/dev/null || xdg-open unit-coverage.html 2>/dev/null || echo "Open unit-coverage.html in your browser"
+
 .PHONY: test-e2e
 test-e2e: manifests generate fmt vet ## Run e2e tests.
-	USE_EXISTING_CLUSTER=$(USE_EXISTING_CLUSTER) go test ./test/e2e -v -ginkgo.v -tags=e2e
+	USE_EXISTING_CLUSTER=$(USE_EXISTING_CLUSTER) go test ./test/e2e -v -ginkgo.v -tags=e2e -timeout=30m
+
+.PHONY: test-e2e-parallel
+test-e2e-parallel: manifests generate fmt vet ## Run e2e tests in parallel (faster).
+	USE_EXISTING_CLUSTER=$(USE_EXISTING_CLUSTER) go test ./test/e2e -v -ginkgo.v -ginkgo.procs=4 -tags=e2e -timeout=30m
+
+.PHONY: test-e2e-smoke
+test-e2e-smoke: manifests generate fmt vet ## Run quick smoke tests only.
+	USE_EXISTING_CLUSTER=$(USE_EXISTING_CLUSTER) go test ./test/e2e -v -ginkgo.v -ginkgo.focus="should reconcile a NebariApp" -tags=e2e -timeout=10m
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter

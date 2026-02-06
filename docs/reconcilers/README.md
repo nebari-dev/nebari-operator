@@ -14,6 +14,36 @@ aspect of application onboarding:
 These reconcilers work together in a coordinated pipeline to transform a simple `NebariApp` custom resource into a fully
 configured application with routing, TLS, and optional authentication.
 
+## Platform Context
+
+The Nebari Operator works within a broader platform ecosystem:
+
+- **Argo CD** - GitOps application deployment
+- **Envoy Gateway** - Gateway API implementation (north/south traffic)
+- **cert-manager** - TLS certificate provisioning and renewal
+- **Keycloak** - OIDC authentication provider (optional)
+
+```mermaid
+flowchart TB
+  Helm[Helm/Argo CD Deploy] --> K8s[(Kubernetes API)]
+  K8s --> AppCR[NebariApp CR]
+
+  subgraph Operator[nebari-operator]
+    Core[Core Validator]
+    Routing[Routing Reconciler]
+    Auth[Auth Reconciler]
+  end
+
+  AppCR --> Core
+  Core --> Routing --> HTTPRoute[HTTPRoute]
+  HTTPRoute --> Gateway[Gateway + TLS]
+
+  Core --> Auth --> SecPol[SecurityPolicy OIDC]
+  Auth --> KC[Keycloak Client Optional]
+  KC --> Secret[K8s Secret]
+  Secret --> SecPol
+```
+
 ## Reconciliation Flow
 
 ```mermaid
