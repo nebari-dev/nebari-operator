@@ -4,10 +4,18 @@ on:
   pull_request:
     branches:
       - main
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - 'LICENSE'
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+      - 'Dockerfile'
+      - 'Makefile'
+      - '.github/workflows/**'
+      - 'test/**'
+      - 'cmd/**'
+      - 'api/**'
+      - 'internal/**'
+      - 'hack/**'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
