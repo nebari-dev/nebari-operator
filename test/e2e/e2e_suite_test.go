@@ -2,7 +2,7 @@
 // +build e2e
 
 /*
-Copyright 2025.
+Copyright 2026, OpenTeams.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -28,21 +28,26 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/nebari-dev/nic-operator/test/utils"
+	"github.com/nebari-dev/nebari-operator/test/utils"
 )
 
 var (
 	// Optional Environment Variables:
-	// - CERT_MANAGER_INSTALL_SKIP=true: Skips CertManager installation during test setup.
-	// These variables are useful if CertManager is already installed, avoiding
-	// re-installation and conflicts.
-	skipCertManagerInstall = os.Getenv("CERT_MANAGER_INSTALL_SKIP") == "true"
-	// isCertManagerAlreadyInstalled will be set true when CertManager CRDs be found on the cluster
-	isCertManagerAlreadyInstalled = false
+	// - USE_EXISTING_CLUSTER=true: Use existing cluster instead of creating new Kind cluster
+	// - SETUP_INFRASTRUCTURE=true: Run dev/install-services.sh to setup infrastructure
+	// - SKIP_SETUP=true: Skip all setup (cluster and infrastructure), assume everything exists
+	// - SKIP_DOCKER_BUILD=true: Skip docker build, assume image is already built and loaded
+	useExistingCluster  = os.Getenv("USE_EXISTING_CLUSTER") == "true"
+	setupInfrastructure = os.Getenv("SETUP_INFRASTRUCTURE") == "true"
+	skipSetup           = os.Getenv("SKIP_SETUP") == "true"
+	skipDockerBuild     = os.Getenv("SKIP_DOCKER_BUILD") == "true"
+
+	// Internal flags
+	isKindClusterCreated = false
 
 	// projectImage is the name of the image which will be build and loaded
 	// with the code source changes to be tested.
-	projectImage = "example.com/nic-operator:v0.0.1"
+	projectImage = "quay.io/nebari/nebari-operator:v0.0.1"
 )
 
 // TestE2E runs the end-to-end (e2e) test suite for the project. These tests execute in an isolated,
@@ -51,42 +56,84 @@ var (
 // CertManager.
 func TestE2E(t *testing.T) {
 	RegisterFailHandler(Fail)
-	_, _ = fmt.Fprintf(GinkgoWriter, "Starting nic-operator integration test suite\n")
+	_, _ = fmt.Fprintf(GinkgoWriter, "Starting nebari-operator integration test suite\n")
 	RunSpecs(t, "e2e suite")
 }
 
 var _ = BeforeSuite(func() {
-	By("building the manager(Operator) image")
-	cmd := exec.Command("make", "docker-build", fmt.Sprintf("IMG=%s", projectImage))
-	_, err := utils.Run(cmd)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the manager(Operator) image")
+	if skipSetup {
+		_, _ = fmt.Fprintf(GinkgoWriter, "Skipping all setup, using existing cluster and infrastructure\n")
+		return
+	}
 
-	// TODO(user): If you want to change the e2e test vendor from Kind, ensure the image is
-	// built and available before running the tests. Also, remove the following block.
-	By("loading the manager(Operator) image on Kind")
-	err = utils.LoadImageToKindClusterWithName(projectImage)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the manager(Operator) image into Kind")
+	// Set cluster name for Kind utilities
+	clusterName := os.Getenv("CLUSTER_NAME")
+	if clusterName == "" {
+		clusterName = "nebari-operator-dev"
+	}
+	os.Setenv("KIND_CLUSTER", clusterName)
+	os.Setenv("CLUSTER_NAME", clusterName)
 
-	// The tests-e2e are intended to run on a temporary cluster that is created and destroyed for testing.
-	// To prevent errors when tests run in environments with CertManager already installed,
-	// we check for its presence before execution.
-	// Setup CertManager before the suite if not skipped and if not already installed
-	if !skipCertManagerInstall {
-		By("checking if cert manager is installed already")
-		isCertManagerAlreadyInstalled = utils.IsCertManagerCRDsInstalled()
-		if !isCertManagerAlreadyInstalled {
-			_, _ = fmt.Fprintf(GinkgoWriter, "Installing CertManager...\n")
-			Expect(utils.InstallCertManager()).To(Succeed(), "Failed to install CertManager")
-		} else {
-			_, _ = fmt.Fprintf(GinkgoWriter, "WARNING: CertManager is already installed. Skipping installation...\n")
+	// Setup cluster and infrastructure
+	if !useExistingCluster {
+		By("creating kind cluster via dev scripts")
+		cmd := exec.Command("make", "-C", "dev", "cluster-create")
+		_, err := utils.Run(cmd)
+		if err == nil {
+			isKindClusterCreated = true
 		}
+		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to create Kind cluster")
+	} else {
+		_, _ = fmt.Fprintf(GinkgoWriter, "Using existing cluster\n")
+	}
+
+	// Setup infrastructure (Envoy Gateway, cert-manager, Gateway, etc.)
+	if setupInfrastructure {
+		By("installing foundational services via dev scripts")
+		cmd := exec.Command("make", "-C", "dev", "services-install")
+		_, err := utils.Run(cmd)
+		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to install foundational services")
+	} else {
+		_, _ = fmt.Fprintf(GinkgoWriter, "Skipping infrastructure setup, assuming services are already installed\n")
+	}
+
+	// Build and load operator image
+	if !skipDockerBuild {
+		By("building the manager(Operator) image")
+		cmd := exec.Command("make", "docker-build", fmt.Sprintf("IMG=%s", projectImage))
+		_, err := utils.Run(cmd)
+		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the manager(Operator) image")
+
+		By("loading the manager(Operator) image on Kind")
+		err = utils.LoadImageToKindClusterWithName(projectImage)
+		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the manager(Operator) image into Kind")
+	} else {
+		_, _ = fmt.Fprintf(GinkgoWriter, "Skipping docker build, assuming image is already built and loaded\n")
 	}
 })
 
 var _ = AfterSuite(func() {
-	// Teardown CertManager after the suite if not skipped and if it was not already installed
-	if !skipCertManagerInstall && !isCertManagerAlreadyInstalled {
-		_, _ = fmt.Fprintf(GinkgoWriter, "Uninstalling CertManager...\n")
-		utils.UninstallCertManager()
+	if skipSetup {
+		return
+	}
+
+	// Teardown via dev scripts if we set things up
+	if setupInfrastructure {
+		_, _ = fmt.Fprintf(GinkgoWriter, "Uninstalling foundational services...\n")
+		cmd := exec.Command("make", "-C", "dev", "services-uninstall")
+		_, _ = utils.Run(cmd)
+	}
+
+	// Delete Kind cluster if we created it
+	if isKindClusterCreated {
+		By("deleting kind cluster")
+		cmd := exec.Command("make", "-C", "dev", "cluster-delete")
+		if _, err := utils.Run(cmd); err != nil {
+			warnError(err)
+		}
 	}
 })
+
+func warnError(err error) {
+	_, _ = fmt.Fprintf(GinkgoWriter, "warning: %v\n", err)
+}

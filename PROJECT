@@ -6,6 +6,21 @@ cliVersion: 4.10.1
 domain: nebari.dev
 layout:
 - go.kubebuilder.io/v4
-projectName: nic-operator
-repo: github.com/nebari-dev/nic-operator
+plugins:
+  helm.kubebuilder.io/v1-alpha: {}
+  helm.kubebuilder.io/v2-alpha:
+    manifests: dist/install.yaml
+    output: dist
+projectName: nebari-operator
+repo: github.com/nebari-dev/nebari-operator
+resources:
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: nebari.dev
+  group: reconcilers
+  kind: NebariApp
+  path: github.com/nebari-dev/nebari-operator/api/v1
+  version: v1
 version: "3"

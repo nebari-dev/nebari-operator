@@ -1,0 +1,99 @@
+# GoReleaser configuration for Nebari Operator
+# Documentation: https://goreleaser.com
+
+version: 2
+
+before:
+  hooks:
+    # Ensure dependencies are up to date
+    - go mod tidy
+    # Generate code
+    - make generate
+
+builds:
+  - id: manager
+    main: ./cmd/main.go
+    binary: manager
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    # Ignore windows/arm64 combination as it's not commonly used
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w
+      - -X github.com/nebari-dev/nebari-operator/internal/version.Version={{.Version}}
+      - -X github.com/nebari-dev/nebari-operator/internal/version.Commit={{.Commit}}
+      - -X github.com/nebari-dev/nebari-operator/internal/version.Date={{.Date}}
+    flags:
+      - -trimpath
+
+archives:
+  - id: default
+    formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    files:
+      - LICENSE
+      - README.md
+      - docs/**/*
+
+checksum:
+  name_template: 'checksums.txt'
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  disable: true
+
+release:
+  github:
+    owner: nebari-dev
+    name: nebari-operator
+  draft: false
+  prerelease: auto
+  mode: append
+  header: |
+    ## Installation
+
+    Install the operator in your cluster:
+
+    ```bash
+    kubectl apply -f https://github.com/nebari-dev/nebari-operator/releases/download/{{ .Tag }}/install.yaml
+    ```
+
+    Or use the Docker image:
+    ```
+    quay.io/nebari/nebari-operator:{{ .Tag }}
+    ```
+
+  footer: |
+    ---
+    ## Resources
+
+    - [Documentation](https://github.com/nebari-dev/nebari-operator/tree/{{ .Tag }}/docs)
+    - [Report Issues](https://github.com/nebari-dev/nebari-operator/issues)
+
+# Announcements (optional)
+announce:
+  skip: '{{ gt .Patch 0 }}'  # Only announce major and minor releases

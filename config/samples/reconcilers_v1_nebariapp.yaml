@@ -1,0 +1,27 @@
+apiVersion: reconcilers.nebari.dev/v1
+kind: NebariApp
+metadata:
+  labels:
+    app.kubernetes.io/name: nebari-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: nebariapp-sample
+spec:
+  hostname: sample-app.nebari.local
+  gateway: public
+  service:
+    name: sample-app-service
+    port: 8080
+  routing:
+    routes:
+      - pathPrefix: /api
+        pathType: PathPrefix
+      - pathPrefix: /app
+        pathType: PathPrefix
+    # Uncomment to disable TLS (defaults to enabled)
+    # tls:
+    #   enabled: false
+  # Uncomment to enable authentication
+  # auth:
+  #   enabled: true
+  #   provider: keycloak
+  #   provisionClient: true
