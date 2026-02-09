@@ -61,9 +61,30 @@ vet: ## Run go vet against code.
 test: manifests generate fmt vet setup-envtest ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" go test $$(go list ./... | grep -v /e2e | grep -v 'internal/controller$$') -coverprofile cover.out 2>&1 | grep -v "compile: version.*does not match" | grep -v "^# " || true
 
+.PHONY: test-unit
+test-unit: ## Run controller unit tests with coverage.
+	@echo "Running unit tests..."
+	@go test ./internal/controller/... -v -coverprofile=unit-coverage.out
+	@echo "\nCoverage Summary:"
+	@go tool cover -func=unit-coverage.out | tail -1
+
+.PHONY: test-unit-html
+test-unit-html: test-unit ## Generate HTML coverage report for unit tests.
+	@go tool cover -html=unit-coverage.out -o unit-coverage.html
+	@echo "Coverage report generated: unit-coverage.html"
+	@open unit-coverage.html 2>/dev/null || xdg-open unit-coverage.html 2>/dev/null || echo "Open unit-coverage.html in your browser"
+
 .PHONY: test-e2e
 test-e2e: manifests generate fmt vet ## Run e2e tests.
-	USE_EXISTING_CLUSTER=$(USE_EXISTING_CLUSTER) go test ./test/e2e -v -ginkgo.v -tags=e2e
+	USE_EXISTING_CLUSTER=$(USE_EXISTING_CLUSTER) go test ./test/e2e -v -ginkgo.v -tags=e2e -timeout=30m
+
+.PHONY: test-e2e-parallel
+test-e2e-parallel: manifests generate fmt vet ## Run e2e tests in parallel (faster).
+	USE_EXISTING_CLUSTER=$(USE_EXISTING_CLUSTER) go test ./test/e2e -v -ginkgo.v -ginkgo.procs=4 -tags=e2e -timeout=30m
+
+.PHONY: test-e2e-smoke
+test-e2e-smoke: manifests generate fmt vet ## Run quick smoke tests only.
+	USE_EXISTING_CLUSTER=$(USE_EXISTING_CLUSTER) go test ./test/e2e -v -ginkgo.v -ginkgo.focus="should reconcile a NebariApp" -tags=e2e -timeout=10m
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
@@ -120,6 +141,38 @@ build-installer: manifests generate kustomize ## Generate a consolidated YAML wi
 	mkdir -p dist
 	cd config/manager && "$(KUSTOMIZE)" edit set image controller=${IMG}
 	"$(KUSTOMIZE)" build config/default > dist/install.yaml
+
+.PHONY: helm-chart
+helm-chart: build-installer ## Generate Helm chart from manifests using kubebuilder.
+	@command -v kubebuilder >/dev/null 2>&1 || { echo >&2 "kubebuilder is required but not installed. See https://book.kubebuilder.io/quick-start.html#installation"; exit 1; }
+	kubebuilder edit --plugins=helm/v2-alpha --force
+	@echo "✅ Helm chart generated in dist/chart/"
+	@echo ""
+	@echo "To package the chart:"
+	@echo "  make helm-package"
+	@echo ""
+	@echo "To update chart version:"
+	@echo "  make helm-chart-version VERSION=1.0.0 APP_VERSION=v1.0.0"
+
+.PHONY: helm-package
+helm-package: ## Package the Helm chart (run helm-chart first).
+	@command -v helm >/dev/null 2>&1 || { echo >&2 "helm is required but not installed. See https://helm.sh/docs/intro/install/"; exit 1; }
+	@if [ ! -d "dist/chart" ]; then echo "Error: dist/chart/ not found. Run 'make helm-chart' first."; exit 1; fi
+	helm package dist/chart --destination dist/
+	@echo "✅ Helm chart packaged in dist/"
+
+.PHONY: helm-chart-version
+helm-chart-version: ## Update Helm chart version and appVersion (requires VERSION and APP_VERSION vars).
+	@if [ -z "$(VERSION)" ] || [ -z "$(APP_VERSION)" ]; then \
+		echo "Error: VERSION and APP_VERSION must be set"; \
+		echo "Usage: make helm-chart-version VERSION=1.0.0 APP_VERSION=v1.0.0"; \
+		exit 1; \
+	fi
+	@if [ ! -f "dist/chart/Chart.yaml" ]; then echo "Error: dist/chart/Chart.yaml not found. Run 'make helm-chart' first."; exit 1; fi
+	sed -i.bak "s/^version:.*/version: $(VERSION)/" dist/chart/Chart.yaml
+	sed -i.bak "s/^appVersion:.*/appVersion: \"$(APP_VERSION)\"/" dist/chart/Chart.yaml
+	rm -f dist/chart/Chart.yaml.bak
+	@echo "✅ Updated chart version to $(VERSION) and appVersion to $(APP_VERSION)"
 
 ##@ Deployment
 

@@ -1,11 +1,15 @@
 .PHONY: help cluster-create cluster-delete services-install services-uninstall setup teardown clean
 
 # Configuration
-CLUSTER_NAME ?= nic-operator-dev
+CLUSTER_NAME ?= nebari-operator-dev
 KUBECONFIG ?= $(HOME)/.kube/config
 
+# Export variables so they're available to shell scripts
+export CLUSTER_NAME
+export KUBECONFIG
+
 help: ## Show this help message
-	@echo "NIC Operator Development Environment"
+	@echo "Nebari Operator Development Environment"
 	@echo ""
 	@echo "Usage: make [target]"
 	@echo ""

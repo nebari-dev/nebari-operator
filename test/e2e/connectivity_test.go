@@ -31,6 +31,56 @@ import (
 	"github.com/nebari-dev/nebari-operator/test/utils"
 )
 
+// ConnectivityDiagnostics gathers debugging information for connectivity failures
+func ConnectivityDiagnostics(namespace, appName string) string {
+	var output strings.Builder
+	output.WriteString("\n=== Connectivity Diagnostics ===\n")
+
+	// Get NebariApp status
+	cmd := exec.Command("kubectl", "get", "nebariapp", appName, "-n", namespace, "-o", "yaml")
+	if out, err := utils.Run(cmd); err == nil {
+		output.WriteString("\n--- NebariApp ---\n")
+		output.WriteString(out)
+	}
+
+	// Get HTTPRoute
+	cmd = exec.Command("kubectl", "get", "httproute", "-n", namespace, "-o", "yaml")
+	if out, err := utils.Run(cmd); err == nil {
+		output.WriteString("\n--- HTTPRoutes ---\n")
+		output.WriteString(out)
+	}
+
+	// Get Service
+	cmd = exec.Command("kubectl", "get", "svc", "-n", namespace, "-o", "yaml")
+	if out, err := utils.Run(cmd); err == nil {
+		output.WriteString("\n--- Services ---\n")
+		output.WriteString(out)
+	}
+
+	// Get Pods
+	cmd = exec.Command("kubectl", "get", "pods", "-n", namespace, "-o", "wide")
+	if out, err := utils.Run(cmd); err == nil {
+		output.WriteString("\n--- Pods ---\n")
+		output.WriteString(out)
+	}
+
+	// Get Gateway status
+	cmd = exec.Command("kubectl", "get", "gateway", "nebari-gateway", "-n", "envoy-gateway-system", "-o", "yaml")
+	if out, err := utils.Run(cmd); err == nil {
+		output.WriteString("\n--- Gateway ---\n")
+		output.WriteString(out)
+	}
+
+	// Get controller logs
+	cmd = exec.Command("kubectl", "logs", "-n", "nebari-operator-system", "-l", "control-plane=controller-manager", "--tail=50")
+	if out, err := utils.Run(cmd); err == nil {
+		output.WriteString("\n--- Controller Logs (last 50 lines) ---\n")
+		output.WriteString(out)
+	}
+
+	return output.String()
+}
+
 var _ = Describe("HTTPRoute Connectivity", Ordered, func() {
 	var testNamespace string
 	var gatewayIP string
@@ -181,23 +231,101 @@ spec:
 				g.Expect(output).To(Equal("True"))
 			}, 2*time.Minute, 5*time.Second).Should(Succeed())
 
-			By("testing HTTP connectivity via Gateway IP")
-			// Using IP with Host header to avoid DNS requirements
+			By("waiting for HTTPRoute to be programmed (ResolvedRefs)")
 			Eventually(func(g Gomega) {
-				cmd := exec.Command("curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
-					"--connect-timeout", "5",
+				cmd := exec.Command("kubectl", "get", "httproute", "test-http-connectivity-route",
+					"-n", testNamespace,
+					"-o", "jsonpath={.status.parents[0].conditions[?(@.type=='ResolvedRefs')].status}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("True"))
+			}, 2*time.Minute, 5*time.Second).Should(Succeed())
+
+			By("dumping HTTPRoute details for debugging")
+			cmd = exec.Command("kubectl", "get", "httproute", "test-http-connectivity-route",
+				"-n", testNamespace, "-o", "yaml")
+			routeYAML, _ := utils.Run(cmd)
+			fmt.Fprintf(GinkgoWriter, "HTTPRoute:\n%s\n", routeYAML)
+
+			By("waiting for Envoy configuration to propagate")
+			time.Sleep(10 * time.Second)
+
+			By("testing HTTP connectivity via Gateway IP from inside cluster")
+			// First, verify routing works inside the cluster
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "run", "curl-test-verify", "--image=curlimages/curl:latest",
+					"-i", "--rm", "--restart=Never", "--namespace", testNamespace,
+					"--", "curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+					"--connect-timeout", "5", "--max-time", "10",
 					"-H", fmt.Sprintf("Host: %s", hostname),
 					fmt.Sprintf("http://%s/", gatewayIP))
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(Equal("200"), "Expected HTTP 200 response")
-			}, 2*time.Minute, 5*time.Second).Should(Succeed())
+				g.Expect(output).To(ContainSubstring("200"), "Expected HTTP 200 response from inside cluster")
+			}, 2*time.Minute, 10*time.Second).Should(Succeed())
+
+			By("testing HTTP connectivity from host (with port-forward fallback)")
+			// Try direct access first, fall back to port-forward if needed
+			var testURL string
+			var portForwardCmd *exec.Cmd
+
+			// Test if LoadBalancer IP is directly accessible from host
+			cmd = exec.Command("curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+				"--connect-timeout", "2", "--max-time", "3",
+				"-H", fmt.Sprintf("Host: %s", hostname),
+				fmt.Sprintf("http://%s/", gatewayIP))
+			if output, err := utils.Run(cmd); err == nil && output == "200" {
+				// Direct access works
+				testURL = fmt.Sprintf("http://%s/", gatewayIP)
+				fmt.Fprintf(GinkgoWriter, "LoadBalancer IP is directly accessible from host\n")
+			} else {
+				// Need port-forward (typical on macOS)
+				fmt.Fprintf(GinkgoWriter, "LoadBalancer IP not accessible from host, using port-forward\n")
+
+				// Get Gateway service name dynamically
+				cmd = exec.Command("kubectl", "get", "svc", "-n", "envoy-gateway-system",
+					"-l", "gateway.envoyproxy.io/owning-gateway-name=nebari-gateway",
+					"-o", "jsonpath={.items[0].metadata.name}")
+				gatewaySvcName, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to get Gateway service name")
+
+				// Start port-forward in background
+				portForwardCmd = exec.Command("kubectl", "port-forward",
+					"-n", "envoy-gateway-system",
+					fmt.Sprintf("svc/%s", gatewaySvcName),
+					"8888:80") // Forward to local port 8888
+
+				err = portForwardCmd.Start()
+				Expect(err).NotTo(HaveOccurred(), "Failed to start port-forward")
+
+				// Give port-forward time to establish
+				time.Sleep(3 * time.Second)
+
+				testURL = "http://localhost:8888/"
+			}
+
+			// Ensure cleanup of port-forward
+			defer func() {
+				if portForwardCmd != nil && portForwardCmd.Process != nil {
+					_ = portForwardCmd.Process.Kill()
+				}
+			}()
+
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+					"--connect-timeout", "10", "--max-time", "15",
+					"-H", fmt.Sprintf("Host: %s", hostname), testURL)
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("200"), "Expected HTTP 200 response from host")
+			}, 1*time.Minute, 5*time.Second).Should(Succeed(),
+				func() string { return ConnectivityDiagnostics(testNamespace, "test-http-connectivity") })
 
 			By("verifying response body contains expected content")
 			cmd = exec.Command("curl", "-s",
-				"--connect-timeout", "5",
-				"-H", fmt.Sprintf("Host: %s", hostname),
-				fmt.Sprintf("http://%s/", gatewayIP))
+				"--connect-timeout", "10",
+				"--max-time", "15",
+				"-H", fmt.Sprintf("Host: %s", hostname), testURL)
 			output, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(output).To(ContainSubstring("Welcome"), "Response should contain app content")
@@ -252,25 +380,84 @@ spec:
 			}, 2*time.Minute, 5*time.Second).Should(Succeed())
 
 			By("testing HTTPS connectivity via Gateway IP")
-			// Using IP with Host header and SNI, accepting self-signed cert
-			Eventually(func(g Gomega) {
-				cmd := exec.Command("curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
-					"--connect-timeout", "5",
-					"-k", // Accept self-signed certificate
-					"--resolve", fmt.Sprintf("%s:443:%s", hostname, gatewayIP),
-					fmt.Sprintf("https://%s/", hostname))
-				output, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(Equal("200"), "Expected HTTP 200 response")
-			}, 2*time.Minute, 5*time.Second).Should(Succeed())
+			// Try direct access first, fall back to port-forward if needed
+			var httpsTestURL string
+			var httpsPortForwardCmd *exec.Cmd
+			var useHTTPSPortForward bool
 
-			By("verifying response body contains expected content")
-			cmd = exec.Command("curl", "-s",
-				"--connect-timeout", "5",
-				"-k",
+			// Test if LoadBalancer IP is directly accessible from host
+			cmd = exec.Command("curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+				"--connect-timeout", "2", "--max-time", "3", "-k",
 				"--resolve", fmt.Sprintf("%s:443:%s", hostname, gatewayIP),
 				fmt.Sprintf("https://%s/", hostname))
-			output, err := utils.Run(cmd)
+			if output, err := utils.Run(cmd); err == nil && output == "200" {
+				// Direct access works
+				httpsTestURL = fmt.Sprintf("https://%s/", hostname)
+				fmt.Fprintf(GinkgoWriter, "LoadBalancer IP is directly accessible for HTTPS from host\n")
+			} else {
+				// Need port-forward (typical on macOS)
+				fmt.Fprintf(GinkgoWriter, "LoadBalancer IP not accessible for HTTPS from host, using port-forward\n")
+				useHTTPSPortForward = true
+
+				// Get Gateway service name dynamically
+				cmd = exec.Command("kubectl", "get", "svc", "-n", "envoy-gateway-system",
+					"-l", "gateway.envoyproxy.io/owning-gateway-name=nebari-gateway",
+					"-o", "jsonpath={.items[0].metadata.name}")
+				gatewaySvcName, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to get Gateway service name")
+
+				// Start port-forward in background for HTTPS
+				httpsPortForwardCmd = exec.Command("kubectl", "port-forward",
+					"-n", "envoy-gateway-system",
+					fmt.Sprintf("svc/%s", gatewaySvcName),
+					"8443:443") // Forward to local port 8443
+
+				err = httpsPortForwardCmd.Start()
+				Expect(err).NotTo(HaveOccurred(), "Failed to start HTTPS port-forward")
+
+				// Give port-forward time to establish
+				time.Sleep(3 * time.Second)
+
+				httpsTestURL = "https://localhost:8443/"
+			}
+
+			// Ensure cleanup of port-forward
+			defer func() {
+				if httpsPortForwardCmd != nil && httpsPortForwardCmd.Process != nil {
+					_ = httpsPortForwardCmd.Process.Kill()
+				}
+			}()
+
+			// Using IP with Host header and SNI, accepting self-signed cert
+			Eventually(func(g Gomega) {
+				var testCmd *exec.Cmd
+				if useHTTPSPortForward {
+					testCmd = exec.Command("curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+						"--connect-timeout", "10", "--max-time", "15",
+						"-k", "-H", fmt.Sprintf("Host: %s", hostname), httpsTestURL)
+				} else {
+					testCmd = exec.Command("curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+						"--connect-timeout", "10", "--max-time", "15",
+						"-k", "--resolve", fmt.Sprintf("%s:443:%s", hostname, gatewayIP), httpsTestURL)
+				}
+				output, err := utils.Run(testCmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("200"), "Expected HTTP 200 response")
+			}, 3*time.Minute, 10*time.Second).Should(Succeed())
+
+			By("verifying response body contains expected content")
+			var bodyCmd *exec.Cmd
+			if useHTTPSPortForward {
+				bodyCmd = exec.Command("curl", "-s",
+					"--connect-timeout", "10", "--max-time", "15",
+					"-k", "-H", fmt.Sprintf("Host: %s", hostname), httpsTestURL)
+			} else {
+				bodyCmd = exec.Command("curl", "-s",
+					"--connect-timeout", "10", "--max-time", "15",
+					"-k", "--resolve", fmt.Sprintf("%s:443:%s", hostname, gatewayIP),
+					fmt.Sprintf("https://%s/", hostname))
+			}
+			output, err := utils.Run(bodyCmd)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(output).To(ContainSubstring("Welcome"), "Response should contain app content")
 

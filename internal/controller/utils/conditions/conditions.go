@@ -25,17 +25,28 @@ import (
 
 // SetCondition sets or updates a condition in the NebariApp status.
 // If a condition with the same type already exists, it will be updated.
-// The LastTransitionTime is automatically set to the current time.
+// The LastTransitionTime is only updated when the status changes.
 func SetCondition(nebariApp *appsv1.NebariApp, conditionType string,
 	status metav1.ConditionStatus, reason, message string) {
+
+	// Check if condition exists and if status is changing
+	existingCondition := meta.FindStatusCondition(nebariApp.Status.Conditions, conditionType)
+	now := metav1.Now()
 
 	condition := metav1.Condition{
 		Type:               conditionType,
 		Status:             status,
 		ObservedGeneration: nebariApp.Generation,
-		LastTransitionTime: metav1.Now(),
 		Reason:             reason,
 		Message:            message,
+	}
+
+	// Only set LastTransitionTime if condition doesn't exist or status is changing
+	if existingCondition == nil || existingCondition.Status != status {
+		condition.LastTransitionTime = now
+	} else {
+		// Preserve the existing LastTransitionTime
+		condition.LastTransitionTime = existingCondition.LastTransitionTime
 	}
 
 	meta.SetStatusCondition(&nebariApp.Status.Conditions, condition)

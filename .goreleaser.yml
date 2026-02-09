@@ -1,4 +1,4 @@
-# GoReleaser configuration for NIC Operator
+# GoReleaser configuration for Nebari Operator
 # Documentation: https://goreleaser.com
 
 version: 2
@@ -101,9 +101,9 @@ release:
   prerelease: auto
   mode: append
   header: |
-    ## NIC Operator {{ .Tag }}
+    ## Nebari Operator {{ .Tag }}
 
-    This release includes the NIC Operator binaries and Kubernetes manifests.
+    This release includes the Nebari Operator binaries and Kubernetes manifests.
 
     ### Installation
 

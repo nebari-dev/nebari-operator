@@ -1,6 +1,6 @@
 # E2E Tests
 
-End-to-end tests for the NIC Operator.
+End-to-end tests for the Nebari Operator.
 
 ## Running Tests
 

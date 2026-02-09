@@ -1,6 +1,6 @@
 # Development Environment
 
-This directory contains scripts and tools for setting up a local development environment for the NIC Operator.
+This directory contains scripts and tools for setting up a local development environment for the Nebari Operator.
 
 ## Directory Structure
 
@@ -14,7 +14,12 @@ dev/
 │   │   └── delete.sh          # Delete Kind cluster
 │   ├── services/              # Service installation
 │   │   ├── install.sh         # Install Envoy Gateway, cert-manager, Gateway
-│   │   └── uninstall.sh       # Uninstall all services
+│   │   ├── uninstall.sh       # Uninstall all services
+│   │   └── keycloak/          # Keycloak OIDC authentication
+│   │       ├── install.sh     # Install Keycloak
+│   │       ├── setup.sh       # Setup Keycloak realm
+│   │       ├── uninstall.sh   # Uninstall Keycloak
+│   │       └── README.md      # Keycloak documentation
 │   ├── networking/            # Network configuration
 │   │   ├── update-hosts.sh    # Manage /etc/hosts entries for NebariApps
 │   │   └── port-forward.sh    # Setup port forwarding for local access
@@ -56,7 +61,7 @@ make port-forward       # Setup port forwarding for local access
 ## What Gets Installed
 
 ### 1. Kind Cluster
-- Name: `nic-operator-dev` (configurable via `CLUSTER_NAME`)
+- Name: `nebari-operator-dev` (configurable via `CLUSTER_NAME`)
 - 1 control-plane node + 2 worker nodes
 - MetalLB for LoadBalancer services
 - Port forwarding: 80, 443
@@ -82,13 +87,25 @@ make port-forward       # Setup port forwarding for local access
   - Secret: `nebari-gateway-tls`
   - Self-signed for development
 
+### 5. Keycloak (Optional)
+For testing OIDC authentication:
+```bash
+./scripts/services/keycloak/install.sh   # Install Keycloak
+./scripts/services/keycloak/setup.sh     # Setup nebari realm
+```
+- Namespace: `keycloak`
+- Admin credentials: `admin/admin`
+- Realm: `nebari`
+- Realm admin: `admin/nebari-admin`
+- See [keycloak README](./scripts/services/keycloak/README.md) for details
+
 ## Usage
 
 ### Local Development
 
-> **Note**: The `examples/` directory contains simplified manifests for quick local development.
-> For comprehensive test variations (HTTP-only, multiple paths, TLS disabled, etc.), see the
-> E2E test files in `test/e2e/` which create these programmatically.
+> **Note**: The `examples/` directory contains simplified manifests for quick local development. For comprehensive test
+> variations (HTTP-only, multiple paths, TLS disabled, etc.), see the E2E test files in `test/e2e/` which create these
+> programmatically.
 
 1. **Setup environment**:
    ```bash
@@ -147,7 +164,7 @@ make test-e2e
 
 ## Environment Variables
 
-- `CLUSTER_NAME`: Name of the Kind cluster (default: `nic-operator-dev`)
+- `CLUSTER_NAME`: Name of the Kind cluster (default: `nebari-operator-dev`)
 - `KUBECONFIG`: Path to kubeconfig file (default: `~/.kube/config`)
 
 ## Accessing Services
