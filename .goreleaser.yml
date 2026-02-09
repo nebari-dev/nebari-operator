@@ -9,8 +9,6 @@ before:
     - go mod tidy
     # Generate code
     - make generate
-    # Generate manifests
-    - make manifests
 
 builds:
   - id: manager
@@ -39,7 +37,8 @@ builds:
 
 archives:
   - id: default
-    format: tar.gz
+    formats:
+      - tar.gz
     name_template: >-
       {{ .ProjectName }}_
       {{- .Version }}_
@@ -50,7 +49,8 @@ archives:
       {{- if .Arm }}v{{ .Arm }}{{ end }}
     format_overrides:
       - goos: windows
-        format: zip
+        formats:
+          - zip
     files:
       - LICENSE
       - README.md
@@ -101,38 +101,25 @@ release:
   prerelease: auto
   mode: append
   header: |
-    ## Nebari Operator {{ .Tag }}
+    ## Installation
 
-    This release includes the Nebari Operator binaries and Kubernetes manifests.
-
-    ### Installation
-
-    To install the operator in your cluster:
+    Install the operator in your cluster:
 
     ```bash
     kubectl apply -f https://github.com/nebari-dev/nebari-operator/releases/download/{{ .Tag }}/install.yaml
     ```
 
-    ### Docker Image
-
-    The operator image is available at:
+    Or use the Docker image:
     ```
     quay.io/nebari/nebari-operator:{{ .Tag }}
     ```
 
   footer: |
     ---
+    ## Resources
 
-    **Full Changelog**: https://github.com/nebari-dev/nebari-operator/compare/{{ .PreviousTag }}...{{ .Tag }}
-
-    ## What's Next?
-
-    - Check out the [documentation](https://github.com/nebari-dev/nebari-operator/tree/{{ .Tag }}/docs) for configuration options
-    - Report issues at https://github.com/nebari-dev/nebari-operator/issues
-
-  extra_files:
-    - glob: dist/install.yaml
-      name_template: install.yaml
+    - [Documentation](https://github.com/nebari-dev/nebari-operator/tree/{{ .Tag }}/docs)
+    - [Report Issues](https://github.com/nebari-dev/nebari-operator/issues)
 
 # Announcements (optional)
 announce:
