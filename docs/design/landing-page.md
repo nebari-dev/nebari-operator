@@ -1,9 +1,6 @@
-# Design Document: NIC Landing Page
+# Design Document: Nebari Landing Page
 
-**Status:** Draft
-**Author:** [Author Name]
-**Created:** 2026-01-12
-**Last Updated:** 2026-01-13
+**Status:** Draft **Author:** [Author Name] **Created:** 2026-01-12 **Last Updated:** 2026-01-13
 
 ## Table of Contents
 
@@ -19,18 +16,22 @@
 10. [Rollout Plan](#rollout-plan)
 11. [Open Questions](#open-questions)
 
----
+
 
 ## Background
 
-The NIC (Nebari Infrastructure Core) ecosystem deploys various services on top of Kubernetes clusters. Currently, there is no centralized way for users to discover and access these services. Users must know the specific URLs for each service or navigate through multiple documentation sources.
+The Nebari ecosystem deploys various services on top of Kubernetes clusters. Currently, there is no centralized way for
+users to discover and access these services. Users must know the specific URLs for each service or navigate through
+multiple documentation sources.
 
-The nic-operator already provides a framework for service onboarding via the `NicApp` Custom Resource, which handles routing (HTTPRoute), TLS (cert-manager), and SSO (Envoy Gateway). This proposal extends that system to include a landing page that automatically displays all registered services.
+The nebari-operator already provides a framework for service onboarding via the `NebariApp` Custom Resource, which
+handles routing (HTTPRoute), TLS (cert-manager), and SSO (Envoy Gateway). This proposal extends that system to include a
+landing page that automatically displays all registered services.
 
 ### Current State
 
 - Services are deployed via Helm/ArgoCD
-- Each service creates a `NicApp` CR for routing/TLS/auth configuration
+- Each service creates a `NebariApp` CR for routing/TLS/auth configuration
 - No unified service discovery or landing page exists
 - Users must bookmark individual service URLs
 
@@ -42,17 +43,17 @@ Users need a single entry point to:
 3. See the health status of services at a glance
 4. Filter and search through available services
 
----
+
 
 ## Goals
 
-1. **Service Discovery**: Provide a central landing page that displays all services registered via `NicApp` CRs
+1. **Service Discovery**: Provide a central landing page that displays all services registered via `NebariApp` CRs
 2. **Real-time Updates**: Automatically update the landing page when services are added, modified, or removed
 3. **Health Visibility**: Display health status for services that expose health endpoints
-4. **Self-Service**: Services register themselves by including landing page metadata in their `NicApp` CR
+4. **Self-Service**: Services register themselves by including landing page metadata in their `NebariApp` CR
 5. **GitOps Compatible**: No manual registration required; everything is declarative via CRDs
 
----
+
 
 ## Non-Goals
 
@@ -61,7 +62,7 @@ Users need a single entry point to:
 3. **Monitoring Dashboard**: This is not a replacement for Grafana or similar monitoring tools
 4. **API Gateway**: The landing page does not proxy requests to services
 
----
+
 
 ## Proposed Design
 
@@ -69,7 +70,7 @@ Users need a single entry point to:
 
 ```
 ┌─────────────────┐     creates      ┌─────────────────┐
-│  Helm Chart /   │ ───────────────► │   NicApp CR     │
+│  Helm Chart /   │ ───────────────► │   NebariApp CR     │
 │  ArgoCD App     │                  │  (CRD instance) │
 └─────────────────┘                  └────────┬────────┘
                                               │
@@ -77,7 +78,7 @@ Users need a single entry point to:
                     │                         │                         │
                     ▼                         ▼                         ▼
            ┌───────────────┐         ┌───────────────┐         ┌───────────────┐
-           │ nic-operator  │         │ nic-operator  │         │ Landing Page  │
+           │nebari-operator│         │nebari-operator│         │ Landing Page  │
            │ (Routing)     │         │ (TLS/Auth)    │         │ Service       │
            └───────────────┘         └───────────────┘         └───────┬───────┘
                     │                         │                         │
@@ -98,26 +99,26 @@ Users need a single entry point to:
 | UI Components | react-uswds (USWDS 3.0) | Section 508 accessibility, consistent design, pre-built accessible components |
 | Real-time Updates | WebSocket | Low latency updates without polling, efficient for multiple clients |
 | Health Checks | Server-side | Centralized checking avoids CORS issues, reduces client load |
-| Data Source | Watch NicApp CRs | Native Kubernetes pattern, no additional data store needed |
+| Data Source | Watch NebariApp CRs | Native Kubernetes pattern, no additional data store needed |
 
 ### Component Summary
 
-1. **NicApp CRD Extension**: Add `landingPage` field to existing NicApp spec
-2. **Go API Server**: Watches NicApp resources, performs health checks, serves REST API
+1. **NebariApp CRD Extension**: Add `landingPage` field to existing NebariApp spec
+2. **Go API Server**: Watches NebariApp resources, performs health checks, serves REST API
 3. **React Frontend**: SPA that displays services with filtering, search, and real-time updates
-4. **Kubernetes Manifests**: Deployment, Service, RBAC, and self-registration NicApp
+4. **Kubernetes Manifests**: Deployment, Service, RBAC, and self-registration NebariApp
 
----
+
 
 ## Detailed Design
 
-### 1. NicApp CRD Extension
+### 1. NebariApp CRD Extension
 
-Extend the `NicApp` spec with landing page metadata:
+Extend the `NebariApp` spec with landing page metadata:
 
 ```yaml
-apiVersion: apps.nebari.dev/v1alpha1
-kind: NicApp
+apiVersion: reconcilers.nebari.dev/v1
+kind: NebariApp
 metadata:
   name: jupyterhub
   namespace: nebari
@@ -217,7 +218,7 @@ type HealthCheckConfig struct {
 **Location:** `cmd/landingpage/` and `internal/landingpage/`
 
 **Responsibilities:**
-- Watch NicApp resources across all namespaces
+- Watch NebariApp resources across all namespaces
 - Maintain in-memory cache of services with landing page enabled
 - Perform periodic health checks for services with health checking enabled
 - Serve REST API for the React frontend
@@ -244,7 +245,7 @@ internal/landingpage/
 │   ├── handlers.go     # REST endpoint handlers
 │   └── types.go        # API request/response types
 ├── watcher/
-│   └── watcher.go      # NicApp informer, cache management
+│   └── watcher.go      # NebariApp informer, cache management
 ├── health/
 │   └── checker.go      # Health check scheduler and executor
 └── websocket/
@@ -255,35 +256,37 @@ internal/landingpage/
 
 The API server uses the standard client-go informer pattern for data synchronization:
 
-1. **On Startup (LIST):** The informer performs a LIST operation to fetch all existing `NicApp` resources across all namespaces, populating the in-memory cache with services that have `landingPage.enabled: true`.
+1. **On Startup (LIST):** The informer performs a LIST operation to fetch all existing `NebariApp` resources across all
+   namespaces, populating the in-memory cache with services that have `landingPage.enabled: true`.
 
-2. **Ongoing (WATCH):** After the initial list, the informer establishes a persistent WATCH connection to the Kubernetes API server, receiving real-time events for any `NicApp` changes.
+2. **Ongoing (WATCH):** After the initial list, the informer establishes a persistent WATCH connection to the Kubernetes
+   API server, receiving real-time events for any `NebariApp` changes.
 
 3. **Event Handling:** The watcher processes three event types:
-   - `ADDED` - New NicApp created; add to cache if landing page enabled
-   - `MODIFIED` - NicApp updated; update cache entry or add/remove based on enabled flag
-   - `DELETED` - NicApp removed; remove from cache
+   - `ADDED` - New NebariApp created; add to cache if landing page enabled
+   - `MODIFIED` - NebariApp updated; update cache entry or add/remove based on enabled flag
+   - `DELETED` - NebariApp removed; remove from cache
 
 ```go
 // Simplified informer setup
 informer := cache.NewSharedIndexInformer(
     &cache.ListWatch{
         ListFunc: func(opts metav1.ListOptions) (runtime.Object, error) {
-            return client.NicApps("").List(ctx, opts)  // LIST all namespaces
+            return client.NebariApps("").List(ctx, opts)  // LIST all namespaces
         },
         WatchFunc: func(opts metav1.ListOptions) (watch.Interface, error) {
-            return client.NicApps("").Watch(ctx, opts)  // WATCH all namespaces
+            return client.NebariApps("").Watch(ctx, opts)  // WATCH all namespaces
         },
     },
-    &v1alpha1.NicApp{},
+    &v1.NebariApp{},
     resyncPeriod,
     cache.Indexers{},
 )
 
 informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-    AddFunc:    s.onNicAppAdded,
-    UpdateFunc: s.onNicAppUpdated,
-    DeleteFunc: s.onNicAppDeleted,
+    AddFunc:    s.onNebariAppAdded,
+    UpdateFunc: s.onNebariAppUpdated,
+    DeleteFunc: s.onNebariAppDeleted,
 })
 ```
 
@@ -386,17 +389,17 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: landing-page
-  namespace: nic-operator-system
+  namespace: nebari-operator-system
 
 ---
-# ClusterRole (read-only access to NicApp resources)
+# ClusterRole (read-only access to NebariApp resources)
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: landing-page
 rules:
-- apiGroups: ["apps.nebari.dev"]
-  resources: ["nicapps"]
+- apiGroups: ["reconcilers.nebari.dev"]
+  resources: ["nebariapps"]
   verbs: ["get", "list", "watch"]
 
 ---
@@ -405,7 +408,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: landing-page
-  namespace: nic-operator-system
+  namespace: nebari-operator-system
 spec:
   replicas: 2
   selector:
@@ -416,7 +419,7 @@ spec:
       serviceAccountName: landing-page
       containers:
       - name: landing-page
-        image: ghcr.io/nebari-dev/nic-landing-page:latest
+        image: ghcr.io/nebari-dev/nebari-landing-page:latest
         ports:
         - containerPort: 8080
         resources:
@@ -441,7 +444,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: landing-page
-  namespace: nic-operator-system
+  namespace: nebari-operator-system
 spec:
   selector:
     app: landing-page
@@ -452,14 +455,14 @@ spec:
 
 **Self-Registration:**
 
-The landing page registers itself via NicApp:
+The landing page registers itself via NebariApp:
 
 ```yaml
-apiVersion: apps.nebari.dev/v1alpha1
-kind: NicApp
+apiVersion: reconcilers.nebari.dev/v1
+kind: NebariApp
 metadata:
   name: landing-page
-  namespace: nic-operator-system
+  namespace: nebari-operator-system
 spec:
   hostname: nebari.example.com  # Root domain
   tls:
@@ -475,7 +478,7 @@ spec:
     priority: 0  # Always first
 ```
 
----
+
 
 ## API Specification
 
@@ -521,7 +524,7 @@ Broadcasts service updates in real-time.
 }
 ```
 
----
+
 
 ## Alternatives Considered
 
@@ -573,25 +576,25 @@ Broadcasts service updates in real-time.
 
 **Cons:**
 - Separate from routing/TLS configuration
-- Potential for drift between ConfigMap and NicApp
+- Potential for drift between ConfigMap and NebariApp
 - Less declarative
 
-**Decision:** Rejected - extending NicApp provides a unified configuration point
+**Decision:** Rejected - extending NebariApp provides a unified configuration point
 
----
+
 
 ## Security Considerations
 
 ### Authentication & Authorization
 
-- The landing page itself may be public or behind SSO (configurable via NicApp auth field)
-- The API server only has read access to NicApp resources
+- The landing page itself may be public or behind SSO (configurable via NebariApp auth field)
+- The API server only has read access to NebariApp resources
 - No write operations are performed
 
 ### Network Policies
 
 - Landing page only needs egress to:
-  - Kubernetes API server (for watching NicApps)
+  - Kubernetes API server (for watching NebariApps)
   - Service health endpoints (for health checks)
 - Ingress only from the gateway
 
@@ -608,7 +611,7 @@ Broadcasts service updates in real-time.
 - Dropped capabilities
 - Restricted pod security standard
 
----
+
 
 ## Testing Strategy
 
@@ -621,7 +624,7 @@ Broadcasts service updates in real-time.
 
 ### Integration Tests
 
-- NicApp watcher correctly updates cache
+- NebariApp watcher correctly updates cache
 - WebSocket broadcasts on changes
 - API returns correct data format
 
@@ -631,10 +634,10 @@ Broadcasts service updates in real-time.
 # 1. Deploy landing page to Kind cluster
 make deploy-landingpage
 
-# 2. Create test NicApp
+# 2. Create test NebariApp
 kubectl apply -f - <<EOF
-apiVersion: apps.nebari.dev/v1alpha1
-kind: NicApp
+apiVersion: reconcilers.nebari.dev/v1
+kind: NebariApp
 metadata:
   name: test-service
   namespace: default
@@ -649,19 +652,19 @@ EOF
 # 3. Verify service appears in API
 curl http://localhost:8080/api/v1/services | jq '.services[] | select(.name=="test-service")'
 
-# 4. Delete NicApp and verify removal
-kubectl delete nicapp test-service
+# 4. Delete NebariApp and verify removal
+kubectl delete nebariapp test-service
 curl http://localhost:8080/api/v1/services | jq '.services | length'
 ```
 
----
+
 
 ## Rollout Plan
 
 ### Phase 1: CRD Extension
-1. Add `landingPage` field to NicApp types
+1. Add `landingPage` field to NebariApp types
 2. Run `make manifests` to regenerate CRD
-3. Update existing NicApp samples with landing page examples
+3. Update existing NebariApp samples with landing page examples
 4. Release new CRD version
 
 ### Phase 2: Backend Implementation
@@ -680,7 +683,7 @@ curl http://localhost:8080/api/v1/services | jq '.services | length'
 1. Create Kubernetes manifests
 2. Add to Kustomize overlays
 3. Write user documentation
-4. Create sample NicApps for common services
+4. Create sample NebariApps for common services
 
 ### Phase 5: Production Rollout
 1. Deploy to staging environment
@@ -688,7 +691,7 @@ curl http://localhost:8080/api/v1/services | jq '.services | length'
 3. Deploy to production
 4. Monitor and iterate
 
----
+
 
 ## Open Questions
 
@@ -700,19 +703,20 @@ curl http://localhost:8080/api/v1/services | jq '.services | length'
 
 4. **Announcements**: Should the landing page support system-wide announcements/banners?
 
-5. **External Services**: Should we support registering services that don't have NicApp CRs (e.g., external SaaS tools)?
+5. **External Services**: Should we support registering services that don't have NebariApp CRs (e.g., external SaaS
+   tools)?
 
----
+
 
 ## Appendix
 
 ### File Structure
 
 ```
-nic-operator/
-├── api/v1alpha1/
+nebari-operator/
+├── api/v1/
 │   ├── groupversion_info.go
-│   ├── nicapp_types.go              # NicApp CRD with landingPage field
+│   ├── nebariapp_types.go           # NebariApp CRD with landingPage field
 │   └── zz_generated.deepcopy.go
 ├── cmd/
 │   ├── main.go                      # Operator entry point
@@ -720,7 +724,7 @@ nic-operator/
 │       └── main.go                  # Landing page entry point
 ├── internal/
 │   ├── controller/
-│   │   └── nicapp_controller.go
+│   │   └── nebariapp_controller.go
 │   └── landingpage/
 │       ├── server.go
 │       ├── api/
@@ -744,7 +748,7 @@ nic-operator/
 │   └── dist/
 ├── config/
 │   ├── crd/bases/
-│   │   └── apps.nebari.dev_nicapps.yaml
+│   │   └── reconcilers.nebari.dev_nebariapps.yaml
 │   ├── landingpage/
 │   │   ├── deployment.yaml
 │   │   ├── service.yaml
@@ -752,7 +756,7 @@ nic-operator/
 │   │   ├── rbac.yaml
 │   │   └── kustomization.yaml
 │   └── samples/
-│       └── landingpage-nicapp.yaml
+│       └── landingpage-nebariapp.yaml
 ├── Dockerfile
 ├── Dockerfile.landingpage
 └── Makefile
@@ -760,7 +764,7 @@ nic-operator/
 
 ### References
 
-- [nic-operator README](../../README.md)
+- [nebari-operator README](../../README.md)
 - [Kubernetes Operator Pattern](https://kubernetes.io/docs/concepts/extend-kubernetes/operator/)
 - [React 19 Documentation](https://react.dev/)
 - [react-uswds (Trussworks)](https://github.com/trussworks/react-uswds)
