@@ -36,7 +36,7 @@ import (
 
 // KeycloakConfig contains configuration for the Keycloak OIDC provider.
 type KeycloakConfig struct {
-	// URL is the HTTP URL to access Keycloak (internal cluster DNS).
+	// URL is the HTTP URL to access Keycloak admin API (internal cluster DNS).
 	// Example: http://keycloak.keycloak.svc.cluster.local:8080
 	URL string
 
@@ -54,6 +54,21 @@ type KeycloakConfig struct {
 
 	// AdminPassword is the Keycloak admin password (loaded from secret).
 	AdminPassword string
+
+	// Issuer URL components (used by Envoy Gateway for OIDC)
+	// These configure how the issuer URL is built for SecurityPolicy
+
+	// IssuerServiceName is the Kubernetes service name for Keycloak
+	IssuerServiceName string
+
+	// IssuerServiceNamespace is the namespace where Keycloak is deployed
+	IssuerServiceNamespace string
+
+	// IssuerServicePort is the HTTP port for the Keycloak service
+	IssuerServicePort int
+
+	// IssuerContextPath is the HTTP context path for Keycloak (e.g., "/auth")
+	IssuerContextPath string
 }
 
 // KeycloakProvider implements the OIDCProvider interface for Keycloak.
@@ -67,10 +82,12 @@ type KeycloakProvider struct {
 func (p *KeycloakProvider) GetIssuerURL(ctx context.Context, nebariApp *appsv1.NebariApp) (string, error) {
 	realm := p.Config.Realm
 	// Use internal cluster DNS for Envoy to fetch OIDC config
-	return fmt.Sprintf("http://%s.%s.svc.cluster.local:%d/realms/%s",
-		constants.DefaultKeycloakServiceName,
-		constants.DefaultKeycloakNamespace,
-		constants.DefaultKeycloakServicePort,
+	// All components are now configurable via environment variables
+	return fmt.Sprintf("http://%s.%s.svc.cluster.local:%d%s/realms/%s",
+		p.Config.IssuerServiceName,
+		p.Config.IssuerServiceNamespace,
+		p.Config.IssuerServicePort,
+		p.Config.IssuerContextPath,
 		realm), nil
 }
 

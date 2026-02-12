@@ -37,19 +37,39 @@ func TestKeycloakProvider_GetIssuerURL(t *testing.T) {
 		{
 			name: "Default configuration",
 			config: KeycloakConfig{
-				URL:   "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:80/auth",
-				Realm: "nebari",
+				URL:                    "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/auth",
+				Realm:                  "nebari",
+				IssuerServiceName:      "keycloak-keycloakx-http",
+				IssuerServiceNamespace: "keycloak",
+				IssuerServicePort:      8080,
+				IssuerContextPath:      "/auth",
 			},
-			expectedURL: "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:80/realms/nebari",
+			expectedURL: "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/auth/realms/nebari",
 		},
 		{
 			name: "Custom realm",
 			config: KeycloakConfig{
-				URL:   "https://keycloak.example.com",
-				Realm: "custom-realm",
+				URL:                    "https://keycloak.example.com",
+				Realm:                  "custom-realm",
+				IssuerServiceName:      "keycloak-keycloakx-http",
+				IssuerServiceNamespace: "keycloak",
+				IssuerServicePort:      8080,
+				IssuerContextPath:      "/auth",
 			},
-			// Implementation always uses internal cluster URL regardless of config.URL
-			expectedURL: "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:80/realms/custom-realm",
+			// Issuer URL is built from config components, not from config.URL
+			expectedURL: "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/auth/realms/custom-realm",
+		},
+		{
+			name: "Custom deployment configuration",
+			config: KeycloakConfig{
+				URL:                    "http://custom-keycloak.auth.svc.cluster.local:9090",
+				Realm:                  "custom-realm",
+				IssuerServiceName:      "custom-keycloak",
+				IssuerServiceNamespace: "auth",
+				IssuerServicePort:      9090,
+				IssuerContextPath:      "",
+			},
+			expectedURL: "http://custom-keycloak.auth.svc.cluster.local:9090/realms/custom-realm",
 		},
 	}
 

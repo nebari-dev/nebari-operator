@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -39,7 +40,7 @@ type KeycloakConfig struct {
 	// Enabled determines if Keycloak integration is enabled
 	Enabled bool
 
-	// URL is the internal cluster URL for Keycloak
+	// URL is the internal cluster URL for Keycloak admin API
 	// Example: http://keycloak.keycloak.svc.cluster.local:8080
 	URL string
 
@@ -58,6 +59,21 @@ type KeycloakConfig struct {
 
 	// AdminPassword is the admin password (if not using secret)
 	AdminPassword string
+
+	// Issuer URL components (used by Envoy Gateway for OIDC)
+	// These configure how the issuer URL is built for SecurityPolicy
+
+	// IssuerServiceName is the Kubernetes service name for Keycloak
+	IssuerServiceName string
+
+	// IssuerServiceNamespace is the namespace where Keycloak is deployed
+	IssuerServiceNamespace string
+
+	// IssuerServicePort is the HTTP port for the Keycloak service
+	IssuerServicePort int
+
+	// IssuerContextPath is the HTTP context path for Keycloak (e.g., "/auth")
+	IssuerContextPath string
 }
 
 // LoadAuthConfig loads authentication configuration from environment variables.
@@ -71,6 +87,11 @@ func LoadAuthConfig() AuthConfig {
 			AdminSecretNamespace: getEnv("KEYCLOAK_ADMIN_SECRET_NAMESPACE", "keycloak"),
 			AdminUsername:        getEnv("KEYCLOAK_ADMIN_USERNAME", ""),
 			AdminPassword:        getEnv("KEYCLOAK_ADMIN_PASSWORD", ""),
+			// Issuer URL components (for Envoy Gateway SecurityPolicy)
+			IssuerServiceName:      getEnv("KEYCLOAK_ISSUER_SERVICE_NAME", constants.DefaultKeycloakServiceName),
+			IssuerServiceNamespace: getEnv("KEYCLOAK_ISSUER_SERVICE_NAMESPACE", constants.DefaultKeycloakNamespace),
+			IssuerServicePort:      getEnvInt("KEYCLOAK_ISSUER_SERVICE_PORT", constants.DefaultKeycloakServicePort),
+			IssuerContextPath:      getEnv("KEYCLOAK_ISSUER_CONTEXT_PATH", constants.DefaultKeycloakContextPath),
 		},
 	}
 }
@@ -144,6 +165,16 @@ func getEnv(key, defaultValue string) string {
 func getEnvBool(key string, defaultValue bool) bool {
 	if value := os.Getenv(key); value != "" {
 		return value == "true" || value == "1" || value == "yes"
+	}
+	return defaultValue
+}
+
+// getEnvInt gets an integer environment variable or returns a default value.
+func getEnvInt(key string, defaultValue int) int {
+	if value := os.Getenv(key); value != "" {
+		if intValue, err := strconv.Atoi(value); err == nil {
+			return intValue
+		}
 	}
 	return defaultValue
 }

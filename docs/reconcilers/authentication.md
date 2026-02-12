@@ -67,7 +67,7 @@ type OIDCProvider interface {
 
 **Issuer URL Format:**
 ```
-http://keycloak.keycloak.svc.cluster.local:8080/realms/{realm}
+http://keycloak.keycloak.svc.cluster.local:8080/auth/realms/{realm}
 ```
 
 **Client ID Format:**
@@ -277,10 +277,20 @@ The auth reconciler can be configured via environment variables:
 
 **Keycloak Provider:**
 - `KEYCLOAK_ENABLED`: Enable Keycloak integration (default: `true`)
-- `KEYCLOAK_URL`: Keycloak URL (default: `http://keycloak-keycloakx-http.keycloak.svc.cluster.local/auth`)
+- `KEYCLOAK_URL`: Keycloak URL for admin API (default:
+  `http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/auth`)
 - `KEYCLOAK_REALM`: Keycloak realm (default: `nebari`)
-- `KEYCLOAK_ADMIN_SECRET_NAME`: Secret containing master realm admin credentials (default: `keycloak-admin-credentials`)
+- `KEYCLOAK_ADMIN_SECRET_NAME`: Secret containing master realm admin credentials (default:
+  `nebari-realm-admin-credentials`)
 - `KEYCLOAK_ADMIN_SECRET_NAMESPACE`: Namespace of admin secret (default: `keycloak`)
+
+**Keycloak Issuer URL Components (for Envoy Gateway):**
+
+These configure how the OIDC issuer URL is built for SecurityPolicy resources:
+- `KEYCLOAK_ISSUER_SERVICE_NAME`: Kubernetes service name (default: `keycloak-keycloakx-http`)
+- `KEYCLOAK_ISSUER_SERVICE_NAMESPACE`: Keycloak namespace (default: `keycloak`)
+- `KEYCLOAK_ISSUER_SERVICE_PORT`: Service port (default: `8080`)
+- `KEYCLOAK_ISSUER_CONTEXT_PATH`: HTTP context path (default: `/auth`)
 
 **Alternative (for testing):**
 - `KEYCLOAK_ADMIN_USERNAME`: Admin username (takes precedence over secret)
