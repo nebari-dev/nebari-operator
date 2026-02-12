@@ -31,7 +31,6 @@ func SetCondition(nebariApp *appsv1.NebariApp, conditionType string,
 
 	// Check if condition exists and if status is changing
 	existingCondition := meta.FindStatusCondition(nebariApp.Status.Conditions, conditionType)
-	now := metav1.Now()
 
 	condition := metav1.Condition{
 		Type:               conditionType,
@@ -42,11 +41,10 @@ func SetCondition(nebariApp *appsv1.NebariApp, conditionType string,
 	}
 
 	// Only set LastTransitionTime if condition doesn't exist or status is changing
+	// When status is not changing, leave LastTransitionTime unset (zero value)
+	// and meta.SetStatusCondition will preserve the existing value
 	if existingCondition == nil || existingCondition.Status != status {
-		condition.LastTransitionTime = now
-	} else {
-		// Preserve the existing LastTransitionTime
-		condition.LastTransitionTime = existingCondition.LastTransitionTime
+		condition.LastTransitionTime = metav1.Now()
 	}
 
 	meta.SetStatusCondition(&nebariApp.Status.Conditions, condition)
