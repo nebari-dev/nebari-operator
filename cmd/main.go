@@ -198,16 +198,24 @@ func main() {
 			"url", authConfig.Keycloak.URL,
 			"realm", authConfig.Keycloak.Realm,
 			"adminSecretName", authConfig.Keycloak.AdminSecretName,
-			"adminSecretNamespace", authConfig.Keycloak.AdminSecretNamespace)
+			"adminSecretNamespace", authConfig.Keycloak.AdminSecretNamespace,
+			"issuerServiceName", authConfig.Keycloak.IssuerServiceName,
+			"issuerServiceNamespace", authConfig.Keycloak.IssuerServiceNamespace,
+			"issuerServicePort", authConfig.Keycloak.IssuerServicePort,
+			"issuerContextPath", authConfig.Keycloak.IssuerContextPath)
 
 		// Initialize provider with config - credentials will be loaded from secret when needed
 		keycloakProvider := &providers.KeycloakProvider{
 			Client: mgr.GetClient(),
 			Config: providers.KeycloakConfig{
-				URL:                  authConfig.Keycloak.URL,
-				Realm:                authConfig.Keycloak.Realm,
-				AdminSecretName:      authConfig.Keycloak.AdminSecretName,
-				AdminSecretNamespace: authConfig.Keycloak.AdminSecretNamespace,
+				URL:                    authConfig.Keycloak.URL,
+				Realm:                  authConfig.Keycloak.Realm,
+				AdminSecretName:        authConfig.Keycloak.AdminSecretName,
+				AdminSecretNamespace:   authConfig.Keycloak.AdminSecretNamespace,
+				IssuerServiceName:      authConfig.Keycloak.IssuerServiceName,
+				IssuerServiceNamespace: authConfig.Keycloak.IssuerServiceNamespace,
+				IssuerServicePort:      authConfig.Keycloak.IssuerServicePort,
+				IssuerContextPath:      authConfig.Keycloak.IssuerContextPath,
 			},
 		}
 		oidcProviders[constants.ProviderKeycloak] = keycloakProvider

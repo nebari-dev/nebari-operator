@@ -74,7 +74,7 @@ const (
 	DefaultKeycloakServiceName = "keycloak-keycloakx-http"
 
 	// DefaultKeycloakServicePort is the HTTP port for Keycloak service
-	DefaultKeycloakServicePort = 80
+	DefaultKeycloakServicePort = 8080
 
 	// DefaultKeycloakContextPath is the HTTP context path for Keycloak
 	DefaultKeycloakContextPath = "/auth"
