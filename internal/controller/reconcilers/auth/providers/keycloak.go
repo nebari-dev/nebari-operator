@@ -24,6 +24,7 @@ import (
 
 	"github.com/Nerzal/gocloak/v13"
 	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
+	"github.com/nebari-dev/nebari-operator/internal/config"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/constants"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/naming"
 	corev1 "k8s.io/api/core/v1"
@@ -34,32 +35,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-// KeycloakConfig contains configuration for the Keycloak OIDC provider.
-type KeycloakConfig struct {
-	// URL is the HTTP URL to access Keycloak (internal cluster DNS).
-	// Example: http://keycloak.keycloak.svc.cluster.local:8080
-	URL string
-
-	// Realm is the Keycloak realm to use for OIDC clients.
-	Realm string
-
-	// AdminSecretName is the name of the secret containing Keycloak admin credentials.
-	AdminSecretName string
-
-	// AdminSecretNamespace is the namespace of the admin secret.
-	AdminSecretNamespace string
-
-	// AdminUsername is the Keycloak admin username (loaded from secret).
-	AdminUsername string
-
-	// AdminPassword is the Keycloak admin password (loaded from secret).
-	AdminPassword string
-}
-
 // KeycloakProvider implements the OIDCProvider interface for Keycloak.
 type KeycloakProvider struct {
 	Client client.Client
-	Config KeycloakConfig
+	Config config.KeycloakConfig
 }
 
 // GetIssuerURL returns the internal cluster URL for the Keycloak realm.
@@ -67,10 +46,12 @@ type KeycloakProvider struct {
 func (p *KeycloakProvider) GetIssuerURL(ctx context.Context, nebariApp *appsv1.NebariApp) (string, error) {
 	realm := p.Config.Realm
 	// Use internal cluster DNS for Envoy to fetch OIDC config
-	return fmt.Sprintf("http://%s.%s.svc.cluster.local:%d/realms/%s",
-		constants.DefaultKeycloakServiceName,
-		constants.DefaultKeycloakNamespace,
-		constants.DefaultKeycloakServicePort,
+	// All components are now configurable via environment variables
+	return fmt.Sprintf("http://%s.%s.svc.cluster.local:%d%s/realms/%s",
+		p.Config.IssuerServiceName,
+		p.Config.IssuerServiceNamespace,
+		p.Config.IssuerServicePort,
+		p.Config.IssuerContextPath,
 		realm), nil
 }
 

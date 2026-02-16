@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
+	"github.com/nebari-dev/nebari-operator/internal/config"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/naming"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -31,32 +32,52 @@ import (
 func TestKeycloakProvider_GetIssuerURL(t *testing.T) {
 	tests := []struct {
 		name        string
-		config      KeycloakConfig
+		kcConfig    config.KeycloakConfig
 		expectedURL string
 	}{
 		{
 			name: "Default configuration",
-			config: KeycloakConfig{
-				URL:   "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:80/auth",
-				Realm: "nebari",
+			kcConfig: config.KeycloakConfig{
+				URL:                    "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/auth",
+				Realm:                  "nebari",
+				IssuerServiceName:      "keycloak-keycloakx-http",
+				IssuerServiceNamespace: "keycloak",
+				IssuerServicePort:      8080,
+				IssuerContextPath:      "/auth",
 			},
-			expectedURL: "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:80/realms/nebari",
+			expectedURL: "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/auth/realms/nebari",
 		},
 		{
 			name: "Custom realm",
-			config: KeycloakConfig{
-				URL:   "https://keycloak.example.com",
-				Realm: "custom-realm",
+			kcConfig: config.KeycloakConfig{
+				URL:                    "https://keycloak.example.com",
+				Realm:                  "custom-realm",
+				IssuerServiceName:      "keycloak-keycloakx-http",
+				IssuerServiceNamespace: "keycloak",
+				IssuerServicePort:      8080,
+				IssuerContextPath:      "/auth",
 			},
-			// Implementation always uses internal cluster URL regardless of config.URL
-			expectedURL: "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:80/realms/custom-realm",
+			// Issuer URL is built from config components, not from config.URL
+			expectedURL: "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/auth/realms/custom-realm",
+		},
+		{
+			name: "Custom deployment configuration",
+			kcConfig: config.KeycloakConfig{
+				URL:                    "http://custom-keycloak.auth.svc.cluster.local:9090",
+				Realm:                  "custom-realm",
+				IssuerServiceName:      "custom-keycloak",
+				IssuerServiceNamespace: "auth",
+				IssuerServicePort:      9090,
+				IssuerContextPath:      "",
+			},
+			expectedURL: "http://custom-keycloak.auth.svc.cluster.local:9090/realms/custom-realm",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			provider := &KeycloakProvider{
-				Config: tt.config,
+				Config: tt.kcConfig,
 			}
 
 			nebariApp := &appsv1.NebariApp{
@@ -80,7 +101,7 @@ func TestKeycloakProvider_GetIssuerURL(t *testing.T) {
 
 func TestKeycloakProvider_GetClientID(t *testing.T) {
 	provider := &KeycloakProvider{
-		Config: KeycloakConfig{
+		Config: config.KeycloakConfig{
 			URL:   "http://keycloak.keycloak.svc.cluster.local:8080",
 			Realm: "nebari",
 		},
@@ -103,7 +124,7 @@ func TestKeycloakProvider_GetClientID(t *testing.T) {
 
 func TestKeycloakProvider_SupportsProvisioning(t *testing.T) {
 	provider := &KeycloakProvider{
-		Config: KeycloakConfig{},
+		Config: config.KeycloakConfig{},
 	}
 
 	if !provider.SupportsProvisioning() {
@@ -113,7 +134,7 @@ func TestKeycloakProvider_SupportsProvisioning(t *testing.T) {
 
 func TestKeycloakProvider_BuildRedirectURLs(t *testing.T) {
 	provider := &KeycloakProvider{
-		Config: KeycloakConfig{},
+		Config: config.KeycloakConfig{},
 	}
 
 	tests := []struct {
@@ -247,7 +268,7 @@ func TestKeycloakProvider_StoreClientSecret(t *testing.T) {
 			client := builder.Build()
 
 			provider := &KeycloakProvider{
-				Config: KeycloakConfig{},
+				Config: config.KeycloakConfig{},
 				Client: client,
 			}
 
@@ -269,7 +290,7 @@ func TestKeycloakProvider_DeleteClient(t *testing.T) {
 	// For now, we'll just ensure the method exists and has the correct signature
 
 	provider := &KeycloakProvider{
-		Config: KeycloakConfig{
+		Config: config.KeycloakConfig{
 			URL:           "http://keycloak.test",
 			Realm:         "test",
 			AdminUsername: "admin",
@@ -301,7 +322,7 @@ func TestKeycloakProvider_ProvisionClient(t *testing.T) {
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	provider := &KeycloakProvider{
-		Config: KeycloakConfig{
+		Config: config.KeycloakConfig{
 			URL:           "http://keycloak.test",
 			Realm:         "test",
 			AdminUsername: "admin",

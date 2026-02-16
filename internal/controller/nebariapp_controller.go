@@ -137,9 +137,13 @@ func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		nebariApp.Status.Hostname = nebariApp.Spec.Hostname
 	}
 
-	// Set initial reconciling status
-	conditions.SetCondition(nebariApp, appsv1.ConditionTypeReady, metav1.ConditionUnknown,
-		appsv1.ReasonReconciling, "Reconciliation in progress")
+	// Set initial reconciling status only for new resources (no existing Ready condition).
+	// Avoid setting Unknown on every reconcile, which would toggle True->Unknown->True
+	// and update lastTransitionTime even when nothing changed.
+	if conditions.GetCondition(nebariApp, appsv1.ConditionTypeReady) == nil {
+		conditions.SetCondition(nebariApp, appsv1.ConditionTypeReady, metav1.ConditionUnknown,
+			appsv1.ReasonReconciling, "Reconciliation in progress")
+	}
 
 	// Validate namespace opt-in and NebariApp spec
 	if err := r.CoreReconciler.ValidateSpec(ctx, nebariApp); err != nil {
