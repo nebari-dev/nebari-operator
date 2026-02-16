@@ -65,16 +65,22 @@ func (p *KeycloakProvider) SupportsProvisioning() bool {
 	return true
 }
 
-// loadCredentials loads admin credentials from the Kubernetes secret if not already loaded.
+// loadCredentials loads admin credentials from the Kubernetes secret.
+// When AdminSecretName is configured, credentials are always read fresh from the
+// secret to support secret rotation without pod restarts.
+// When no secret is configured, falls back to direct credentials (env vars).
 func (p *KeycloakProvider) loadCredentials(ctx context.Context) error {
-	// If credentials are already loaded, skip
-	if p.Config.AdminUsername != "" && p.Config.AdminPassword != "" {
+	// If no secret is configured, use direct credentials from config (env vars)
+	if p.Config.AdminSecretName == "" {
+		if p.Config.AdminUsername == "" || p.Config.AdminPassword == "" {
+			return fmt.Errorf("keycloak admin credentials not configured: set KEYCLOAK_ADMIN_SECRET_NAME or KEYCLOAK_ADMIN_USERNAME/PASSWORD")
+		}
 		return nil
 	}
 
 	logger := log.FromContext(ctx)
 
-	// Load credentials from secret
+	// Always read fresh from the secret to support rotation
 	secret := &corev1.Secret{}
 	err := p.Client.Get(ctx, types.NamespacedName{
 		Name:      p.Config.AdminSecretName,
