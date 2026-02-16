@@ -24,6 +24,7 @@ import (
 
 	"github.com/Nerzal/gocloak/v13"
 	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
+	"github.com/nebari-dev/nebari-operator/internal/config"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/constants"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/naming"
 	corev1 "k8s.io/api/core/v1"
@@ -34,47 +35,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-// KeycloakConfig contains configuration for the Keycloak OIDC provider.
-type KeycloakConfig struct {
-	// URL is the HTTP URL to access Keycloak admin API (internal cluster DNS).
-	// Example: http://keycloak.keycloak.svc.cluster.local:8080
-	URL string
-
-	// Realm is the Keycloak realm to use for OIDC clients.
-	Realm string
-
-	// AdminSecretName is the name of the secret containing Keycloak admin credentials.
-	AdminSecretName string
-
-	// AdminSecretNamespace is the namespace of the admin secret.
-	AdminSecretNamespace string
-
-	// AdminUsername is the Keycloak admin username (loaded from secret).
-	AdminUsername string
-
-	// AdminPassword is the Keycloak admin password (loaded from secret).
-	AdminPassword string
-
-	// Issuer URL components (used by Envoy Gateway for OIDC)
-	// These configure how the issuer URL is built for SecurityPolicy
-
-	// IssuerServiceName is the Kubernetes service name for Keycloak
-	IssuerServiceName string
-
-	// IssuerServiceNamespace is the namespace where Keycloak is deployed
-	IssuerServiceNamespace string
-
-	// IssuerServicePort is the HTTP port for the Keycloak service
-	IssuerServicePort int
-
-	// IssuerContextPath is the HTTP context path for Keycloak (e.g., "/auth")
-	IssuerContextPath string
-}
-
 // KeycloakProvider implements the OIDCProvider interface for Keycloak.
 type KeycloakProvider struct {
 	Client client.Client
-	Config KeycloakConfig
+	Config config.KeycloakConfig
 }
 
 // GetIssuerURL returns the internal cluster URL for the Keycloak realm.
