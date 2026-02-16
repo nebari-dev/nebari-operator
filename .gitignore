@@ -49,3 +49,6 @@ Dockerfile.cross
 *~
 *.swp
 *.bak
+
+# Claude Code
+CLAUDE.md
