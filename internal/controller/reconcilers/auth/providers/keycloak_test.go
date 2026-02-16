@@ -18,7 +18,11 @@ package providers
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
 	"github.com/nebari-dev/nebari-operator/internal/config"
@@ -348,4 +352,169 @@ func TestKeycloakProvider_ProvisionClient(t *testing.T) {
 	// This will fail without a real Keycloak instance, but that's expected
 	// The important part is that the method has the correct signature
 	_ = provider.ProvisionClient(context.Background(), nebariApp)
+}
+
+func TestKeycloakProvider_APITimeout(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = appsv1.AddToScheme(scheme)
+
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	nebariApp := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-app",
+			Namespace: "default",
+			UID:       "test-uid",
+		},
+		Spec: appsv1.NebariAppSpec{
+			Hostname: "test.example.com",
+			Auth: &appsv1.AuthConfig{
+				Enabled: true,
+			},
+		},
+	}
+
+	tests := []struct {
+		name        string
+		timeout     time.Duration
+		serverFunc  func(w http.ResponseWriter, r *http.Request)
+		callFunc    string
+		wantErr     bool
+		wantTimeout bool
+	}{
+		{
+			name:    "ProvisionClient times out with slow server",
+			timeout: 100 * time.Millisecond,
+			serverFunc: func(w http.ResponseWriter, r *http.Request) {
+				// Simulate a slow Keycloak by sleeping longer than the timeout
+				time.Sleep(500 * time.Millisecond)
+				w.WriteHeader(http.StatusOK)
+			},
+			callFunc:    "ProvisionClient",
+			wantErr:     true,
+			wantTimeout: true,
+		},
+		{
+			name:    "DeleteClient times out with slow server",
+			timeout: 100 * time.Millisecond,
+			serverFunc: func(w http.ResponseWriter, r *http.Request) {
+				time.Sleep(500 * time.Millisecond)
+				w.WriteHeader(http.StatusOK)
+			},
+			callFunc:    "DeleteClient",
+			wantErr:     true,
+			wantTimeout: true,
+		},
+		{
+			name:    "ProvisionClient fails with auth error, not timeout",
+			timeout: 5 * time.Second,
+			serverFunc: func(w http.ResponseWriter, r *http.Request) {
+				// Respond immediately with an auth error
+				w.WriteHeader(http.StatusUnauthorized)
+			},
+			callFunc:    "ProvisionClient",
+			wantErr:     true,
+			wantTimeout: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(tt.serverFunc))
+			defer server.Close()
+
+			provider := &KeycloakProvider{
+				Config: config.KeycloakConfig{
+					URL:           server.URL,
+					Realm:         "test",
+					AdminUsername: "admin",
+					AdminPassword: "admin",
+					APITimeout:    tt.timeout,
+				},
+				Client: k8sClient,
+			}
+
+			var err error
+			switch tt.callFunc {
+			case "ProvisionClient":
+				err = provider.ProvisionClient(context.Background(), nebariApp)
+			case "DeleteClient":
+				err = provider.DeleteClient(context.Background(), nebariApp)
+			}
+
+			if tt.wantErr && err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("expected no error, got: %v", err)
+			}
+
+			// gocloak does not use %w for error wrapping, so errors.Is cannot
+			// traverse the chain. Check the error string instead.
+			isTimeout := err != nil && strings.Contains(err.Error(), "context deadline exceeded")
+			if tt.wantTimeout && !isTimeout {
+				t.Errorf("expected timeout error, got: %v", err)
+			}
+			if !tt.wantTimeout && isTimeout {
+				t.Errorf("expected non-timeout error, got: %v", err)
+			}
+		})
+	}
+}
+
+func TestKeycloakProvider_WithAPITimeout(t *testing.T) {
+	tests := []struct {
+		name          string
+		configTimeout time.Duration
+		expectDefault bool
+	}{
+		{
+			name:          "Uses configured timeout",
+			configTimeout: 45 * time.Second,
+			expectDefault: false,
+		},
+		{
+			name:          "Falls back to default when zero",
+			configTimeout: 0,
+			expectDefault: true,
+		},
+		{
+			name:          "Falls back to default when negative",
+			configTimeout: -1 * time.Second,
+			expectDefault: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := &KeycloakProvider{
+				Config: config.KeycloakConfig{
+					APITimeout: tt.configTimeout,
+				},
+			}
+
+			ctx, cancel := provider.withAPITimeout(context.Background())
+			defer cancel()
+
+			deadline, ok := ctx.Deadline()
+			if !ok {
+				t.Fatal("expected context to have a deadline")
+			}
+
+			remaining := time.Until(deadline)
+			if tt.expectDefault {
+				// Should be close to 30s (the default)
+				if remaining < 29*time.Second || remaining > 31*time.Second {
+					t.Errorf("expected ~30s deadline, got %v", remaining)
+				}
+			} else {
+				// Should be close to configured value
+				expected := tt.configTimeout
+				if remaining < expected-time.Second || remaining > expected+time.Second {
+					t.Errorf("expected ~%v deadline, got %v", expected, remaining)
+				}
+			}
+		})
+	}
 }
