@@ -142,20 +142,26 @@ func (p *KeycloakProvider) ProvisionClient(ctx context.Context, nebariApp *appsv
 	}
 
 	var clientSecret string
+	var clientInternalID string
 	if existingClient != nil {
 		// Client exists - retrieve existing secret and update configuration
-		clientSecret, err = p.updateExistingClient(ctx, kcClient, token, existingClient, nebariApp)
+		clientSecret, clientInternalID, err = p.updateExistingClient(ctx, kcClient, token, existingClient, nebariApp)
 		if err != nil {
 			return err
 		}
 		logger.Info("Updated existing client", "clientID", clientID)
 	} else {
 		// Client doesn't exist - create new one
-		clientSecret, err = p.createNewClient(ctx, kcClient, token, clientID, nebariApp)
+		clientSecret, clientInternalID, err = p.createNewClient(ctx, kcClient, token, clientID, nebariApp)
 		if err != nil {
 			return err
 		}
 		logger.Info("Created new client", "clientID", clientID)
+	}
+
+	// Sync requested OIDC scopes to the client
+	if err := p.syncClientScopes(ctx, kcClient, token, clientInternalID, nebariApp); err != nil {
+		return fmt.Errorf("failed to sync client scopes: %w", err)
 	}
 
 	// Store secret in Kubernetes
@@ -222,12 +228,12 @@ func (p *KeycloakProvider) findClient(ctx context.Context, kcClient *gocloak.GoC
 	return clients[0], nil
 }
 
-// updateExistingClient updates an existing client's configuration and returns its secret.
-func (p *KeycloakProvider) updateExistingClient(ctx context.Context, kcClient *gocloak.GoCloak, token *gocloak.JWT, existingClient *gocloak.Client, nebariApp *appsv1.NebariApp) (string, error) {
+// updateExistingClient updates an existing client's configuration and returns its secret and internal ID.
+func (p *KeycloakProvider) updateExistingClient(ctx context.Context, kcClient *gocloak.GoCloak, token *gocloak.JWT, existingClient *gocloak.Client, nebariApp *appsv1.NebariApp) (string, string, error) {
 	// Get existing client secret
 	secretResp, err := kcClient.GetClientSecret(ctx, token.AccessToken, p.Config.Realm, *existingClient.ID)
 	if err != nil {
-		return "", fmt.Errorf("failed to get client secret: %w", err)
+		return "", "", fmt.Errorf("failed to get client secret: %w", err)
 	}
 
 	// Update client configuration
@@ -238,18 +244,18 @@ func (p *KeycloakProvider) updateExistingClient(ctx context.Context, kcClient *g
 
 	err = kcClient.UpdateClient(ctx, token.AccessToken, p.Config.Realm, *existingClient)
 	if err != nil {
-		return "", fmt.Errorf("failed to update client: %w", err)
+		return "", "", fmt.Errorf("failed to update client: %w", err)
 	}
 
-	return *secretResp.Value, nil
+	return *secretResp.Value, *existingClient.ID, nil
 }
 
-// createNewClient creates a new Keycloak client and returns its secret.
-func (p *KeycloakProvider) createNewClient(ctx context.Context, kcClient *gocloak.GoCloak, token *gocloak.JWT, clientID string, nebariApp *appsv1.NebariApp) (string, error) {
+// createNewClient creates a new Keycloak client and returns its secret and internal ID.
+func (p *KeycloakProvider) createNewClient(ctx context.Context, kcClient *gocloak.GoCloak, token *gocloak.JWT, clientID string, nebariApp *appsv1.NebariApp) (string, string, error) {
 	// Generate client secret
 	clientSecret, err := generateSecret(32)
 	if err != nil {
-		return "", fmt.Errorf("failed to generate secret: %w", err)
+		return "", "", fmt.Errorf("failed to generate secret: %w", err)
 	}
 
 	// Build redirect URLs
@@ -269,12 +275,12 @@ func (p *KeycloakProvider) createNewClient(ctx context.Context, kcClient *gocloa
 		Enabled:                   gocloak.BoolP(true),
 	}
 
-	_, err = kcClient.CreateClient(ctx, token.AccessToken, p.Config.Realm, newClient)
+	internalID, err := kcClient.CreateClient(ctx, token.AccessToken, p.Config.Realm, newClient)
 	if err != nil {
-		return "", fmt.Errorf("failed to create client: %w", err)
+		return "", "", fmt.Errorf("failed to create client: %w", err)
 	}
 
-	return clientSecret, nil
+	return clientSecret, internalID, nil
 }
 
 // buildRedirectURLs constructs the OAuth2 redirect URLs for the client.
@@ -323,6 +329,130 @@ func (p *KeycloakProvider) storeClientSecret(ctx context.Context, nebariApp *app
 	// Update existing secret
 	existingSecret.Data = secret.Data
 	return p.Client.Update(ctx, existingSecret)
+}
+
+// syncClientScopes ensures that the OIDC scopes requested by the NebariApp
+// exist in the Keycloak realm and are assigned as default scopes to the client.
+func (p *KeycloakProvider) syncClientScopes(ctx context.Context, kcClient *gocloak.GoCloak, token *gocloak.JWT, clientInternalID string, nebariApp *appsv1.NebariApp) error {
+	if nebariApp.Spec.Auth == nil || len(nebariApp.Spec.Auth.Scopes) == 0 {
+		return nil
+	}
+
+	logger := log.FromContext(ctx)
+
+	// Get all existing client scopes in the realm
+	realmScopes, err := kcClient.GetClientScopes(ctx, token.AccessToken, p.Config.Realm)
+	if err != nil {
+		return fmt.Errorf("failed to get realm client scopes: %w", err)
+	}
+
+	// Build name→scope lookup
+	scopesByName := make(map[string]*gocloak.ClientScope, len(realmScopes))
+	for _, s := range realmScopes {
+		if s.Name != nil {
+			scopesByName[*s.Name] = s
+		}
+	}
+
+	// Get scopes already assigned as defaults on this client
+	currentDefaults, err := kcClient.GetClientsDefaultScopes(ctx, token.AccessToken, p.Config.Realm, clientInternalID)
+	if err != nil {
+		return fmt.Errorf("failed to get client default scopes: %w", err)
+	}
+
+	assignedIDs := make(map[string]bool, len(currentDefaults))
+	for _, s := range currentDefaults {
+		if s.ID != nil {
+			assignedIDs[*s.ID] = true
+		}
+	}
+
+	for _, scopeName := range nebariApp.Spec.Auth.Scopes {
+		// "openid" is always implicit in OIDC — skip it
+		if scopeName == "openid" {
+			continue
+		}
+
+		var scopeID string
+
+		if existing, ok := scopesByName[scopeName]; ok {
+			scopeID = *existing.ID
+		} else {
+			// Create the scope in the realm
+			includeInToken := "true"
+			newScope := gocloak.ClientScope{
+				Name:     gocloak.StringP(scopeName),
+				Protocol: gocloak.StringP("openid-connect"),
+				ClientScopeAttributes: &gocloak.ClientScopeAttributes{
+					IncludeInTokenScope: &includeInToken,
+				},
+			}
+			scopeID, err = kcClient.CreateClientScope(ctx, token.AccessToken, p.Config.Realm, newScope)
+			if err != nil {
+				return fmt.Errorf("failed to create client scope %q: %w", scopeName, err)
+			}
+			logger.Info("Created client scope in realm", "scope", scopeName, "id", scopeID)
+		}
+
+		// If the scope is "groups", ensure it has the group membership mapper
+		if scopeName == "groups" {
+			if err := p.ensureGroupMapper(ctx, kcClient, token, scopeID); err != nil {
+				return fmt.Errorf("failed to ensure group mapper for scope %q: %w", scopeName, err)
+			}
+		}
+
+		// Assign as default scope to the client if not already assigned
+		if !assignedIDs[scopeID] {
+			if err := kcClient.AddDefaultScopeToClient(ctx, token.AccessToken, p.Config.Realm, clientInternalID, scopeID); err != nil {
+				return fmt.Errorf("failed to add default scope %q to client: %w", scopeName, err)
+			}
+			logger.Info("Assigned default scope to client", "scope", scopeName)
+		}
+	}
+
+	return nil
+}
+
+// ensureGroupMapper ensures that a "groups" client scope has an
+// oidc-group-membership-mapper protocol mapper that includes group
+// names in the "groups" token claim.
+func (p *KeycloakProvider) ensureGroupMapper(ctx context.Context, kcClient *gocloak.GoCloak, token *gocloak.JWT, scopeID string) error {
+	logger := log.FromContext(ctx)
+	const mapperName = "group-membership"
+
+	// Check if the mapper already exists
+	mappers, err := kcClient.GetClientScopeProtocolMappers(ctx, token.AccessToken, p.Config.Realm, scopeID)
+	if err != nil {
+		return fmt.Errorf("failed to get protocol mappers: %w", err)
+	}
+
+	for _, m := range mappers {
+		if m.Name != nil && *m.Name == mapperName {
+			return nil // already exists
+		}
+	}
+
+	// Create the group membership mapper
+	mapper := gocloak.ProtocolMappers{
+		Name:           gocloak.StringP(mapperName),
+		Protocol:       gocloak.StringP("openid-connect"),
+		ProtocolMapper: gocloak.StringP("oidc-group-membership-mapper"),
+		ProtocolMappersConfig: &gocloak.ProtocolMappersConfig{
+			ClaimName:          gocloak.StringP("groups"),
+			FullPath:           gocloak.StringP("true"),
+			IDTokenClaim:       gocloak.StringP("true"),
+			AccessTokenClaim:   gocloak.StringP("true"),
+			UserinfoTokenClaim: gocloak.StringP("true"),
+		},
+	}
+
+	_, err = kcClient.CreateClientScopeProtocolMapper(ctx, token.AccessToken, p.Config.Realm, scopeID, mapper)
+	if err != nil {
+		return fmt.Errorf("failed to create group membership mapper: %w", err)
+	}
+
+	logger.Info("Created group membership protocol mapper", "scopeID", scopeID)
+	return nil
 }
 
 // generateSecret generates a random secret string of the specified length.
