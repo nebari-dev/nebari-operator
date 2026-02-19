@@ -381,8 +381,9 @@ func (p *KeycloakProvider) syncClientScopes(ctx context.Context, kcClient *goclo
 			// Create the scope in the realm
 			includeInToken := "true"
 			newScope := gocloak.ClientScope{
-				Name:     gocloak.StringP(scopeName),
-				Protocol: gocloak.StringP("openid-connect"),
+				Name:        gocloak.StringP(scopeName),
+				Description: gocloak.StringP("Managed by nebari-operator"),
+				Protocol:    gocloak.StringP("openid-connect"),
 				ClientScopeAttributes: &gocloak.ClientScopeAttributes{
 					IncludeInTokenScope: &includeInToken,
 				},
