@@ -551,10 +551,10 @@ func TestReconcileAuth(t *testing.T) {
 				Spec: appsv1.NebariAppSpec{
 					Hostname: "test.example.com",
 					Auth: &appsv1.AuthConfig{
-						Enabled:         true,
-						Provider:        constants.ProviderKeycloak,
-						ProvisionClient: boolPtr(false),
-						EnforceAtGateway:     boolPtr(false),
+						Enabled:          true,
+						Provider:         constants.ProviderKeycloak,
+						ProvisionClient:  boolPtr(false),
+						EnforceAtGateway: boolPtr(false),
 					},
 				},
 			},
@@ -584,10 +584,10 @@ func TestReconcileAuth(t *testing.T) {
 				Spec: appsv1.NebariAppSpec{
 					Hostname: "test.example.com",
 					Auth: &appsv1.AuthConfig{
-						Enabled:         true,
-						Provider:        constants.ProviderKeycloak,
-						ProvisionClient: boolPtr(false),
-						EnforceAtGateway:     boolPtr(false),
+						Enabled:          true,
+						Provider:         constants.ProviderKeycloak,
+						ProvisionClient:  boolPtr(false),
+						EnforceAtGateway: boolPtr(false),
 					},
 				},
 			},
