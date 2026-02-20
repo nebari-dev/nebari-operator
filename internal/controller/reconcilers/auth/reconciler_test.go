@@ -542,7 +542,7 @@ func TestReconcileAuth(t *testing.T) {
 			expectError: true,
 		},
 		{
-			name: "GatewayAuth false - SecurityPolicy not created",
+			name: "EnforceAtGateway false - SecurityPolicy not created",
 			nebariApp: &appsv1.NebariApp{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-app",
@@ -554,7 +554,7 @@ func TestReconcileAuth(t *testing.T) {
 						Enabled:         true,
 						Provider:        constants.ProviderKeycloak,
 						ProvisionClient: boolPtr(false),
-						GatewayAuth:     boolPtr(false),
+						EnforceAtGateway:     boolPtr(false),
 					},
 				},
 			},
@@ -575,7 +575,7 @@ func TestReconcileAuth(t *testing.T) {
 			expectError: false,
 		},
 		{
-			name: "GatewayAuth false with pre-existing SecurityPolicy - deletes it",
+			name: "EnforceAtGateway false with pre-existing SecurityPolicy - deletes it",
 			nebariApp: &appsv1.NebariApp{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-app",
@@ -587,7 +587,7 @@ func TestReconcileAuth(t *testing.T) {
 						Enabled:         true,
 						Provider:        constants.ProviderKeycloak,
 						ProvisionClient: boolPtr(false),
-						GatewayAuth:     boolPtr(false),
+						EnforceAtGateway:     boolPtr(false),
 					},
 				},
 			},
@@ -651,7 +651,7 @@ func TestReconcileAuth(t *testing.T) {
 				t.Errorf("expected no error, got: %v", err)
 			}
 
-			// If auth is enabled and no error, verify SecurityPolicy based on gatewayAuth setting
+			// If auth is enabled and no error, verify SecurityPolicy based on enforceAtGateway setting
 			if !tt.expectError && tt.nebariApp.Spec.Auth != nil && tt.nebariApp.Spec.Auth.Enabled {
 				securityPolicy := &egv1alpha1.SecurityPolicy{}
 				err := client.Get(context.Background(), types.NamespacedName{
@@ -659,13 +659,13 @@ func TestReconcileAuth(t *testing.T) {
 					Namespace: tt.nebariApp.Namespace,
 				}, securityPolicy)
 
-				if shouldCreateGatewayAuth(tt.nebariApp.Spec.Auth) {
+				if shouldEnforceAtGateway(tt.nebariApp.Spec.Auth) {
 					if err != nil {
 						t.Errorf("expected SecurityPolicy to be created, got error: %v", err)
 					}
 				} else {
 					if err == nil {
-						t.Error("expected SecurityPolicy to NOT be created when gatewayAuth=false")
+						t.Error("expected SecurityPolicy to NOT be created when enforceAtGateway=false")
 					}
 				}
 			}

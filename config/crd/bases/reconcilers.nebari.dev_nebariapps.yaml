@@ -64,10 +64,10 @@ spec:
                       Enabled determines whether authentication should be enforced for this application.
                       When true, users must authenticate via OIDC before accessing the application.
                     type: boolean
-                  gatewayAuth:
+                  enforceAtGateway:
                     default: true
                     description: |-
-                      GatewayAuth determines whether the operator should create an Envoy Gateway
+                      EnforceAtGateway determines whether the operator should create an Envoy Gateway
                       SecurityPolicy to enforce authentication at the gateway level.
                       When true (default), the operator creates a SecurityPolicy that handles
                       the OIDC flow at the gateway before requests reach the application.

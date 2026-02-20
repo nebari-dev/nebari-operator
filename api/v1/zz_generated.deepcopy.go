@@ -48,8 +48,8 @@ func (in *AuthConfig) DeepCopyInto(out *AuthConfig) {
 		*out = new(bool)
 		**out = **in
 	}
-	if in.GatewayAuth != nil {
-		in, out := &in.GatewayAuth, &out.GatewayAuth
+	if in.EnforceAtGateway != nil {
+		in, out := &in.EnforceAtGateway, &out.EnforceAtGateway
 		*out = new(bool)
 		**out = **in
 	}
