@@ -23,6 +23,7 @@ import (
 	certmanagerv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
 	cmmeta "github.com/cert-manager/cert-manager/pkg/apis/meta/v1"
 	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
+	"github.com/nebari-dev/nebari-operator/internal/controller/utils/conditions"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/constants"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/naming"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -96,20 +97,15 @@ func TestReconcileTLS(t *testing.T) { //nolint:gocyclo // table-driven test with
 			expectError:       false,
 			expectNilResult:   true,
 			validateConditions: func(t *testing.T, app *appsv1.NebariApp) {
-				found := false
-				for _, c := range app.Status.Conditions {
-					if c.Type == appsv1.ConditionTypeTLSReady {
-						found = true
-						if c.Status != metav1.ConditionFalse {
-							t.Errorf("expected TLSReady=False, got %s", c.Status)
-						}
-						if c.Reason != "TLSDisabled" {
-							t.Errorf("expected reason TLSDisabled, got %s", c.Reason)
-						}
-					}
+				c := conditions.GetCondition(app, appsv1.ConditionTypeTLSReady)
+				if c == nil {
+					t.Fatal("expected TLSReady condition to be set")
 				}
-				if !found {
-					t.Error("expected TLSReady condition to be set")
+				if c.Status != metav1.ConditionFalse {
+					t.Errorf("expected TLSReady=False, got %s", c.Status)
+				}
+				if c.Reason != "TLSDisabled" {
+					t.Errorf("expected reason TLSDisabled, got %s", c.Reason)
 				}
 			},
 		},
@@ -262,17 +258,12 @@ func TestReconcileTLS(t *testing.T) { //nolint:gocyclo // table-driven test with
 			expectError:       true,
 			expectNilResult:   true,
 			validateConditions: func(t *testing.T, app *appsv1.NebariApp) {
-				found := false
-				for _, c := range app.Status.Conditions {
-					if c.Type == appsv1.ConditionTypeTLSReady {
-						found = true
-						if c.Status != metav1.ConditionFalse {
-							t.Errorf("expected TLSReady=False, got %s", c.Status)
-						}
-					}
+				c := conditions.GetCondition(app, appsv1.ConditionTypeTLSReady)
+				if c == nil {
+					t.Fatal("expected TLSReady condition to be set")
 				}
-				if !found {
-					t.Error("expected TLSReady condition to be set")
+				if c.Status != metav1.ConditionFalse {
+					t.Errorf("expected TLSReady=False, got %s", c.Status)
 				}
 			},
 		},
@@ -363,17 +354,12 @@ func TestReconcileTLS(t *testing.T) { //nolint:gocyclo // table-driven test with
 				}
 			},
 			validateConditions: func(t *testing.T, app *appsv1.NebariApp) {
-				found := false
-				for _, c := range app.Status.Conditions {
-					if c.Type == appsv1.ConditionTypeTLSReady {
-						found = true
-						if c.Status != metav1.ConditionTrue {
-							t.Errorf("expected TLSReady=True, got %s", c.Status)
-						}
-					}
+				c := conditions.GetCondition(app, appsv1.ConditionTypeTLSReady)
+				if c == nil {
+					t.Fatal("expected TLSReady condition to be set")
 				}
-				if !found {
-					t.Error("expected TLSReady condition to be set")
+				if c.Status != metav1.ConditionTrue {
+					t.Errorf("expected TLSReady=True, got %s", c.Status)
 				}
 			},
 		},
@@ -400,7 +386,23 @@ func TestReconcileTLS(t *testing.T) { //nolint:gocyclo // table-driven test with
 			validateGateway: func(t *testing.T, gw *gatewayv1.Gateway) {
 				// Should still have exactly 1 listener, not 2
 				if len(gw.Spec.Listeners) != 1 {
-					t.Errorf("expected 1 listener (updated, not duplicated), got %d", len(gw.Spec.Listeners))
+					t.Fatalf("expected 1 listener (updated, not duplicated), got %d", len(gw.Spec.Listeners))
+				}
+				listener := gw.Spec.Listeners[0]
+				// Verify the listener was actually updated with full spec, not just the original stub
+				if listener.Hostname == nil || string(*listener.Hostname) != "update.example.com" {
+					t.Errorf("expected hostname update.example.com, got %v", listener.Hostname)
+				}
+				if listener.TLS == nil {
+					t.Fatal("expected TLS config on updated listener")
+				}
+				if listener.TLS.Mode == nil || *listener.TLS.Mode != gatewayv1.TLSModeTerminate {
+					t.Errorf("expected TLS mode Terminate, got %v", listener.TLS.Mode)
+				}
+				if listener.AllowedRoutes == nil || listener.AllowedRoutes.Namespaces == nil ||
+					listener.AllowedRoutes.Namespaces.From == nil ||
+					*listener.AllowedRoutes.Namespaces.From != gatewayv1.NamespacesFromAll {
+					t.Error("expected AllowedRoutes with namespaces from All")
 				}
 			},
 		},
@@ -517,7 +519,7 @@ func TestReconcileTLS(t *testing.T) { //nolint:gocyclo // table-driven test with
 			// Validate Gateway was patched
 			if tt.validateGateway != nil {
 				gw := &gatewayv1.Gateway{}
-				gwName := getGatewayName(tt.nebariApp)
+				gwName := naming.GatewayName(tt.nebariApp)
 				err := fakeClient.Get(context.Background(), types.NamespacedName{
 					Name:      gwName,
 					Namespace: constants.GatewayNamespace,
@@ -695,7 +697,7 @@ func TestCleanupTLS(t *testing.T) {
 			// Validate Gateway state
 			if tt.validateGW != nil {
 				gw := &gatewayv1.Gateway{}
-				gwName := getGatewayName(tt.nebariApp)
+				gwName := naming.GatewayName(tt.nebariApp)
 				err := fakeClient.Get(context.Background(), types.NamespacedName{
 					Name:      gwName,
 					Namespace: constants.GatewayNamespace,

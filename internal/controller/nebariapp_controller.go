@@ -21,7 +21,9 @@ import (
 	"fmt"
 	"time"
 
+	certmanagerv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 
 	corev1 "k8s.io/api/core/v1"
@@ -29,10 +31,12 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/auth"
 	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/core"
@@ -84,27 +88,6 @@ func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		logger.Error(err, "Failed to get NebariApp")
 		return ctrl.Result{}, err
 	}
-
-	// Initialize core reconciler
-	if r.CoreReconciler == nil {
-		r.CoreReconciler = &core.CoreReconciler{
-			Client:   r.Client,
-			Scheme:   r.Scheme,
-			Recorder: r.Recorder,
-		}
-	}
-
-	// Initialize routing reconciler if needed
-	if r.RoutingReconciler == nil {
-		r.RoutingReconciler = &routing.RoutingReconciler{
-			Client:   r.Client,
-			Scheme:   r.Scheme,
-			Recorder: r.Recorder,
-		}
-	}
-
-	// Note: AuthReconciler should be initialized in main.go with providers configured
-	// Do not lazy-initialize here as it would create an empty Providers map
 
 	// Handle finalizer
 	if nebariApp.DeletionTimestamp.IsZero() {
@@ -159,7 +142,11 @@ func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	// Core validation completed successfully (logged by CoreReconciler)
 
-	// Reconcile TLS certificates and Gateway listener
+	// Reconcile TLS certificates and Gateway listener.
+	// When TLSReconciler is nil (TLS_CLUSTER_ISSUER_NAME not set), no per-app Certificate
+	// or Gateway listener is created. The routing reconciler will fall back to the static
+	// "https" listener on the Gateway, which assumes a pre-existing shared HTTPS listener
+	// with a wildcard certificate is already configured.
 	var tlsListenerName string
 	if r.TLSReconciler != nil {
 		tlsResult, err := r.TLSReconciler.ReconcileTLS(ctx, nebariApp)
@@ -271,8 +258,33 @@ func (r *NebariAppReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// Initialize the event recorder
 	r.Recorder = mgr.GetEventRecorderFor("nebariapp-controller")
 
-	return ctrl.NewControllerManagedBy(mgr).
+	builder := ctrl.NewControllerManagedBy(mgr).
 		For(&appsv1.NebariApp{}).
-		Named("nebariapp").
-		Complete(r)
+		Named("nebariapp")
+
+	// Watch cert-manager Certificates so that Certificate readiness transitions
+	// trigger NebariApp reconciliation without waiting for the periodic requeue.
+	// Certificates are matched to NebariApps via the nebari.dev/nebariapp-name
+	// and nebari.dev/nebariapp-namespace labels.
+	if r.TLSReconciler != nil {
+		builder = builder.Watches(
+			&certmanagerv1.Certificate{},
+			handler.EnqueueRequestsFromMapFunc(r.certificateToNebariApp),
+		)
+	}
+
+	return builder.Complete(r)
+}
+
+// certificateToNebariApp maps a cert-manager Certificate to the NebariApp that owns it
+// using the labels set by the TLS reconciler.
+func (r *NebariAppReconciler) certificateToNebariApp(_ context.Context, obj client.Object) []reconcile.Request {
+	name := obj.GetLabels()["nebari.dev/nebariapp-name"]
+	namespace := obj.GetLabels()["nebari.dev/nebariapp-namespace"]
+	if name == "" || namespace == "" {
+		return nil
+	}
+	return []reconcile.Request{
+		{NamespacedName: types.NamespacedName{Name: name, Namespace: namespace}},
+	}
 }

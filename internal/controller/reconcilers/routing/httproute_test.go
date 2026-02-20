@@ -29,6 +29,7 @@ import (
 
 	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/constants"
+	"github.com/nebari-dev/nebari-operator/internal/controller/utils/naming"
 )
 
 func TestValidateGateway(t *testing.T) {
@@ -83,13 +84,6 @@ func TestValidateGateway(t *testing.T) {
 }
 
 func TestGetGatewayName(t *testing.T) {
-	scheme := runtime.NewScheme()
-	_ = appsv1.AddToScheme(scheme)
-
-	reconciler := &RoutingReconciler{
-		Scheme: scheme,
-	}
-
 	tests := []struct {
 		name            string
 		nebariApp       *appsv1.NebariApp
@@ -126,7 +120,7 @@ func TestGetGatewayName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gatewayName := reconciler.getGatewayName(tt.nebariApp)
+			gatewayName := naming.GatewayName(tt.nebariApp)
 			if gatewayName != tt.expectedGateway {
 				t.Errorf("expected gateway=%s, got gateway=%s", tt.expectedGateway, gatewayName)
 			}

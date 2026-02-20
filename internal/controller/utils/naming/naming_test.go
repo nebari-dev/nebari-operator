@@ -17,11 +17,13 @@ limitations under the License.
 package naming
 
 import (
+	"strings"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
+	"github.com/nebari-dev/nebari-operator/internal/controller/utils/constants"
 )
 
 func TestResourceName(t *testing.T) {
@@ -218,6 +220,75 @@ func TestListenerName(t *testing.T) {
 			result := ListenerName(nebariApp)
 			if result != tt.expected {
 				t.Errorf("ListenerName() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestValidateResourceNames(t *testing.T) {
+	tests := []struct {
+		name        string
+		appName     string
+		namespace   string
+		expectError bool
+	}{
+		{
+			name:        "short names pass validation",
+			appName:     "my-app",
+			namespace:   "default",
+			expectError: false,
+		},
+		{
+			name:        "long app name exceeds limit",
+			appName:     strings.Repeat("a", 250),
+			namespace:   "default",
+			expectError: true,
+		},
+		{
+			name:        "names just under limit pass",
+			appName:     strings.Repeat("a", 120),
+			namespace:   strings.Repeat("b", 60),
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nebariApp := &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      tt.appName,
+					Namespace: tt.namespace,
+				},
+			}
+			err := ValidateResourceNames(nebariApp)
+			if (err != nil) != tt.expectError {
+				t.Errorf("ValidateResourceNames() error = %v, expectError = %v", err, tt.expectError)
+			}
+		})
+	}
+}
+
+func TestGatewayName(t *testing.T) {
+	tests := []struct {
+		name     string
+		gateway  string
+		expected string
+	}{
+		{"public gateway (explicit)", "public", constants.PublicGatewayName},
+		{"public gateway (empty)", "", constants.PublicGatewayName},
+		{"internal gateway", "internal", constants.InternalGatewayName},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nebariApp := &appsv1.NebariApp{
+				Spec: appsv1.NebariAppSpec{
+					Gateway: tt.gateway,
+				},
+			}
+			result := GatewayName(nebariApp)
+			if result != tt.expected {
+				t.Errorf("GatewayName(%q) = %q, want %q", tt.gateway, result, tt.expected)
 			}
 		})
 	}

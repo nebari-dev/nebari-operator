@@ -51,7 +51,7 @@ func (r *RoutingReconciler) ReconcileRouting(ctx context.Context, nebariApp *app
 	logger := log.FromContext(ctx)
 
 	// Determine which gateway to use
-	gatewayName := r.getGatewayName(nebariApp)
+	gatewayName := naming.GatewayName(nebariApp)
 	logger.Info("Reconciling routing", "gateway", gatewayName, "hostname", nebariApp.Spec.Hostname)
 
 	// Verify gateway exists
@@ -262,14 +262,6 @@ func (r *RoutingReconciler) buildBackendRefs(nebariApp *appsv1.NebariApp) []gate
 			},
 		},
 	}
-}
-
-// getGatewayName returns the gateway name based on NebariApp spec
-func (r *RoutingReconciler) getGatewayName(nebariApp *appsv1.NebariApp) string {
-	if nebariApp.Spec.Gateway == "internal" {
-		return constants.InternalGatewayName
-	}
-	return constants.PublicGatewayName
 }
 
 // validateGateway checks if the specified gateway exists

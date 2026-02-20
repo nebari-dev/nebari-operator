@@ -75,14 +75,6 @@ func isTLSEnabled(nebariApp *appsv1.NebariApp) bool {
 	return *nebariApp.Spec.Routing.TLS.Enabled
 }
 
-// getGatewayName returns the gateway name based on NebariApp spec.
-func getGatewayName(nebariApp *appsv1.NebariApp) string {
-	if nebariApp.Spec.Gateway == "internal" {
-		return constants.InternalGatewayName
-	}
-	return constants.PublicGatewayName
-}
-
 // ReconcileTLS handles TLS configuration for a NebariApp.
 // It creates/updates a cert-manager Certificate and patches the shared Gateway
 // to add a per-app HTTPS listener.
@@ -107,7 +99,7 @@ func (r *TLSReconciler) ReconcileTLS(ctx context.Context, nebariApp *appsv1.Neba
 	logger.Info("Reconciling TLS",
 		"hostname", nebariApp.Spec.Hostname,
 		"clusterIssuer", r.ClusterIssuerName,
-		"gateway", getGatewayName(nebariApp))
+		"gateway", naming.GatewayName(nebariApp))
 
 	// Step 3: Create/update cert-manager Certificate
 	if err := r.reconcileCertificate(ctx, nebariApp); err != nil {
@@ -150,21 +142,26 @@ func (r *TLSReconciler) ReconcileTLS(ctx context.Context, nebariApp *appsv1.Neba
 
 // CleanupTLS removes TLS resources for a NebariApp.
 // It removes the per-app listener from the Gateway and deletes the Certificate.
+// Both operations are attempted even if one fails, to minimize orphaned resources.
 func (r *TLSReconciler) CleanupTLS(ctx context.Context, nebariApp *appsv1.NebariApp) error {
 	logger := log.FromContext(ctx)
+	var errs []error
 
 	// Step 1: Remove the per-app listener from the Gateway
 	if err := r.removeGatewayListener(ctx, nebariApp); err != nil {
 		logger.Error(err, "Failed to remove Gateway listener during cleanup")
-		return err
+		errs = append(errs, err)
 	}
 
 	// Step 2: Delete the Certificate from the Gateway namespace
 	if err := r.deleteCertificate(ctx, nebariApp); err != nil {
 		logger.Error(err, "Failed to delete Certificate during cleanup")
-		return err
+		errs = append(errs, err)
 	}
 
+	if len(errs) > 0 {
+		return fmt.Errorf("TLS cleanup encountered %d error(s): %v", len(errs), errs)
+	}
 	return nil
 }
 
@@ -225,7 +222,7 @@ func (r *TLSReconciler) reconcileCertificate(ctx context.Context, nebariApp *app
 func (r *TLSReconciler) reconcileGatewayListener(ctx context.Context, nebariApp *appsv1.NebariApp) error {
 	logger := log.FromContext(ctx)
 
-	gatewayName := getGatewayName(nebariApp)
+	gatewayName := naming.GatewayName(nebariApp)
 
 	// Get the Gateway
 	gateway := &gatewayv1.Gateway{}
@@ -295,7 +292,7 @@ func (r *TLSReconciler) reconcileGatewayListener(ctx context.Context, nebariApp 
 
 	if err := r.Client.Update(ctx, gateway); err != nil {
 		// Conflict errors are expected when multiple NebariApps patch the same Gateway concurrently.
-		// Return nil so the controller requeues naturally.
+		// Return the error so the controller treats this as a transient failure and requeues.
 		if apierrors.IsConflict(err) {
 			logger.V(1).Info("Gateway update conflict, will retry", "gateway", gatewayName)
 			return fmt.Errorf("gateway update conflict (will retry): %w", err)
@@ -338,7 +335,7 @@ func (r *TLSReconciler) isCertificateReady(ctx context.Context, nebariApp *appsv
 func (r *TLSReconciler) removeGatewayListener(ctx context.Context, nebariApp *appsv1.NebariApp) error {
 	logger := log.FromContext(ctx)
 
-	gatewayName := getGatewayName(nebariApp)
+	gatewayName := naming.GatewayName(nebariApp)
 	listenerName := naming.ListenerName(nebariApp)
 
 	// Get the Gateway
@@ -372,6 +369,11 @@ func (r *TLSReconciler) removeGatewayListener(ctx context.Context, nebariApp *ap
 
 	gateway.Spec.Listeners = filtered
 	if err := r.Client.Update(ctx, gateway); err != nil {
+		// Conflict errors are expected when multiple NebariApps clean up the same Gateway concurrently.
+		if apierrors.IsConflict(err) {
+			logger.V(1).Info("Gateway update conflict during cleanup, will retry", "gateway", gatewayName)
+			return fmt.Errorf("gateway update conflict during cleanup (will retry): %w", err)
+		}
 		return fmt.Errorf("failed to update Gateway to remove listener: %w", err)
 	}
 

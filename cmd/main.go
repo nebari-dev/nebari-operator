@@ -43,6 +43,8 @@ import (
 	"github.com/nebari-dev/nebari-operator/internal/controller"
 	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/auth"
 	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/auth/providers"
+	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/core"
+	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/routing"
 	tlsreconciler "github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/tls"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/constants"
 	// +kubebuilder:scaffold:imports
@@ -246,11 +248,25 @@ func main() {
 		setupLog.Info("TLS reconciler disabled - TLS_CLUSTER_ISSUER_NAME not set")
 	}
 
+	// Initialize core and routing reconcilers
+	coreReconciler := &core.CoreReconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("nebariapp-core"),
+	}
+	routingReconciler := &routing.RoutingReconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("nebariapp-routing"),
+	}
+
 	if err := (&controller.NebariAppReconciler{
-		Client:         mgr.GetClient(),
-		Scheme:         mgr.GetScheme(),
-		TLSReconciler:  tlsReconciler,
-		AuthReconciler: authReconciler,
+		Client:            mgr.GetClient(),
+		Scheme:            mgr.GetScheme(),
+		CoreReconciler:    coreReconciler,
+		TLSReconciler:     tlsReconciler,
+		RoutingReconciler: routingReconciler,
+		AuthReconciler:    authReconciler,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "NebariApp")
 		os.Exit(1)
