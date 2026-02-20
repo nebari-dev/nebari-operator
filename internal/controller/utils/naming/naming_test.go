@@ -111,3 +111,114 @@ func TestClientID(t *testing.T) {
 		t.Errorf("ClientID() = %q, want %q", result, expected)
 	}
 }
+
+func TestCertificateName(t *testing.T) {
+	tests := []struct {
+		name      string
+		appName   string
+		namespace string
+		expected  string
+	}{
+		{
+			name:      "standard app",
+			appName:   "my-app",
+			namespace: "default",
+			expected:  "my-app-default-cert",
+		},
+		{
+			name:      "app in custom namespace",
+			appName:   "web-ui",
+			namespace: "production",
+			expected:  "web-ui-production-cert",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nebariApp := &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      tt.appName,
+					Namespace: tt.namespace,
+				},
+			}
+			result := CertificateName(nebariApp)
+			if result != tt.expected {
+				t.Errorf("CertificateName() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestCertificateSecretName(t *testing.T) {
+	tests := []struct {
+		name      string
+		appName   string
+		namespace string
+		expected  string
+	}{
+		{
+			name:      "standard app",
+			appName:   "my-app",
+			namespace: "default",
+			expected:  "my-app-default-tls",
+		},
+		{
+			name:      "app in custom namespace",
+			appName:   "web-ui",
+			namespace: "production",
+			expected:  "web-ui-production-tls",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nebariApp := &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      tt.appName,
+					Namespace: tt.namespace,
+				},
+			}
+			result := CertificateSecretName(nebariApp)
+			if result != tt.expected {
+				t.Errorf("CertificateSecretName() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestListenerName(t *testing.T) {
+	tests := []struct {
+		name      string
+		appName   string
+		namespace string
+		expected  string
+	}{
+		{
+			name:      "standard app",
+			appName:   "my-app",
+			namespace: "default",
+			expected:  "tls-my-app-default",
+		},
+		{
+			name:      "app in custom namespace",
+			appName:   "web-ui",
+			namespace: "production",
+			expected:  "tls-web-ui-production",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nebariApp := &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      tt.appName,
+					Namespace: tt.namespace,
+				},
+			}
+			result := ListenerName(nebariApp)
+			if result != tt.expected {
+				t.Errorf("ListenerName() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}

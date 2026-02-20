@@ -42,3 +42,22 @@ func ClientSecretName(nebariApp *appsv1.NebariApp) string {
 func ClientID(nebariApp *appsv1.NebariApp) string {
 	return fmt.Sprintf("%s-%s", nebariApp.Namespace, nebariApp.Name)
 }
+
+// CertificateName generates the name for a cert-manager Certificate.
+// Includes namespace to avoid collisions since Certificates live in the Gateway namespace.
+// Pattern: <nebariapp-name>-<namespace>-cert
+func CertificateName(nebariApp *appsv1.NebariApp) string {
+	return fmt.Sprintf("%s-%s-%s", nebariApp.Name, nebariApp.Namespace, constants.CertificateSuffix)
+}
+
+// CertificateSecretName generates the name for the TLS secret created by cert-manager.
+// Pattern: <nebariapp-name>-<namespace>-tls
+func CertificateSecretName(nebariApp *appsv1.NebariApp) string {
+	return fmt.Sprintf("%s-%s-tls", nebariApp.Name, nebariApp.Namespace)
+}
+
+// ListenerName generates the name for the per-app Gateway HTTPS listener.
+// Pattern: tls-<nebariapp-name>-<namespace>
+func ListenerName(nebariApp *appsv1.NebariApp) string {
+	return fmt.Sprintf("tls-%s-%s", nebariApp.Name, nebariApp.Namespace)
+}
