@@ -166,7 +166,7 @@ func TestReconcileTLS(t *testing.T) { //nolint:gocyclo // table-driven test with
 				if cert.Labels["nebari.dev/nebariapp-name"] != "myapp" {
 					t.Errorf("expected nebariapp-name label, got %v", cert.Labels)
 				}
-				if cert.Labels["nebari.dev/nebariapp-namespace"] != "default" {
+				if cert.Labels["nebari.dev/nebariapp-namespace"] != "default" { //nolint:goconst // test data
 					t.Errorf("expected nebariapp-namespace label, got %v", cert.Labels)
 				}
 			},
@@ -205,11 +205,15 @@ func TestReconcileTLS(t *testing.T) { //nolint:gocyclo // table-driven test with
 				if string(listener.TLS.CertificateRefs[0].Name) != expectedSecret {
 					t.Errorf("expected cert ref name %s, got %s", expectedSecret, listener.TLS.CertificateRefs[0].Name)
 				}
-				// Verify AllowedRoutes from All
+				// Verify AllowedRoutes restricts to the NebariApp's namespace
 				if listener.AllowedRoutes == nil || listener.AllowedRoutes.Namespaces == nil ||
 					listener.AllowedRoutes.Namespaces.From == nil ||
-					*listener.AllowedRoutes.Namespaces.From != gatewayv1.NamespacesFromAll {
-					t.Error("expected AllowedRoutes with namespaces from All")
+					*listener.AllowedRoutes.Namespaces.From != gatewayv1.NamespacesFromSelector {
+					t.Error("expected AllowedRoutes with NamespacesFromSelector")
+				}
+				if listener.AllowedRoutes.Namespaces.Selector == nil ||
+					listener.AllowedRoutes.Namespaces.Selector.MatchLabels["kubernetes.io/metadata.name"] != "default" {
+					t.Error("expected namespace selector matching 'default'")
 				}
 			},
 		},
@@ -401,8 +405,12 @@ func TestReconcileTLS(t *testing.T) { //nolint:gocyclo // table-driven test with
 				}
 				if listener.AllowedRoutes == nil || listener.AllowedRoutes.Namespaces == nil ||
 					listener.AllowedRoutes.Namespaces.From == nil ||
-					*listener.AllowedRoutes.Namespaces.From != gatewayv1.NamespacesFromAll {
-					t.Error("expected AllowedRoutes with namespaces from All")
+					*listener.AllowedRoutes.Namespaces.From != gatewayv1.NamespacesFromSelector {
+					t.Error("expected AllowedRoutes with NamespacesFromSelector")
+				}
+				if listener.AllowedRoutes.Namespaces.Selector == nil ||
+					listener.AllowedRoutes.Namespaces.Selector.MatchLabels["kubernetes.io/metadata.name"] != "default" {
+					t.Error("expected namespace selector matching 'default'")
 				}
 			},
 		},

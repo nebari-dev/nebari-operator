@@ -263,6 +263,7 @@ func main() {
 	if err := (&controller.NebariAppReconciler{
 		Client:            mgr.GetClient(),
 		Scheme:            mgr.GetScheme(),
+		Recorder:          mgr.GetEventRecorderFor("nebariapp-controller"),
 		CoreReconciler:    coreReconciler,
 		TLSReconciler:     tlsReconciler,
 		RoutingReconciler: routingReconciler,

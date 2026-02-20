@@ -163,6 +163,14 @@ func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			tlsListenerName = tlsResult.ListenerName
 			if !tlsResult.CertReady {
 				logger.Info("TLS Certificate not ready yet, will requeue")
+				// Save status so TLSReady=False is visible, then requeue.
+				// The Certificate watch will also trigger re-reconciliation
+				// when the cert becomes ready.
+				nebariApp.Status.ObservedGeneration = nebariApp.Generation
+				if err := r.Status().Update(ctx, nebariApp); err != nil {
+					return ctrl.Result{}, err
+				}
+				return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 			}
 		}
 		logger.Info("TLS reconciled successfully", "nebariapp", nebariApp.Name, "listenerName", tlsListenerName)
@@ -223,6 +231,19 @@ func (r *NebariAppReconciler) cleanup(ctx context.Context, nebariApp *appsv1.Neb
 	logger.Info("Cleaning up resources for NebariApp", "name", nebariApp.Name, "namespace", nebariApp.Namespace)
 
 	r.Recorder.Event(nebariApp, corev1.EventTypeNormal, "Cleanup", "Starting resource cleanup")
+
+	// Cleanup in reverse pipeline order: Auth -> Routing -> TLS.
+	// Auth depends on routing (SecurityPolicy references HTTPRoute), and
+	// routing depends on TLS (HTTPRoute references the per-app listener).
+
+	// Cleanup authentication resources (delete OIDC client if provisioned)
+	if r.AuthReconciler != nil {
+		if err := r.AuthReconciler.CleanupAuth(ctx, nebariApp); err != nil {
+			logger.Error(err, "Failed to cleanup auth resources")
+			return err
+		}
+	}
+
 	// Delete HTTPRoute explicitly (also has ownerReferences for GC)
 	if r.RoutingReconciler != nil {
 		if err := r.RoutingReconciler.CleanupHTTPRoute(ctx, nebariApp); err != nil {
@@ -239,14 +260,6 @@ func (r *NebariAppReconciler) cleanup(ctx context.Context, nebariApp *appsv1.Neb
 		}
 	}
 
-	// Cleanup authentication resources (delete OIDC client if provisioned)
-	if r.AuthReconciler != nil {
-		if err := r.AuthReconciler.CleanupAuth(ctx, nebariApp); err != nil {
-			logger.Error(err, "Failed to cleanup auth resources")
-			return err
-		}
-	}
-
 	// Additional cleanup handled automatically:
 
 	logger.Info("Cleanup completed")
@@ -255,9 +268,6 @@ func (r *NebariAppReconciler) cleanup(ctx context.Context, nebariApp *appsv1.Neb
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *NebariAppReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	// Initialize the event recorder
-	r.Recorder = mgr.GetEventRecorderFor("nebariapp-controller")
-
 	builder := ctrl.NewControllerManagedBy(mgr).
 		For(&appsv1.NebariApp{}).
 		Named("nebariapp")

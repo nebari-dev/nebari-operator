@@ -81,7 +81,7 @@ func CertificateName(nebariApp *appsv1.NebariApp) string {
 // CertificateSecretName generates the name for the TLS secret created by cert-manager.
 // Pattern: <nebariapp-name>-<namespace>-tls
 func CertificateSecretName(nebariApp *appsv1.NebariApp) string {
-	return fmt.Sprintf("%s-%s-tls", nebariApp.Name, nebariApp.Namespace)
+	return fmt.Sprintf("%s-%s-%s", nebariApp.Name, nebariApp.Namespace, constants.CertificateSecretSuffix)
 }
 
 // ListenerName generates the name for the per-app Gateway HTTPS listener.

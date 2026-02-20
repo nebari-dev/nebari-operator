@@ -74,10 +74,9 @@ type RoutingConfig struct {
 	// +optional
 	Routes []RouteMatch `json:"routes,omitempty"`
 
-	// TLS configures TLS termination behavior for the HTTPRoute.
-	// Note: The operator does not manage TLS certificates or Gateway TLS configuration.
-	// cert-manager and envoy-gateway handle certificate provisioning and TLS termination.
-	// This setting only controls whether the HTTPRoute should reference HTTPS listeners.
+	// TLS configures TLS certificate management and termination behavior.
+	// When TLS is enabled (the default), the operator creates a cert-manager Certificate
+	// for the application's hostname and adds a per-app HTTPS listener to the shared Gateway.
 	// +optional
 	TLS *RoutingTLSConfig `json:"tls,omitempty"`
 }
