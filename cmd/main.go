@@ -43,6 +43,7 @@ import (
 	"github.com/nebari-dev/nebari-operator/internal/controller"
 	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/auth"
 	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/auth/providers"
+	tlsreconciler "github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/tls"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/constants"
 	// +kubebuilder:scaffold:imports
 )
@@ -228,9 +229,27 @@ func main() {
 		Providers: oidcProviders,
 	}
 
+	// Load TLS configuration
+	tlsConfig := config.LoadTLSConfig()
+
+	// Initialize TLS reconciler if ClusterIssuer is configured
+	var tlsReconciler *tlsreconciler.TLSReconciler
+	if tlsConfig.ClusterIssuerName != "" {
+		tlsReconciler = &tlsreconciler.TLSReconciler{
+			Client:            mgr.GetClient(),
+			Scheme:            mgr.GetScheme(),
+			Recorder:          mgr.GetEventRecorderFor("nebariapp-tls"),
+			ClusterIssuerName: tlsConfig.ClusterIssuerName,
+		}
+		setupLog.Info("TLS reconciler initialized", "clusterIssuer", tlsConfig.ClusterIssuerName)
+	} else {
+		setupLog.Info("TLS reconciler disabled - TLS_CLUSTER_ISSUER_NAME not set")
+	}
+
 	if err := (&controller.NebariAppReconciler{
 		Client:         mgr.GetClient(),
 		Scheme:         mgr.GetScheme(),
+		TLSReconciler:  tlsReconciler,
 		AuthReconciler: authReconciler,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "NebariApp")
