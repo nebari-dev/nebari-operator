@@ -175,9 +175,9 @@ spec:
                         default: true
                         description: |-
                           Enabled determines whether TLS termination should be used.
-                          When nil or true, the HTTPRoute will reference HTTPS listeners on the Gateway.
+                          When nil or true, the operator will create a cert-manager Certificate
+                          for the application's hostname and configure a per-app Gateway HTTPS listener.
                           When explicitly set to false, only HTTP listeners will be used.
-                          Note: The Gateway's TLS certificates are managed by cert-manager, not by this operator.
                         type: boolean
                     type: object
                 type: object
