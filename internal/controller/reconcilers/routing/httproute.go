@@ -43,8 +43,11 @@ type RoutingReconciler struct {
 	Recorder record.EventRecorder
 }
 
-// ReconcileRouting creates or updates the HTTPRoute for a NebariApp
-func (r *RoutingReconciler) ReconcileRouting(ctx context.Context, nebariApp *appsv1.NebariApp) error {
+// ReconcileRouting creates or updates the HTTPRoute for a NebariApp.
+// tlsListenerName is the name of the per-app TLS listener on the Gateway,
+// provided by the TLS reconciler. When non-empty and TLS is enabled, the
+// HTTPRoute will target this listener instead of the default "https" listener.
+func (r *RoutingReconciler) ReconcileRouting(ctx context.Context, nebariApp *appsv1.NebariApp, tlsListenerName string) error {
 	logger := log.FromContext(ctx)
 
 	// Determine which gateway to use
@@ -61,7 +64,7 @@ func (r *RoutingReconciler) ReconcileRouting(ctx context.Context, nebariApp *app
 	}
 
 	// Generate desired HTTPRoute
-	desiredRoute := r.buildHTTPRoute(nebariApp, gatewayName)
+	desiredRoute := r.buildHTTPRoute(nebariApp, gatewayName, tlsListenerName)
 
 	// Check if HTTPRoute already exists
 	existingRoute := &gatewayv1.HTTPRoute{}
@@ -147,18 +150,23 @@ func (r *RoutingReconciler) CleanupHTTPRoute(ctx context.Context, nebariApp *app
 	return nil
 }
 
-// buildHTTPRoute generates an HTTPRoute resource from NebariApp spec
-func (r *RoutingReconciler) buildHTTPRoute(nebariApp *appsv1.NebariApp, gatewayName string) *gatewayv1.HTTPRoute {
+// buildHTTPRoute generates an HTTPRoute resource from NebariApp spec.
+// tlsListenerName overrides the default "https" section name when TLS is enabled
+// and a per-app TLS listener has been created by the TLS reconciler.
+func (r *RoutingReconciler) buildHTTPRoute(nebariApp *appsv1.NebariApp, gatewayName string, tlsListenerName string) *gatewayv1.HTTPRoute {
 	routeName := naming.HTTPRouteName(nebariApp)
 	namespace := gatewayv1.Namespace(constants.GatewayNamespace)
 
-	// Determine which Gateway listener to use based on TLS configuration
-	// Default is HTTPS (TLS enabled) when TLS is not specified or when enabled is nil/true
+	// Determine which Gateway listener to use
+	// Priority: tlsListenerName (from TLS reconciler) > TLS enabled ("https") > TLS disabled ("http")
 	sectionName := gatewayv1.SectionName("https")
 	tlsEnabled := true
 	if nebariApp.Spec.Routing != nil && nebariApp.Spec.Routing.TLS != nil && nebariApp.Spec.Routing.TLS.Enabled != nil && !*nebariApp.Spec.Routing.TLS.Enabled {
 		sectionName = gatewayv1.SectionName("http")
 		tlsEnabled = false
+	}
+	if tlsListenerName != "" && tlsEnabled {
+		sectionName = gatewayv1.SectionName(tlsListenerName)
 	}
 
 	route := &gatewayv1.HTTPRoute{

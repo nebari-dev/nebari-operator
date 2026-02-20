@@ -163,7 +163,7 @@ func TestReconcileRoutingEdgeCases(t *testing.T) {
 				Recorder: record.NewFakeRecorder(10),
 			}
 
-			err := reconciler.ReconcileRouting(context.Background(), tt.nebariApp)
+			err := reconciler.ReconcileRouting(context.Background(), tt.nebariApp, "")
 			if (err != nil) != tt.expectError {
 				t.Errorf("expected error=%v, got error=%v", tt.expectError, err)
 			}
@@ -220,7 +220,7 @@ func TestHTTPRouteOwnerReference(t *testing.T) {
 		Recorder: record.NewFakeRecorder(10),
 	}
 
-	err := reconciler.ReconcileRouting(context.Background(), nebariApp)
+	err := reconciler.ReconcileRouting(context.Background(), nebariApp, "")
 	if err != nil {
 		t.Fatalf("ReconcileRouting failed: %v", err)
 	}

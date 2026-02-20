@@ -178,12 +178,12 @@ func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				logger.Info("TLS Certificate not ready yet, will requeue")
 			}
 		}
-		logger.Info("TLS reconciled successfully", "nebariapp", nebariApp.Name, "tlsListenerName", tlsListenerName)
+		logger.Info("TLS reconciled successfully", "nebariapp", nebariApp.Name, "listenerName", tlsListenerName)
 	}
 
 	// Reconcile routing (HTTPRoute creation/update) if routing is configured
 	if nebariApp.Spec.Routing != nil {
-		if err := r.RoutingReconciler.ReconcileRouting(ctx, nebariApp); err != nil {
+		if err := r.RoutingReconciler.ReconcileRouting(ctx, nebariApp, tlsListenerName); err != nil {
 			logger.Error(err, "Routing reconciliation failed")
 			conditions.SetCondition(nebariApp, appsv1.ConditionTypeReady, metav1.ConditionFalse,
 				appsv1.ReasonFailed, fmt.Sprintf("Routing reconciliation failed: %v", err))
