@@ -462,11 +462,12 @@ func TestReconcileAuth(t *testing.T) {
 	_ = egv1alpha1.AddToScheme(scheme)
 
 	tests := []struct {
-		name           string
-		nebariApp      *appsv1.NebariApp
-		existingSecret *corev1.Secret
-		provider       *mockProvider
-		expectError    bool
+		name                   string
+		nebariApp              *appsv1.NebariApp
+		existingSecret         *corev1.Secret
+		existingSecurityPolicy *egv1alpha1.SecurityPolicy
+		provider               *mockProvider
+		expectError            bool
 	}{
 		{
 			name: "Auth not enabled",
@@ -540,6 +541,78 @@ func TestReconcileAuth(t *testing.T) {
 			},
 			expectError: true,
 		},
+		{
+			name: "GatewayAuth false - SecurityPolicy not created",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app",
+					Namespace: "default",
+				},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "test.example.com",
+					Auth: &appsv1.AuthConfig{
+						Enabled:         true,
+						Provider:        constants.ProviderKeycloak,
+						ProvisionClient: boolPtr(false),
+						GatewayAuth:     boolPtr(false),
+					},
+				},
+			},
+			existingSecret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app-oidc-client",
+					Namespace: "default",
+				},
+				Data: map[string][]byte{
+					constants.ClientSecretKey: []byte("test-secret"),
+				},
+			},
+			provider: &mockProvider{
+				issuerURL:            "https://keycloak.example.com/realms/test",
+				clientID:             "test-client",
+				supportsProvisioning: true,
+			},
+			expectError: false,
+		},
+		{
+			name: "GatewayAuth false with pre-existing SecurityPolicy - deletes it",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app",
+					Namespace: "default",
+				},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "test.example.com",
+					Auth: &appsv1.AuthConfig{
+						Enabled:         true,
+						Provider:        constants.ProviderKeycloak,
+						ProvisionClient: boolPtr(false),
+						GatewayAuth:     boolPtr(false),
+					},
+				},
+			},
+			existingSecret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app-oidc-client",
+					Namespace: "default",
+				},
+				Data: map[string][]byte{
+					constants.ClientSecretKey: []byte("test-secret"),
+				},
+			},
+			existingSecurityPolicy: &egv1alpha1.SecurityPolicy{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app-security-policy",
+					Namespace: "default",
+				},
+			},
+			provider: &mockProvider{
+				issuerURL:            "https://keycloak.example.com/realms/test",
+				clientID:             "test-client",
+				supportsProvisioning: true,
+			},
+			expectError: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -550,6 +623,9 @@ func TestReconcileAuth(t *testing.T) {
 
 			if tt.existingSecret != nil {
 				builder = builder.WithObjects(tt.existingSecret)
+			}
+			if tt.existingSecurityPolicy != nil {
+				builder = builder.WithObjects(tt.existingSecurityPolicy)
 			}
 
 			client := builder.Build()
@@ -575,7 +651,7 @@ func TestReconcileAuth(t *testing.T) {
 				t.Errorf("expected no error, got: %v", err)
 			}
 
-			// If auth is enabled and no error, verify SecurityPolicy was created
+			// If auth is enabled and no error, verify SecurityPolicy based on gatewayAuth setting
 			if !tt.expectError && tt.nebariApp.Spec.Auth != nil && tt.nebariApp.Spec.Auth.Enabled {
 				securityPolicy := &egv1alpha1.SecurityPolicy{}
 				err := client.Get(context.Background(), types.NamespacedName{
@@ -583,8 +659,14 @@ func TestReconcileAuth(t *testing.T) {
 					Namespace: tt.nebariApp.Namespace,
 				}, securityPolicy)
 
-				if err != nil {
-					t.Errorf("expected SecurityPolicy to be created, got error: %v", err)
+				if shouldCreateGatewayAuth(tt.nebariApp.Spec.Auth) {
+					if err != nil {
+						t.Errorf("expected SecurityPolicy to be created, got error: %v", err)
+					}
+				} else {
+					if err == nil {
+						t.Error("expected SecurityPolicy to NOT be created when gatewayAuth=false")
+					}
 				}
 			}
 		})

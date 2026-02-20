@@ -169,7 +169,7 @@ type AuthConfig struct {
 	// When true (default), the operator creates a SecurityPolicy that handles
 	// the OIDC flow at the gateway before requests reach the application.
 	// When false, the operator provisions the OIDC client and stores credentials
-	// in a Secret, but does NOT create a SecurityPolicy — the application is
+	// in a Secret, but does NOT create a SecurityPolicy - the application is
 	// expected to handle OAuth natively (e.g., Grafana's built-in generic_oauth).
 	// +kubebuilder:default=true
 	// +optional
