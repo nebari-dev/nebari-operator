@@ -161,7 +161,7 @@ func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	// Reconcile TLS certificates and Gateway listener
 	var tlsListenerName string
-	if r.TLSReconciler != nil && nebariApp.Spec.Routing != nil {
+	if r.TLSReconciler != nil {
 		tlsResult, err := r.TLSReconciler.ReconcileTLS(ctx, nebariApp)
 		if err != nil {
 			logger.Error(err, "TLS reconciliation failed")

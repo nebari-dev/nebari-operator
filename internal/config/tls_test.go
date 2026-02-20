@@ -17,7 +17,6 @@ limitations under the License.
 package config
 
 import (
-	"os"
 	"testing"
 )
 
@@ -43,10 +42,9 @@ func TestLoadTLSConfig(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			os.Unsetenv("TLS_CLUSTER_ISSUER_NAME")
+			t.Setenv("TLS_CLUSTER_ISSUER_NAME", "")
 			for k, v := range tt.envVars {
-				os.Setenv(k, v)
-				defer os.Unsetenv(k)
+				t.Setenv(k, v)
 			}
 			config := LoadTLSConfig()
 			if config.ClusterIssuerName != tt.expectedIssuerName {

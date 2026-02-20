@@ -184,11 +184,12 @@ func (r *TLSReconciler) reconcileCertificate(ctx context.Context, nebariApp *app
 
 	op, err := controllerutil.CreateOrUpdate(ctx, r.Client, cert, func() error {
 		// Set labels (cannot use SetControllerReference since Certificate is cross-namespace)
-		cert.Labels = map[string]string{
-			"app.kubernetes.io/managed-by":  "nebari-operator",
-			"nebari.dev/nebariapp-name":      nebariApp.Name,
-			"nebari.dev/nebariapp-namespace": nebariApp.Namespace,
+		if cert.Labels == nil {
+			cert.Labels = make(map[string]string)
 		}
+		cert.Labels["app.kubernetes.io/managed-by"] = "nebari-operator"
+		cert.Labels["nebari.dev/nebariapp-name"] = nebariApp.Name
+		cert.Labels["nebari.dev/nebariapp-namespace"] = nebariApp.Namespace
 
 		cert.Spec = certmanagerv1.CertificateSpec{
 			SecretName: secretName,
@@ -297,7 +298,7 @@ func (r *TLSReconciler) reconcileGatewayListener(ctx context.Context, nebariApp 
 		// Return nil so the controller requeues naturally.
 		if apierrors.IsConflict(err) {
 			logger.V(1).Info("Gateway update conflict, will retry", "gateway", gatewayName)
-			return nil
+			return fmt.Errorf("gateway update conflict (will retry): %w", err)
 		}
 		return fmt.Errorf("failed to update Gateway with per-app listener: %w", err)
 	}

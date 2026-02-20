@@ -58,7 +58,7 @@ func newGateway(name string, listeners ...gatewayv1.Listener) *gatewayv1.Gateway
 	}
 }
 
-func TestReconcileTLS(t *testing.T) {
+func TestReconcileTLS(t *testing.T) { //nolint:gocyclo // table-driven test with inline validation
 	scheme := newScheme()
 
 	tests := []struct {
@@ -517,10 +517,7 @@ func TestReconcileTLS(t *testing.T) {
 			// Validate Gateway was patched
 			if tt.validateGateway != nil {
 				gw := &gatewayv1.Gateway{}
-				gwName := constants.PublicGatewayName
-				if tt.nebariApp.Spec.Gateway == "internal" {
-					gwName = constants.InternalGatewayName
-				}
+				gwName := getGatewayName(tt.nebariApp)
 				err := fakeClient.Get(context.Background(), types.NamespacedName{
 					Name:      gwName,
 					Namespace: constants.GatewayNamespace,
@@ -698,10 +695,7 @@ func TestCleanupTLS(t *testing.T) {
 			// Validate Gateway state
 			if tt.validateGW != nil {
 				gw := &gatewayv1.Gateway{}
-				gwName := constants.PublicGatewayName
-				if tt.nebariApp.Spec.Gateway == "internal" {
-					gwName = constants.InternalGatewayName
-				}
+				gwName := getGatewayName(tt.nebariApp)
 				err := fakeClient.Get(context.Background(), types.NamespacedName{
 					Name:      gwName,
 					Namespace: constants.GatewayNamespace,
