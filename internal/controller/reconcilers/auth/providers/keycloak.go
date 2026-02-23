@@ -461,15 +461,15 @@ func (p *KeycloakProvider) syncClientProtocolMappers(ctx context.Context, kcClie
 	}
 
 	// Get current client to read existing protocol mappers
-	client, err := kcClient.GetClient(ctx, token.AccessToken, p.Config.Realm, clientInternalID)
+	kcClientObj, err := kcClient.GetClient(ctx, token.AccessToken, p.Config.Realm, clientInternalID)
 	if err != nil {
 		return fmt.Errorf("failed to get client: %w", err)
 	}
 
 	// Build lookup of existing client-level mappers by name
 	existingByName := make(map[string]gocloak.ProtocolMapperRepresentation)
-	if client.ProtocolMappers != nil {
-		for _, m := range *client.ProtocolMappers {
+	if kcClientObj.ProtocolMappers != nil {
+		for _, m := range *kcClientObj.ProtocolMappers {
 			if m.Name != nil {
 				existingByName[*m.Name] = m
 			}
