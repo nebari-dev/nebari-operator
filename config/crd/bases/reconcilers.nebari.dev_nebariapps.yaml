@@ -95,53 +95,6 @@ spec:
                       over realm resources like groups, client scopes, and protocol mappers.
                       Only used when provider="keycloak" and provisionClient=true.
                     properties:
-                      clientScopes:
-                        description: |-
-                          ClientScopes defines custom client scope configurations with protocol mappers.
-                          When specified for a scope that the operator would normally auto-configure
-                          (e.g., "groups"), the user's mapper configuration takes precedence over defaults.
-                        items:
-                          description: KeycloakClientScopeConfig defines custom protocol
-                            mapper configuration for a client scope.
-                          properties:
-                            name:
-                              description: Name of the client scope to configure.
-                              minLength: 1
-                              type: string
-                            protocolMappers:
-                              description: ProtocolMappers defines protocol mappers
-                                for this scope.
-                              items:
-                                description: KeycloakProtocolMapperConfig defines
-                                  a protocol mapper with arbitrary configuration.
-                                properties:
-                                  config:
-                                    additionalProperties:
-                                      type: string
-                                    description: |-
-                                      Config is the mapper configuration as arbitrary key-value pairs.
-                                      Keys and values are specific to the mapper type.
-                                      Example for group-membership mapper: {"claim.name": "groups", "full.path": "false"}
-                                    type: object
-                                  name:
-                                    description: Name of the protocol mapper.
-                                    minLength: 1
-                                    type: string
-                                  protocolMapper:
-                                    description: |-
-                                      ProtocolMapper is the mapper type identifier.
-                                      Example: "oidc-group-membership-mapper", "oidc-usermodel-attribute-mapper"
-                                    minLength: 1
-                                    type: string
-                                required:
-                                - name
-                                - protocolMapper
-                                type: object
-                              type: array
-                          required:
-                          - name
-                          type: object
-                        type: array
                       groups:
                         description: |-
                           Groups defines Keycloak groups to ensure exist in the realm,
@@ -163,6 +116,40 @@ spec:
                               type: string
                           required:
                           - name
+                          type: object
+                        type: array
+                      protocolMappers:
+                        description: |-
+                          ProtocolMappers defines client-level protocol mappers to configure on the
+                          OIDC client. These are applied directly to the client (not to shared client
+                          scopes), so each NebariApp gets isolated mapper configuration.
+                          When specified, the operator's default mappers (e.g., group-membership) are
+                          not auto-created — the user's configuration takes full control.
+                        items:
+                          description: KeycloakProtocolMapperConfig defines a protocol
+                            mapper with arbitrary configuration.
+                          properties:
+                            config:
+                              additionalProperties:
+                                type: string
+                              description: |-
+                                Config is the mapper configuration as arbitrary key-value pairs.
+                                Keys and values are specific to the mapper type.
+                                Example for group-membership mapper: {"claim.name": "groups", "full.path": "false"}
+                              type: object
+                            name:
+                              description: Name of the protocol mapper.
+                              minLength: 1
+                              type: string
+                            protocolMapper:
+                              description: |-
+                                ProtocolMapper is the mapper type identifier.
+                                Example: "oidc-group-membership-mapper", "oidc-usermodel-attribute-mapper"
+                              minLength: 1
+                              type: string
+                          required:
+                          - name
+                          - protocolMapper
                           type: object
                         type: array
                     type: object

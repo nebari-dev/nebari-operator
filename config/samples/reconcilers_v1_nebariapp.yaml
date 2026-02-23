@@ -32,14 +32,12 @@ spec:
   #       - name: admin
   #         members: [nebari-admin]
   #       - name: viewer
-  #     clientScopes:
-  #       - name: groups
-  #         protocolMappers:
-  #           - name: group-membership
-  #             protocolMapper: oidc-group-membership-mapper
-  #             config:
-  #               claim.name: groups
-  #               full.path: "false"
-  #               id.token.claim: "true"
-  #               access.token.claim: "true"
-  #               userinfo.token.claim: "true"
+  #     protocolMappers:
+  #       - name: group-membership
+  #         protocolMapper: oidc-group-membership-mapper
+  #         config:
+  #           claim.name: groups
+  #           full.path: "false"
+  #           id.token.claim: "true"
+  #           access.token.claim: "true"
+  #           userinfo.token.claim: "true"

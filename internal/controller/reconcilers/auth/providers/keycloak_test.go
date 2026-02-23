@@ -486,91 +486,107 @@ func TestKeycloakProvider_SyncGroups_Deduplication(t *testing.T) {
 	}
 }
 
-func TestGetCustomScopeConfig(t *testing.T) {
+func TestHasScope(t *testing.T) {
 	tests := []struct {
-		name      string
-		nebariApp *appsv1.NebariApp
-		scopeName string
-		expectNil bool
+		name     string
+		app      *appsv1.NebariApp
+		scope    string
+		expected bool
 	}{
 		{
-			name: "Nil auth config",
-			nebariApp: &appsv1.NebariApp{
-				Spec: appsv1.NebariAppSpec{},
-			},
-			scopeName: "groups",
-			expectNil: true,
+			name:     "Nil auth config",
+			app:      &appsv1.NebariApp{Spec: appsv1.NebariAppSpec{}},
+			scope:    "groups",
+			expected: false,
 		},
 		{
-			name: "Nil keycloakConfig",
-			nebariApp: &appsv1.NebariApp{
-				Spec: appsv1.NebariAppSpec{
-					Auth: &appsv1.AuthConfig{Enabled: true},
-				},
-			},
-			scopeName: "groups",
-			expectNil: true,
-		},
-		{
-			name: "No matching scope",
-			nebariApp: &appsv1.NebariApp{
+			name: "Scope not present",
+			app: &appsv1.NebariApp{
 				Spec: appsv1.NebariAppSpec{
 					Auth: &appsv1.AuthConfig{
 						Enabled: true,
-						KeycloakConfig: &appsv1.KeycloakClientConfig{
-							ClientScopes: []appsv1.KeycloakClientScopeConfig{
-								{Name: "email"},
-							},
-						},
+						Scopes:  []string{"openid", "profile", "email"},
 					},
 				},
 			},
-			scopeName: "groups",
-			expectNil: true,
+			scope:    "groups",
+			expected: false,
 		},
 		{
-			name: "Matching scope found",
-			nebariApp: &appsv1.NebariApp{
+			name: "Scope present",
+			app: &appsv1.NebariApp{
 				Spec: appsv1.NebariAppSpec{
 					Auth: &appsv1.AuthConfig{
 						Enabled: true,
-						KeycloakConfig: &appsv1.KeycloakClientConfig{
-							ClientScopes: []appsv1.KeycloakClientScopeConfig{
-								{
-									Name: "groups",
-									ProtocolMappers: []appsv1.KeycloakProtocolMapperConfig{
-										{
-											Name:           "group-membership",
-											ProtocolMapper: "oidc-group-membership-mapper",
-											Config: map[string]string{
-												"full.path": "false",
-											},
-										},
-									},
-								},
-							},
-						},
+						Scopes:  []string{"openid", "profile", "email", "groups"},
 					},
 				},
 			},
-			scopeName: "groups",
-			expectNil: false,
+			scope:    "groups",
+			expected: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := getCustomScopeConfig(tt.nebariApp, tt.scopeName)
-			if tt.expectNil && result != nil {
-				t.Error("expected nil, got non-nil result")
+			result := hasScope(tt.app, tt.scope)
+			if result != tt.expected {
+				t.Errorf("expected %v, got %v", tt.expected, result)
 			}
-			if !tt.expectNil && result == nil {
-				t.Error("expected non-nil result, got nil")
-			}
-			if !tt.expectNil && result != nil {
-				if result.Name != tt.scopeName {
-					t.Errorf("expected scope name %q, got %q", tt.scopeName, result.Name)
-				}
+		})
+	}
+}
+
+func TestKeycloakProvider_SyncClientProtocolMappers_NoMappers(t *testing.T) {
+	// syncClientProtocolMappers should return nil when no mappers are needed
+	provider := &KeycloakProvider{
+		Config: config.KeycloakConfig{Realm: "test"},
+	}
+
+	tests := []struct {
+		name      string
+		nebariApp *appsv1.NebariApp
+	}{
+		{
+			name: "Nil auth config",
+			nebariApp: &appsv1.NebariApp{
+				Spec: appsv1.NebariAppSpec{Hostname: "test.example.com"},
+			},
+		},
+		{
+			name: "No groups scope and no keycloakConfig mappers",
+			nebariApp: &appsv1.NebariApp{
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "test.example.com",
+					Auth: &appsv1.AuthConfig{
+						Enabled: true,
+						Scopes:  []string{"openid", "profile", "email"},
+					},
+				},
+			},
+		},
+		{
+			name: "Empty keycloakConfig protocolMappers",
+			nebariApp: &appsv1.NebariApp{
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "test.example.com",
+					Auth: &appsv1.AuthConfig{
+						Enabled: true,
+						KeycloakConfig: &appsv1.KeycloakClientConfig{
+							ProtocolMappers: []appsv1.KeycloakProtocolMapperConfig{},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Should return nil without making any Keycloak calls
+			err := provider.syncClientProtocolMappers(context.Background(), nil, nil, "fake-id", tt.nebariApp)
+			if err != nil {
+				t.Errorf("expected no error, got: %v", err)
 			}
 		})
 	}

@@ -196,11 +196,13 @@ type KeycloakClientConfig struct {
 	// +optional
 	Groups []KeycloakGroup `json:"groups,omitempty"`
 
-	// ClientScopes defines custom client scope configurations with protocol mappers.
-	// When specified for a scope that the operator would normally auto-configure
-	// (e.g., "groups"), the user's mapper configuration takes precedence over defaults.
+	// ProtocolMappers defines client-level protocol mappers to configure on the
+	// OIDC client. These are applied directly to the client (not to shared client
+	// scopes), so each NebariApp gets isolated mapper configuration.
+	// When specified, the operator's default mappers (e.g., group-membership) are
+	// not auto-created — the user's configuration takes full control.
 	// +optional
-	ClientScopes []KeycloakClientScopeConfig `json:"clientScopes,omitempty"`
+	ProtocolMappers []KeycloakProtocolMapperConfig `json:"protocolMappers,omitempty"`
 }
 
 // KeycloakGroup defines a Keycloak group to create in the realm with optional member assignments.
@@ -214,18 +216,6 @@ type KeycloakGroup struct {
 	// Users that don't exist in Keycloak will be logged as warnings but won't cause errors.
 	// +optional
 	Members []string `json:"members,omitempty"`
-}
-
-// KeycloakClientScopeConfig defines custom protocol mapper configuration for a client scope.
-type KeycloakClientScopeConfig struct {
-	// Name of the client scope to configure.
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:MinLength=1
-	Name string `json:"name"`
-
-	// ProtocolMappers defines protocol mappers for this scope.
-	// +optional
-	ProtocolMappers []KeycloakProtocolMapperConfig `json:"protocolMappers,omitempty"`
 }
 
 // KeycloakProtocolMapperConfig defines a protocol mapper with arbitrary configuration.
