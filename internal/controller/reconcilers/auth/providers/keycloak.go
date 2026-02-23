@@ -164,6 +164,11 @@ func (p *KeycloakProvider) ProvisionClient(ctx context.Context, nebariApp *appsv
 		return fmt.Errorf("failed to sync client scopes: %w", err)
 	}
 
+	// Sync Keycloak groups and member assignments
+	if err := p.syncGroups(ctx, kcClient, token, nebariApp); err != nil {
+		return fmt.Errorf("failed to sync groups: %w", err)
+	}
+
 	// Store secret in Kubernetes
 	return p.storeClientSecret(ctx, nebariApp, clientSecret)
 }
@@ -395,8 +400,13 @@ func (p *KeycloakProvider) syncClientScopes(ctx context.Context, kcClient *goclo
 			logger.Info("Created client scope in realm", "scope", scopeName, "id", scopeID)
 		}
 
-		// If the scope is "groups", ensure it has the group membership mapper
-		if scopeName == "groups" {
+		// Check for custom mapper configuration from keycloakConfig
+		if customConfig := getCustomScopeConfig(nebariApp, scopeName); customConfig != nil && len(customConfig.ProtocolMappers) > 0 {
+			if err := p.syncCustomMappers(ctx, kcClient, token, scopeID, customConfig); err != nil {
+				return fmt.Errorf("failed to sync custom mappers for scope %q: %w", scopeName, err)
+			}
+		} else if scopeName == "groups" {
+			// Default: ensure the group membership mapper with full.path=false
 			if err := p.ensureGroupMapper(ctx, kcClient, token, scopeID); err != nil {
 				return fmt.Errorf("failed to ensure group mapper for scope %q: %w", scopeName, err)
 			}
@@ -440,7 +450,7 @@ func (p *KeycloakProvider) ensureGroupMapper(ctx context.Context, kcClient *gocl
 		ProtocolMapper: gocloak.StringP("oidc-group-membership-mapper"),
 		ProtocolMappersConfig: &gocloak.ProtocolMappersConfig{
 			ClaimName:          gocloak.StringP("groups"),
-			FullPath:           gocloak.StringP("true"),
+			FullPath:           gocloak.StringP("false"),
 			IDTokenClaim:       gocloak.StringP("true"),
 			AccessTokenClaim:   gocloak.StringP("true"),
 			UserinfoTokenClaim: gocloak.StringP("true"),
@@ -453,6 +463,228 @@ func (p *KeycloakProvider) ensureGroupMapper(ctx context.Context, kcClient *gocl
 	}
 
 	logger.Info("Created group membership protocol mapper", "scopeID", scopeID)
+	return nil
+}
+
+// syncGroups ensures that Keycloak groups exist in the realm and that
+// specified users are members of those groups.
+// Groups are collected from both spec.auth.groups (simple list) and
+// spec.auth.keycloakConfig.groups (detailed config with members).
+func (p *KeycloakProvider) syncGroups(ctx context.Context, kcClient *gocloak.GoCloak, token *gocloak.JWT, nebariApp *appsv1.NebariApp) error {
+	if nebariApp.Spec.Auth == nil {
+		return nil
+	}
+
+	// Build deduplicated map of group name -> members
+	groupMembers := make(map[string][]string)
+
+	// Collect from spec.auth.groups (no members, just ensure groups exist)
+	for _, g := range nebariApp.Spec.Auth.Groups {
+		if _, ok := groupMembers[g]; !ok {
+			groupMembers[g] = nil
+		}
+	}
+
+	// Collect from keycloakConfig.groups (with optional members)
+	if nebariApp.Spec.Auth.KeycloakConfig != nil {
+		for _, g := range nebariApp.Spec.Auth.KeycloakConfig.Groups {
+			groupMembers[g.Name] = g.Members
+		}
+	}
+
+	if len(groupMembers) == 0 {
+		return nil
+	}
+
+	logger := log.FromContext(ctx)
+	realm := p.Config.Realm
+
+	for groupName, members := range groupMembers {
+		groupID, err := p.ensureGroup(ctx, kcClient, token, realm, groupName)
+		if err != nil {
+			return fmt.Errorf("failed to ensure group %q: %w", groupName, err)
+		}
+
+		if len(members) == 0 {
+			continue
+		}
+
+		if err := p.syncGroupMembers(ctx, kcClient, token, realm, groupID, groupName, members); err != nil {
+			return fmt.Errorf("failed to sync members for group %q: %w", groupName, err)
+		}
+
+		logger.Info("Synced group members", "group", groupName, "members", members)
+	}
+
+	return nil
+}
+
+// ensureGroup checks if a group exists in the realm and creates it if missing.
+// Returns the group's Keycloak ID.
+func (p *KeycloakProvider) ensureGroup(ctx context.Context, kcClient *gocloak.GoCloak, token *gocloak.JWT, realm, groupName string) (string, error) {
+	logger := log.FromContext(ctx)
+
+	// Search for existing group by exact name
+	groups, err := kcClient.GetGroups(ctx, token.AccessToken, realm, gocloak.GetGroupsParams{
+		Search: &groupName,
+		Exact:  gocloak.BoolP(true),
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to search for group %q: %w", groupName, err)
+	}
+
+	for _, g := range groups {
+		if g.Name != nil && *g.Name == groupName {
+			return *g.ID, nil
+		}
+	}
+
+	// Group doesn't exist — create it
+	newGroup := gocloak.Group{
+		Name: gocloak.StringP(groupName),
+	}
+	groupID, err := kcClient.CreateGroup(ctx, token.AccessToken, realm, newGroup)
+	if err != nil {
+		return "", fmt.Errorf("failed to create group %q: %w", groupName, err)
+	}
+
+	logger.Info("Created Keycloak group", "group", groupName, "id", groupID)
+	return groupID, nil
+}
+
+// syncGroupMembers ensures the specified users are members of the given group.
+// Users that don't exist in Keycloak are logged as warnings but don't cause errors.
+func (p *KeycloakProvider) syncGroupMembers(ctx context.Context, kcClient *gocloak.GoCloak, token *gocloak.JWT, realm, groupID, groupName string, members []string) error {
+	logger := log.FromContext(ctx)
+
+	// Get current group members
+	currentMembers, err := kcClient.GetGroupMembers(ctx, token.AccessToken, realm, groupID, gocloak.GetGroupsParams{})
+	if err != nil {
+		return fmt.Errorf("failed to get group members: %w", err)
+	}
+
+	// Build set of current member usernames
+	existingMembers := make(map[string]bool, len(currentMembers))
+	for _, m := range currentMembers {
+		if m.Username != nil {
+			existingMembers[*m.Username] = true
+		}
+	}
+
+	for _, username := range members {
+		if existingMembers[username] {
+			continue // Already a member
+		}
+
+		// Look up user by username
+		users, err := kcClient.GetUsers(ctx, token.AccessToken, realm, gocloak.GetUsersParams{
+			Username: &username,
+			Exact:    gocloak.BoolP(true),
+		})
+		if err != nil {
+			return fmt.Errorf("failed to search for user %q: %w", username, err)
+		}
+
+		if len(users) == 0 {
+			logger.Info("WARNING: User not found in Keycloak, skipping group assignment",
+				"username", username, "group", groupName)
+			continue
+		}
+
+		// Add user to group
+		if err := kcClient.AddUserToGroup(ctx, token.AccessToken, realm, *users[0].ID, groupID); err != nil {
+			return fmt.Errorf("failed to add user %q to group %q: %w", username, groupName, err)
+		}
+
+		logger.Info("Added user to group", "username", username, "group", groupName)
+	}
+
+	return nil
+}
+
+// getCustomScopeConfig returns the custom client scope configuration for the given scope name,
+// or nil if no custom config is specified.
+func getCustomScopeConfig(nebariApp *appsv1.NebariApp, scopeName string) *appsv1.KeycloakClientScopeConfig {
+	if nebariApp.Spec.Auth == nil || nebariApp.Spec.Auth.KeycloakConfig == nil {
+		return nil
+	}
+	for i := range nebariApp.Spec.Auth.KeycloakConfig.ClientScopes {
+		if nebariApp.Spec.Auth.KeycloakConfig.ClientScopes[i].Name == scopeName {
+			return &nebariApp.Spec.Auth.KeycloakConfig.ClientScopes[i]
+		}
+	}
+	return nil
+}
+
+// syncCustomMappers ensures protocol mappers on a client scope match the user-specified configuration.
+func (p *KeycloakProvider) syncCustomMappers(ctx context.Context, kcClient *gocloak.GoCloak, token *gocloak.JWT, scopeID string, scopeConfig *appsv1.KeycloakClientScopeConfig) error {
+	logger := log.FromContext(ctx)
+
+	// Get existing mappers on this scope
+	existingMappers, err := kcClient.GetClientScopeProtocolMappers(ctx, token.AccessToken, p.Config.Realm, scopeID)
+	if err != nil {
+		return fmt.Errorf("failed to get protocol mappers: %w", err)
+	}
+
+	existingByName := make(map[string]*gocloak.ProtocolMappers, len(existingMappers))
+	for _, m := range existingMappers {
+		if m.Name != nil {
+			existingByName[*m.Name] = m
+		}
+	}
+
+	for _, mapperCfg := range scopeConfig.ProtocolMappers {
+		// Build gocloak ProtocolMappersConfig from user-provided map
+		protoConfig := &gocloak.ProtocolMappersConfig{}
+		for k, v := range mapperCfg.Config {
+			val := v // capture for pointer
+			switch k {
+			case "claim.name":
+				protoConfig.ClaimName = &val
+			case "full.path":
+				protoConfig.FullPath = &val
+			case "id.token.claim":
+				protoConfig.IDTokenClaim = &val
+			case "access.token.claim":
+				protoConfig.AccessTokenClaim = &val
+			case "userinfo.token.claim":
+				protoConfig.UserinfoTokenClaim = &val
+			case "multivalued":
+				protoConfig.Multivalued = &val
+			case "aggregate.attrs":
+				protoConfig.AggregateAttrs = &val
+			case "user.attribute":
+				protoConfig.UserAttribute = &val
+			case "jsonType.label":
+				protoConfig.JSONTypeLabel = &val
+			}
+		}
+
+		if existing, ok := existingByName[mapperCfg.Name]; ok {
+			// Update existing mapper
+			existing.ProtocolMapper = gocloak.StringP(mapperCfg.ProtocolMapper)
+			existing.ProtocolMappersConfig = protoConfig
+			err = kcClient.UpdateClientScopeProtocolMapper(ctx, token.AccessToken, p.Config.Realm, scopeID, *existing)
+			if err != nil {
+				return fmt.Errorf("failed to update protocol mapper %q: %w", mapperCfg.Name, err)
+			}
+			logger.Info("Updated protocol mapper", "mapper", mapperCfg.Name, "scope", scopeConfig.Name)
+		} else {
+			// Create new mapper
+			mapper := gocloak.ProtocolMappers{
+				Name:                  gocloak.StringP(mapperCfg.Name),
+				Protocol:              gocloak.StringP("openid-connect"),
+				ProtocolMapper:        gocloak.StringP(mapperCfg.ProtocolMapper),
+				ProtocolMappersConfig: protoConfig,
+			}
+			_, err = kcClient.CreateClientScopeProtocolMapper(ctx, token.AccessToken, p.Config.Realm, scopeID, mapper)
+			if err != nil {
+				return fmt.Errorf("failed to create protocol mapper %q: %w", mapperCfg.Name, err)
+			}
+			logger.Info("Created protocol mapper", "mapper", mapperCfg.Name, "scope", scopeConfig.Name)
+		}
+	}
+
 	return nil
 }
 

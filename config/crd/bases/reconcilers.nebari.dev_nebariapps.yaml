@@ -89,6 +89,83 @@ spec:
                       Required when provider="generic-oidc", ignored for other providers.
                       Example: https://accounts.google.com, https://login.microsoftonline.com/<tenant>/v2.0
                     type: string
+                  keycloakConfig:
+                    description: |-
+                      KeycloakConfig provides Keycloak-specific configuration for fine-grained control
+                      over realm resources like groups, client scopes, and protocol mappers.
+                      Only used when provider="keycloak" and provisionClient=true.
+                    properties:
+                      clientScopes:
+                        description: |-
+                          ClientScopes defines custom client scope configurations with protocol mappers.
+                          When specified for a scope that the operator would normally auto-configure
+                          (e.g., "groups"), the user's mapper configuration takes precedence over defaults.
+                        items:
+                          description: KeycloakClientScopeConfig defines custom protocol
+                            mapper configuration for a client scope.
+                          properties:
+                            name:
+                              description: Name of the client scope to configure.
+                              minLength: 1
+                              type: string
+                            protocolMappers:
+                              description: ProtocolMappers defines protocol mappers
+                                for this scope.
+                              items:
+                                description: KeycloakProtocolMapperConfig defines
+                                  a protocol mapper with arbitrary configuration.
+                                properties:
+                                  config:
+                                    additionalProperties:
+                                      type: string
+                                    description: |-
+                                      Config is the mapper configuration as arbitrary key-value pairs.
+                                      Keys and values are specific to the mapper type.
+                                      Example for group-membership mapper: {"claim.name": "groups", "full.path": "false"}
+                                    type: object
+                                  name:
+                                    description: Name of the protocol mapper.
+                                    minLength: 1
+                                    type: string
+                                  protocolMapper:
+                                    description: |-
+                                      ProtocolMapper is the mapper type identifier.
+                                      Example: "oidc-group-membership-mapper", "oidc-usermodel-attribute-mapper"
+                                    minLength: 1
+                                    type: string
+                                required:
+                                - name
+                                - protocolMapper
+                                type: object
+                              type: array
+                          required:
+                          - name
+                          type: object
+                        type: array
+                      groups:
+                        description: |-
+                          Groups defines Keycloak groups to ensure exist in the realm,
+                          with optional user membership assignments.
+                        items:
+                          description: KeycloakGroup defines a Keycloak group to create
+                            in the realm with optional member assignments.
+                          properties:
+                            members:
+                              description: |-
+                                Members is a list of Keycloak usernames that should be members of this group.
+                                Users that don't exist in Keycloak will be logged as warnings but won't cause errors.
+                              items:
+                                type: string
+                              type: array
+                            name:
+                              description: Name is the group name to create in Keycloak.
+                              minLength: 1
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                    type: object
                   provider:
                     default: keycloak
                     description: |-

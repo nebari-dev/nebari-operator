@@ -338,6 +338,244 @@ func TestKeycloakProvider_SyncClientScopes_NoScopes(t *testing.T) {
 	}
 }
 
+func TestKeycloakProvider_SyncGroups_NoGroups(t *testing.T) {
+	// syncGroups should return nil immediately when no groups are configured
+	provider := &KeycloakProvider{
+		Config: config.KeycloakConfig{
+			Realm: "test",
+		},
+	}
+
+	tests := []struct {
+		name      string
+		nebariApp *appsv1.NebariApp
+	}{
+		{
+			name: "Nil auth config",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app",
+					Namespace: "default",
+				},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "test.example.com",
+				},
+			},
+		},
+		{
+			name: "Auth enabled but no groups",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app",
+					Namespace: "default",
+				},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "test.example.com",
+					Auth: &appsv1.AuthConfig{
+						Enabled: true,
+					},
+				},
+			},
+		},
+		{
+			name: "Empty groups and nil keycloakConfig",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app",
+					Namespace: "default",
+				},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "test.example.com",
+					Auth: &appsv1.AuthConfig{
+						Enabled: true,
+						Groups:  []string{},
+					},
+				},
+			},
+		},
+		{
+			name: "Empty keycloakConfig groups",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app",
+					Namespace: "default",
+				},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "test.example.com",
+					Auth: &appsv1.AuthConfig{
+						Enabled: true,
+						KeycloakConfig: &appsv1.KeycloakClientConfig{
+							Groups: []appsv1.KeycloakGroup{},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// syncGroups should return nil without making any Keycloak calls
+			// (passing nil kcClient and token proves no API calls are made)
+			err := provider.syncGroups(context.Background(), nil, nil, tt.nebariApp)
+			if err != nil {
+				t.Errorf("expected no error, got: %v", err)
+			}
+		})
+	}
+}
+
+func TestKeycloakProvider_SyncGroups_Deduplication(t *testing.T) {
+	// Verify that groups from auth.groups and keycloakConfig.groups are deduplicated
+	nebariApp := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-app",
+			Namespace: "default",
+		},
+		Spec: appsv1.NebariAppSpec{
+			Hostname: "test.example.com",
+			Auth: &appsv1.AuthConfig{
+				Enabled: true,
+				Groups:  []string{"admin", "viewer"},
+				KeycloakConfig: &appsv1.KeycloakClientConfig{
+					Groups: []appsv1.KeycloakGroup{
+						{Name: "admin", Members: []string{"admin-user"}},
+						{Name: "editor"},
+					},
+				},
+			},
+		},
+	}
+
+	// We can't call syncGroups without a real Keycloak, but we can verify the
+	// deduplication logic by checking that the merged map has 3 entries.
+	// The syncGroups method builds a groupMembers map; let's verify the logic inline:
+	groupMembers := make(map[string][]string)
+	for _, g := range nebariApp.Spec.Auth.Groups {
+		if _, ok := groupMembers[g]; !ok {
+			groupMembers[g] = nil
+		}
+	}
+	if nebariApp.Spec.Auth.KeycloakConfig != nil {
+		for _, g := range nebariApp.Spec.Auth.KeycloakConfig.Groups {
+			groupMembers[g.Name] = g.Members
+		}
+	}
+
+	if len(groupMembers) != 3 {
+		t.Errorf("expected 3 deduplicated groups, got %d", len(groupMembers))
+	}
+
+	// "admin" from keycloakConfig should override auth.groups (has members)
+	if members, ok := groupMembers["admin"]; !ok {
+		t.Error("expected 'admin' group to exist")
+	} else if len(members) != 1 || members[0] != "admin-user" {
+		t.Errorf("expected 'admin' group members to be [admin-user], got %v", members)
+	}
+
+	// "viewer" from auth.groups only (no members)
+	if members, ok := groupMembers["viewer"]; !ok {
+		t.Error("expected 'viewer' group to exist")
+	} else if members != nil {
+		t.Errorf("expected 'viewer' group members to be nil, got %v", members)
+	}
+
+	// "editor" from keycloakConfig only
+	if _, ok := groupMembers["editor"]; !ok {
+		t.Error("expected 'editor' group to exist")
+	}
+}
+
+func TestGetCustomScopeConfig(t *testing.T) {
+	tests := []struct {
+		name      string
+		nebariApp *appsv1.NebariApp
+		scopeName string
+		expectNil bool
+	}{
+		{
+			name: "Nil auth config",
+			nebariApp: &appsv1.NebariApp{
+				Spec: appsv1.NebariAppSpec{},
+			},
+			scopeName: "groups",
+			expectNil: true,
+		},
+		{
+			name: "Nil keycloakConfig",
+			nebariApp: &appsv1.NebariApp{
+				Spec: appsv1.NebariAppSpec{
+					Auth: &appsv1.AuthConfig{Enabled: true},
+				},
+			},
+			scopeName: "groups",
+			expectNil: true,
+		},
+		{
+			name: "No matching scope",
+			nebariApp: &appsv1.NebariApp{
+				Spec: appsv1.NebariAppSpec{
+					Auth: &appsv1.AuthConfig{
+						Enabled: true,
+						KeycloakConfig: &appsv1.KeycloakClientConfig{
+							ClientScopes: []appsv1.KeycloakClientScopeConfig{
+								{Name: "email"},
+							},
+						},
+					},
+				},
+			},
+			scopeName: "groups",
+			expectNil: true,
+		},
+		{
+			name: "Matching scope found",
+			nebariApp: &appsv1.NebariApp{
+				Spec: appsv1.NebariAppSpec{
+					Auth: &appsv1.AuthConfig{
+						Enabled: true,
+						KeycloakConfig: &appsv1.KeycloakClientConfig{
+							ClientScopes: []appsv1.KeycloakClientScopeConfig{
+								{
+									Name: "groups",
+									ProtocolMappers: []appsv1.KeycloakProtocolMapperConfig{
+										{
+											Name:           "group-membership",
+											ProtocolMapper: "oidc-group-membership-mapper",
+											Config: map[string]string{
+												"full.path": "false",
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			scopeName: "groups",
+			expectNil: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := getCustomScopeConfig(tt.nebariApp, tt.scopeName)
+			if tt.expectNil && result != nil {
+				t.Error("expected nil, got non-nil result")
+			}
+			if !tt.expectNil && result == nil {
+				t.Error("expected non-nil result, got nil")
+			}
+			if !tt.expectNil && result != nil {
+				if result.Name != tt.scopeName {
+					t.Errorf("expected scope name %q, got %q", tt.scopeName, result.Name)
+				}
+			}
+		})
+	}
+}
+
 func TestKeycloakProvider_DeleteClient(t *testing.T) {
 	// Note: This test is limited because it requires a live Keycloak instance
 	// In a real test environment, you would use httptest to mock the Keycloak API

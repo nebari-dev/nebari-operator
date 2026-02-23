@@ -180,6 +180,72 @@ type AuthConfig struct {
 	// Example: https://accounts.google.com, https://login.microsoftonline.com/<tenant>/v2.0
 	// +optional
 	IssuerURL string `json:"issuerURL,omitempty"`
+
+	// KeycloakConfig provides Keycloak-specific configuration for fine-grained control
+	// over realm resources like groups, client scopes, and protocol mappers.
+	// Only used when provider="keycloak" and provisionClient=true.
+	// +optional
+	KeycloakConfig *KeycloakClientConfig `json:"keycloakConfig,omitempty"`
+}
+
+// KeycloakClientConfig provides Keycloak-specific configuration for managing
+// realm resources associated with a NebariApp's OIDC client.
+type KeycloakClientConfig struct {
+	// Groups defines Keycloak groups to ensure exist in the realm,
+	// with optional user membership assignments.
+	// +optional
+	Groups []KeycloakGroup `json:"groups,omitempty"`
+
+	// ClientScopes defines custom client scope configurations with protocol mappers.
+	// When specified for a scope that the operator would normally auto-configure
+	// (e.g., "groups"), the user's mapper configuration takes precedence over defaults.
+	// +optional
+	ClientScopes []KeycloakClientScopeConfig `json:"clientScopes,omitempty"`
+}
+
+// KeycloakGroup defines a Keycloak group to create in the realm with optional member assignments.
+type KeycloakGroup struct {
+	// Name is the group name to create in Keycloak.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+
+	// Members is a list of Keycloak usernames that should be members of this group.
+	// Users that don't exist in Keycloak will be logged as warnings but won't cause errors.
+	// +optional
+	Members []string `json:"members,omitempty"`
+}
+
+// KeycloakClientScopeConfig defines custom protocol mapper configuration for a client scope.
+type KeycloakClientScopeConfig struct {
+	// Name of the client scope to configure.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+
+	// ProtocolMappers defines protocol mappers for this scope.
+	// +optional
+	ProtocolMappers []KeycloakProtocolMapperConfig `json:"protocolMappers,omitempty"`
+}
+
+// KeycloakProtocolMapperConfig defines a protocol mapper with arbitrary configuration.
+type KeycloakProtocolMapperConfig struct {
+	// Name of the protocol mapper.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+
+	// ProtocolMapper is the mapper type identifier.
+	// Example: "oidc-group-membership-mapper", "oidc-usermodel-attribute-mapper"
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	ProtocolMapper string `json:"protocolMapper"`
+
+	// Config is the mapper configuration as arbitrary key-value pairs.
+	// Keys and values are specific to the mapper type.
+	// Example for group-membership mapper: {"claim.name": "groups", "full.path": "false"}
+	// +optional
+	Config map[string]string `json:"config,omitempty"`
 }
 
 // NebariAppStatus defines the observed state of NebariApp.
