@@ -91,7 +91,6 @@ jobs:
   test-e2e:
     name: E2E Tests
     runs-on: ubuntu-latest
-    if: false  # Temporarily disabled
     needs: lint
     steps:
       - name: Clone the code
@@ -253,7 +252,7 @@ jobs:
   build-multiarch:
     name: Build & Push (${{ matrix.platform }})
     runs-on: ${{ matrix.runner }}
-    needs: [test-chart, test]
+    needs: [test-chart, test, test-e2e]
     strategy:
       matrix:
         include:
