@@ -602,7 +602,7 @@ func TestReconcileAuth(t *testing.T) {
 			},
 			existingSecurityPolicy: &egv1alpha1.SecurityPolicy{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-app-security-policy",
+					Name:      "test-app-security",
 					Namespace: "default",
 				},
 			},
