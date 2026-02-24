@@ -64,6 +64,17 @@ spec:
                       Enabled determines whether authentication should be enforced for this application.
                       When true, users must authenticate via OIDC before accessing the application.
                     type: boolean
+                  enforceAtGateway:
+                    default: true
+                    description: |-
+                      EnforceAtGateway determines whether the operator should create an Envoy Gateway
+                      SecurityPolicy to enforce authentication at the gateway level.
+                      When true (default), the operator creates a SecurityPolicy that handles
+                      the OIDC flow at the gateway before requests reach the application.
+                      When false, the operator provisions the OIDC client and stores credentials
+                      in a Secret, but does NOT create a SecurityPolicy - the application is
+                      expected to handle OAuth natively (e.g., Grafana's built-in generic_oauth).
+                    type: boolean
                   groups:
                     description: |-
                       Groups specifies the list of groups that should have access to this application.

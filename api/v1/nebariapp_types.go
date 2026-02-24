@@ -164,6 +164,17 @@ type AuthConfig struct {
 	// +optional
 	ProvisionClient *bool `json:"provisionClient,omitempty"`
 
+	// EnforceAtGateway determines whether the operator should create an Envoy Gateway
+	// SecurityPolicy to enforce authentication at the gateway level.
+	// When true (default), the operator creates a SecurityPolicy that handles
+	// the OIDC flow at the gateway before requests reach the application.
+	// When false, the operator provisions the OIDC client and stores credentials
+	// in a Secret, but does NOT create a SecurityPolicy - the application is
+	// expected to handle OAuth natively (e.g., Grafana's built-in generic_oauth).
+	// +kubebuilder:default=true
+	// +optional
+	EnforceAtGateway *bool `json:"enforceAtGateway,omitempty"`
+
 	// IssuerURL specifies the OIDC issuer URL for generic-oidc provider.
 	// Required when provider="generic-oidc", ignored for other providers.
 	// Example: https://accounts.google.com, https://login.microsoftonline.com/<tenant>/v2.0
