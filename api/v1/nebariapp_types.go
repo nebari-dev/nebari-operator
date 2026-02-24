@@ -74,10 +74,9 @@ type RoutingConfig struct {
 	// +optional
 	Routes []RouteMatch `json:"routes,omitempty"`
 
-	// TLS configures TLS termination behavior for the HTTPRoute.
-	// Note: The operator does not manage TLS certificates or Gateway TLS configuration.
-	// cert-manager and envoy-gateway handle certificate provisioning and TLS termination.
-	// This setting only controls whether the HTTPRoute should reference HTTPS listeners.
+	// TLS configures TLS certificate management and termination behavior.
+	// When TLS is enabled (the default), the operator creates a cert-manager Certificate
+	// for the application's hostname and adds a per-app HTTPS listener to the shared Gateway.
 	// +optional
 	TLS *RoutingTLSConfig `json:"tls,omitempty"`
 }
@@ -104,9 +103,9 @@ type RouteMatch struct {
 // RoutingTLSConfig controls TLS termination for the HTTPRoute.
 type RoutingTLSConfig struct {
 	// Enabled determines whether TLS termination should be used.
-	// When nil or true, the HTTPRoute will reference HTTPS listeners on the Gateway.
+	// When nil or true, the operator will create a cert-manager Certificate
+	// for the application's hostname and configure a per-app Gateway HTTPS listener.
 	// When explicitly set to false, only HTTP listeners will be used.
-	// Note: The Gateway's TLS certificates are managed by cert-manager, not by this operator.
 	// +kubebuilder:default=true
 	// +optional
 	Enabled *bool `json:"enabled,omitempty"`
@@ -242,9 +241,8 @@ const (
 	// and the Gateway is routing traffic to the application.
 	ConditionTypeRoutingReady = "RoutingReady"
 
-	// ConditionTypeTLSReady indicates that TLS termination is functioning.
-	// This verifies that the Gateway's TLS listeners are accessible and working.
-	// Note: TLS certificates are managed by cert-manager, not by this operator.
+	// ConditionTypeTLSReady indicates that the TLS certificate has been provisioned
+	// and the Gateway listener is configured for this application's hostname.
 	ConditionTypeTLSReady = "TLSReady"
 
 	// ConditionTypeAuthReady indicates that authentication is properly configured.
@@ -337,6 +335,21 @@ const (
 
 	// EventReasonSecurityPolicyUpdated is used when SecurityPolicy is updated
 	EventReasonSecurityPolicyUpdated = "SecurityPolicyUpdated"
+
+	// EventReasonCertificateCreated is used when cert-manager Certificate is created
+	EventReasonCertificateCreated = "CertificateCreated"
+
+	// EventReasonCertificateUpdated is used when cert-manager Certificate is updated
+	EventReasonCertificateUpdated = "CertificateUpdated"
+
+	// EventReasonCertificateDeleted is used when cert-manager Certificate is deleted
+	EventReasonCertificateDeleted = "CertificateDeleted"
+
+	// EventReasonGatewayListenerAdded is used when a per-app listener is added to the Gateway
+	EventReasonGatewayListenerAdded = "GatewayListenerAdded"
+
+	// EventReasonGatewayListenerRemoved is used when a per-app listener is removed from the Gateway
+	EventReasonGatewayListenerRemoved = "GatewayListenerRemoved"
 )
 
 // +kubebuilder:object:root=true

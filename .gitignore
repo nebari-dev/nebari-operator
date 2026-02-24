@@ -52,3 +52,6 @@ Dockerfile.cross
 
 # Claude Code
 CLAUDE.md
+
+# Git worktrees
+.worktrees/

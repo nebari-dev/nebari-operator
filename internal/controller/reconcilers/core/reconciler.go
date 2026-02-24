@@ -22,6 +22,7 @@ import (
 
 	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/conditions"
+	"github.com/nebari-dev/nebari-operator/internal/controller/utils/naming"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -48,6 +49,15 @@ func (r *CoreReconciler) ValidateSpec(ctx context.Context, nebariApp *appsv1.Neb
 		r.Recorder.Event(nebariApp, corev1.EventTypeWarning, appsv1.EventReasonNamespaceNotOptIn, err.Error())
 		conditions.SetCondition(nebariApp, appsv1.ConditionTypeReady, metav1.ConditionFalse,
 			appsv1.ReasonNamespaceNotOptedIn, err.Error())
+		return err
+	}
+
+	// Validate that derived resource names fit within Kubernetes naming limits
+	if err := naming.ValidateResourceNames(nebariApp); err != nil {
+		logger.Error(err, "Resource name validation failed")
+		r.Recorder.Event(nebariApp, corev1.EventTypeWarning, "ResourceNameTooLong", err.Error())
+		conditions.SetCondition(nebariApp, appsv1.ConditionTypeReady, metav1.ConditionFalse,
+			"ResourceNameTooLong", err.Error())
 		return err
 	}
 
