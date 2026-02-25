@@ -1,0 +1,25 @@
+apiVersion: reconcilers.nebari.dev/v1
+kind: NebariApp
+metadata:
+  name: landing-page
+  namespace: nebari-system
+spec:
+  hostname: landing.nebari.example.com
+  service:
+    name: landing-page
+    port: 80
+  routing:
+    tls:
+      enabled: true
+  # Landing page itself is publicly accessible
+  # Frontend handles authentication via Keycloak client
+  auth:
+    enabled: false
+  landingPage:
+    enabled: true
+    displayName: "Nebari Portal"
+    description: "Central hub for all Nebari services"
+    icon: "dashboard"
+    category: "Platform"
+    priority: 1
+    visibility: "public"

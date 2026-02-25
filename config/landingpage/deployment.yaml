@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: landing-page
+  namespace: nebari-system
+  labels:
+    app: landing-page
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: landing-page
+  template:
+    metadata:
+      labels:
+        app: landing-page
+    spec:
+      serviceAccountName: landing-page
+      containers:
+        - name: backend
+          image: landing-page:latest
+          ports:
+            - containerPort: 8080
+              name: http
+              protocol: TCP
+          env:
+            - name: KEYCLOAK_URL
+              value: "https://keycloak.nebari.example.com"
+            - name: KEYCLOAK_REALM
+              value: "nebari"
+            - name: PORT
+              value: "8080"
+            - name: ENABLE_AUTH
+              value: "true"
+            - name: LOG_LEVEL
+              value: "info"
+          livenessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL

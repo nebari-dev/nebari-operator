@@ -1,0 +1,17 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: nebari-system
+
+resources:
+  - service_account.yaml
+  - clusterrole.yaml
+  - clusterrolebinding.yaml
+  - deployment.yaml
+  - service.yaml
+  - nebariapp.yaml
+
+images:
+  - name: landing-page
+    newName: ghcr.io/nebari-dev/nebari-landing-page
+    newTag: latest
