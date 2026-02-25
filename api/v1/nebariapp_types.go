@@ -49,6 +49,11 @@ type NebariAppSpec struct {
 	// +kubebuilder:default=public
 	// +optional
 	Gateway string `json:"gateway,omitempty"`
+
+	// LandingPage configures how this service appears on the Nebari landing page.
+	// When enabled, the service will be discoverable through the landing page portal.
+	// +optional
+	LandingPage *LandingPageConfig `json:"landingPage,omitempty"`
 }
 
 // ServiceReference identifies the Kubernetes Service that backs this application.
@@ -179,6 +184,98 @@ type AuthConfig struct {
 	// Example: https://accounts.google.com, https://login.microsoftonline.com/<tenant>/v2.0
 	// +optional
 	IssuerURL string `json:"issuerURL,omitempty"`
+}
+
+// LandingPageConfig defines how a service appears on the Nebari landing page.
+type LandingPageConfig struct {
+	// Enabled determines if this service appears on the landing page.
+	// When false, the service is not shown on the landing page.
+	// +kubebuilder:default=false
+	Enabled bool `json:"enabled"`
+
+	// DisplayName is the human-readable name shown on the landing page.
+	// Required when Enabled is true.
+	// +kubebuilder:validation:MaxLength=64
+	// +optional
+	DisplayName string `json:"displayName,omitempty"`
+
+	// Description provides additional context about the service.
+	// Shown as supplementary text on the service card.
+	// +kubebuilder:validation:MaxLength=256
+	// +optional
+	Description string `json:"description,omitempty"`
+
+	// Icon is an identifier for the service icon (e.g., "jupyter", "grafana")
+	// or a URL to a custom icon image.
+	// Supported built-in icons: jupyter, grafana, prometheus, keycloak, argocd, kubernetes
+	// +optional
+	Icon string `json:"icon,omitempty"`
+
+	// Category groups related services together on the landing page.
+	// Common categories: Development, Monitoring, Platform, Data Science
+	// +optional
+	Category string `json:"category,omitempty"`
+
+	// Priority determines sort order within a category (lower number = higher priority).
+	// Services are displayed in ascending priority order within each category.
+	// +kubebuilder:default=100
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=1000
+	// +optional
+	Priority *int `json:"priority,omitempty"`
+
+	// ExternalUrl overrides the default URL derived from the hostname.
+	// Use this when the service URL differs from https://<hostname>
+	// +optional
+	ExternalUrl string `json:"externalUrl,omitempty"`
+
+	// Visibility controls who can see this service on the landing page.
+	// - "public": Visible to everyone, including unauthenticated users
+	// - "authenticated": Visible to any authenticated user (default)
+	// - "private": Visible only to users in RequiredGroups
+	// +kubebuilder:validation:Enum=public;authenticated;private
+	// +kubebuilder:default=authenticated
+	// +optional
+	Visibility string `json:"visibility,omitempty"`
+
+	// RequiredGroups specifies Keycloak groups required to see/access this service.
+	// Only applies when Visibility is "private".
+	// Groups are checked from the user's JWT claims (groups field).
+	// User must be a member of at least one group to see the service (OR logic).
+	// Example: ["data-science", "admin"]
+	// +optional
+	RequiredGroups []string `json:"requiredGroups,omitempty"`
+
+	// HealthCheck configures health status monitoring for this service.
+	// +optional
+	HealthCheck *HealthCheckConfig `json:"healthCheck,omitempty"`
+}
+
+// HealthCheckConfig defines health check parameters for a service.
+type HealthCheckConfig struct {
+	// Enabled determines if health checks are performed.
+	// +kubebuilder:default=false
+	Enabled bool `json:"enabled"`
+
+	// Path is the HTTP path to check for health status.
+	// Common paths: /health, /healthz, /api/health
+	// +kubebuilder:default=/health
+	// +optional
+	Path string `json:"path,omitempty"`
+
+	// IntervalSeconds is how often to perform health checks (in seconds).
+	// +kubebuilder:default=30
+	// +kubebuilder:validation:Minimum=10
+	// +kubebuilder:validation:Maximum=300
+	// +optional
+	IntervalSeconds *int `json:"intervalSeconds,omitempty"`
+
+	// TimeoutSeconds is the request timeout for health checks (in seconds).
+	// +kubebuilder:default=5
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=30
+	// +optional
+	TimeoutSeconds *int `json:"timeoutSeconds,omitempty"`
 }
 
 // NebariAppStatus defines the observed state of NebariApp.
