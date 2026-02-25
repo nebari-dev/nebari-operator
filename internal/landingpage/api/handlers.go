@@ -125,7 +125,9 @@ func (h *Handler) handleGetServices(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		log.Error(err, "Failed to encode response")
+	}
 }
 
 func (h *Handler) handleGetService(w http.ResponseWriter, r *http.Request) {
@@ -154,7 +156,9 @@ func (h *Handler) handleGetService(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(service)
+	if err := json.NewEncoder(w).Encode(service); err != nil {
+		log.Error(err, "Failed to encode service")
+	}
 }
 
 func (h *Handler) handleGetCategories(w http.ResponseWriter, r *http.Request) {
@@ -166,17 +170,21 @@ func (h *Handler) handleGetCategories(w http.ResponseWriter, r *http.Request) {
 	categories := h.cache.GetCategories()
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	if err := json.NewEncoder(w).Encode(map[string]interface{}{
 		"categories": categories,
-	})
+	}); err != nil {
+		log.Error(err, "Failed to encode categories")
+	}
 }
 
 func (h *Handler) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{
+	if err := json.NewEncoder(w).Encode(map[string]string{
 		"status": "healthy",
-	})
+	}); err != nil {
+		log.Error(err, "Failed to encode health response")
+	}
 }
 
 func (h *Handler) extractAndValidateJWT(r *http.Request) (*auth.Claims, bool) {

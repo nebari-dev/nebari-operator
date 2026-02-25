@@ -46,7 +46,8 @@ func main() {
 	)
 
 	flag.IntVar(&port, "port", 8080, "Port to listen on")
-	flag.StringVar(&kubeconfig, "kubeconfig", "", "Path to kubeconfig file (optional, uses in-cluster config if not provided)")
+	flag.StringVar(&kubeconfig, "kubeconfig", "",
+		"Path to kubeconfig file (optional, uses in-cluster config if not provided)")
 	flag.StringVar(&keycloakURL, "keycloak-url", "", "Keycloak base URL (e.g., https://keycloak.example.com)")
 	flag.StringVar(&keycloakRealm, "keycloak-realm", "main", "Keycloak realm name")
 	flag.BoolVar(&enableAuth, "enable-auth", false, "Enable JWT authentication and authorization")

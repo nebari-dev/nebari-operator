@@ -131,7 +131,11 @@ func (v *JWTValidator) fetchPublicKeys() error {
 	if err != nil {
 		return fmt.Errorf("failed to fetch keys: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			log.Error(err, "Failed to close response body")
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("failed to fetch keys: status %d", resp.StatusCode)
