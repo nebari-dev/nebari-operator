@@ -136,6 +136,32 @@ docker-buildx: ## Build and push docker image for the manager for cross-platform
 	- $(CONTAINER_TOOL) buildx rm nebari-operator-builder
 	rm Dockerfile.cross
 
+##@ Landing Page
+
+LANDING_PAGE_IMG ?= ghcr.io/nebari-dev/nebari-landing-page:latest
+
+.PHONY: build-landingpage
+build-landingpage: ## Build landing page backend binary
+	go build -o bin/landingpage ./cmd/landingpage
+
+.PHONY: docker-build-landingpage
+docker-build-landingpage: ## Build docker image for landing page
+	$(CONTAINER_TOOL) build -f Dockerfile.landingpage -t ${LANDING_PAGE_IMG} .
+
+.PHONY: docker-push-landingpage
+docker-push-landingpage: ## Push docker image for landing page
+	$(CONTAINER_TOOL) push ${LANDING_PAGE_IMG}
+
+.PHONY: deploy-landingpage
+deploy-landingpage: ## Deploy landing page to cluster
+	kubectl apply -k config/landingpage/
+
+.PHONY: undeploy-landingpage
+undeploy-landingpage: ## Remove landing page from cluster
+	kubectl delete -k config/landingpage/
+
+##@ Installer
+
 .PHONY: build-installer
 build-installer: manifests generate kustomize ## Generate a consolidated YAML with CRDs and deployment.
 	mkdir -p dist
