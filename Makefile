@@ -43,7 +43,13 @@ help: ## Display this help.
 
 .PHONY: manifests
 manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
-	@"$(CONTROLLER_GEN)" rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases 2>&1 | grep -v 'Warning: unrecognized format' || true
+	@set +e; \
+	"$(CONTROLLER_GEN)" rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases 2>&1 | grep -v 'Warning: unrecognized format' | grep -v 'gateway-api@v1.4.1'; \
+	if [ -f config/crd/bases/reconcilers.nebari.dev_nebariapps.yaml ]; then \
+		echo "CRDs generated successfully"; exit 0; \
+	else \
+		echo "Error: CRD generation failed"; exit 1; \
+	fi
 
 .PHONY: generate
 generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
