@@ -53,7 +53,13 @@ var (
 
 	// projectImage is the name of the image which will be build and loaded
 	// with the code source changes to be tested.
-	projectImage = "quay.io/nebari/nebari-operator:v0.0.1"
+	// Override via IMG env var (e.g. IMG=quay.io/nebari/nebari-operator:dev make test-e2e).
+	projectImage = func() string {
+		if v := os.Getenv("IMG"); v != "" {
+			return v
+		}
+		return "quay.io/nebari/nebari-operator:v0.0.1"
+	}()
 
 	// k8sClient is a controller-runtime client for use in e2e tests.
 	k8sClient client.Client

@@ -95,7 +95,7 @@ test-unit-html: test-unit ## Generate HTML coverage report for unit tests.
 
 .PHONY: test-e2e
 test-e2e: manifests generate fmt vet ## Run all e2e tests.
-	USE_EXISTING_CLUSTER=$(USE_EXISTING_CLUSTER) go test ./test/e2e -v -ginkgo.v -tags=e2e -timeout=30m
+	USE_EXISTING_CLUSTER=$(USE_EXISTING_CLUSTER) IMG=$(IMG) NAVIGATOR_IMG=$(NAVIGATOR_DEV_IMG) go test ./test/e2e -v -ginkgo.v -tags=e2e -timeout=30m
 
 .PHONY: test-e2e-operator
 test-e2e-operator: manifests generate fmt vet ## Run operator e2e tests (excludes navigator tests).
