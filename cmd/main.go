@@ -25,6 +25,7 @@ import (
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	certmanagerv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
 	egv1alpha1 "github.com/envoyproxy/gateway/api/v1alpha1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -42,6 +43,9 @@ import (
 	"github.com/nebari-dev/nebari-operator/internal/controller"
 	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/auth"
 	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/auth/providers"
+	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/core"
+	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/routing"
+	tlsreconciler "github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/tls"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/constants"
 	// +kubebuilder:scaffold:imports
 )
@@ -57,6 +61,7 @@ func init() {
 	utilruntime.Must(appsv1.AddToScheme(scheme))
 	utilruntime.Must(gatewayapiv1.Install(scheme))
 	utilruntime.Must(egv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(certmanagerv1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -226,10 +231,43 @@ func main() {
 		Providers: oidcProviders,
 	}
 
+	// Load TLS configuration
+	tlsConfig := config.LoadTLSConfig()
+
+	// Initialize TLS reconciler if ClusterIssuer is configured
+	var tlsReconciler *tlsreconciler.TLSReconciler
+	if tlsConfig.ClusterIssuerName != "" {
+		tlsReconciler = &tlsreconciler.TLSReconciler{
+			Client:            mgr.GetClient(),
+			Scheme:            mgr.GetScheme(),
+			Recorder:          mgr.GetEventRecorderFor("nebariapp-tls"),
+			ClusterIssuerName: tlsConfig.ClusterIssuerName,
+		}
+		setupLog.Info("TLS reconciler initialized", "clusterIssuer", tlsConfig.ClusterIssuerName)
+	} else {
+		setupLog.Info("TLS reconciler disabled - TLS_CLUSTER_ISSUER_NAME not set")
+	}
+
+	// Initialize core and routing reconcilers
+	coreReconciler := &core.CoreReconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("nebariapp-core"),
+	}
+	routingReconciler := &routing.RoutingReconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("nebariapp-routing"),
+	}
+
 	if err := (&controller.NebariAppReconciler{
-		Client:         mgr.GetClient(),
-		Scheme:         mgr.GetScheme(),
-		AuthReconciler: authReconciler,
+		Client:            mgr.GetClient(),
+		Scheme:            mgr.GetScheme(),
+		Recorder:          mgr.GetEventRecorderFor("nebariapp-controller"),
+		CoreReconciler:    coreReconciler,
+		TLSReconciler:     tlsReconciler,
+		RoutingReconciler: routingReconciler,
+		AuthReconciler:    authReconciler,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "NebariApp")
 		os.Exit(1)

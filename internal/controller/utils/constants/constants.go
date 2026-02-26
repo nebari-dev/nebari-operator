@@ -48,6 +48,9 @@ const (
 	// CertificateSuffix is appended to NebariApp name for Certificate resources
 	CertificateSuffix = "cert"
 
+	// CertificateSecretSuffix is appended to NebariApp name for TLS secret resources
+	CertificateSecretSuffix = "tls"
+
 	// ClientSecretSuffix is appended to NebariApp name for OIDC client secret resources
 	ClientSecretSuffix = "oidc-client"
 )

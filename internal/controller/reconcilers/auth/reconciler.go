@@ -129,7 +129,8 @@ func (r *AuthReconciler) ReconcileAuth(ctx context.Context, nebariApp *appsv1.Ne
 		logger.Info("enforceAtGateway disabled, skipping SecurityPolicy creation")
 		// Delete existing SecurityPolicy if transitioning from enforceAtGateway=true to false
 		if err := r.deleteSecurityPolicyIfExists(ctx, nebariApp); err != nil {
-			logger.Error(err, "Failed to delete existing SecurityPolicy")
+			conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionFalse,
+				"SecurityPolicyCleanupFailed", fmt.Sprintf("Failed to delete existing SecurityPolicy: %v", err))
 			return err
 		}
 	}
