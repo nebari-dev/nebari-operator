@@ -240,12 +240,14 @@ dev-webapi: ## Build webapi, load into Kind, and deploy for local testing.
 	$(CONTAINER_TOOL) build -f Dockerfile.webapi -t $(WEBAPI_DEV_IMG) .
 	@echo "Loading image into Kind cluster '$(KIND_CLUSTER)'..."
 	kind load docker-image $(WEBAPI_DEV_IMG) --name $(KIND_CLUSTER)
+	@echo "Rendering webapi manifests (no auth for local dev)..."
+	$(MAKE) render-webapi WEBAPI_IMG=
 	@echo "Deploying webapi..."
 	kubectl create namespace nebari-system --dry-run=client -o yaml | kubectl apply -f -
-	kubectl apply -k deploy/webapi/
+	kubectl apply -f deploy/webapi/manifest.yaml
 	kubectl set image deployment/webapi api=$(WEBAPI_DEV_IMG) -n nebari-system
 	kubectl patch deployment webapi -n nebari-system --type=json \
-		-p='[{"op":"replace","path":"/spec/template/spec/containers/0/imagePullPolicy","value":"Never"},{"op":"replace","path":"/spec/template/spec/containers/0/env/3/value","value":"false"}]'
+		-p='[{"op":"replace","path":"/spec/template/spec/containers/0/imagePullPolicy","value":"Never"}]'
 	kubectl rollout status deployment/webapi -n nebari-system --timeout=60s
 	@echo ""
 	@echo "✅ WebAPI deployed. Port-forward with:"
