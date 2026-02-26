@@ -76,11 +76,17 @@ spec:
                       {{- else }}
                       {}
                       {{- end }}
+                  volumeMounts:
+                      - name: pins-data
+                        mountPath: /data
             securityContext:
                 {{- if .Values.navigator.podSecurityContext }}
                 {{- toYaml .Values.navigator.podSecurityContext | nindent 14 }}
                 {{- else }}
                 {}
                 {{- end }}
+            volumes:
+                - name: pins-data
+                  emptyDir: {}
             terminationGracePeriodSeconds: 10
 {{- end }}
