@@ -196,24 +196,33 @@ jobs:
           ./scripts/services/keycloak/setup.sh
           cd ..
 
+      - name: Install Helm
+        run: |
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
       - name: Run operator E2E tests
         env:
           USE_EXISTING_CLUSTER: "true"
           CLUSTER_NAME: test-cluster
           SKIP_DOCKER_BUILD: "true"
+          IMG: quay.io/nebari/nebari-operator:v0.0.1
         run: |
           go mod tidy
           make test-e2e-operator
 
-      - name: Install Helm
+      - name: Wait for operator namespace cleanup
         run: |
-          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          echo "Waiting for nebari-operator-system namespace to fully terminate..."
+          kubectl wait --for=delete namespace/nebari-operator-system --timeout=5m || \
+            echo "Namespace already absent or deletion complete"
 
       - name: Run navigator E2E tests
         env:
           USE_EXISTING_CLUSTER: "true"
           CLUSTER_NAME: test-cluster
           SKIP_DOCKER_BUILD: "true"
+          IMG: quay.io/nebari/nebari-operator:v0.0.1
+          NAVIGATOR_IMG: quay.io/nebari/navigator:latest
         run: |
           make test-e2e-navigator
 

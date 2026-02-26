@@ -61,7 +61,7 @@ var _ = Describe("NebariApp Validation", Ordered, func() {
 			cmd = exec.Command("kubectl", "get", "namespace", "nebari-operator-system")
 			_, err = utils.Run(cmd)
 			return err
-		}, MediumTimeout, PollInterval).Should(HaveOccurred(),
+		}, VeryLongTimeout, PollInterval).Should(HaveOccurred(),
 			"nebari-operator-system should be absent before deploying")
 
 		By("deploying the controller-manager")
