@@ -121,13 +121,10 @@ render-navigator: ## Render navigator Helm templates to deploy/navigator/manifes
 			--set navigator.image.tag=$$_nav_tag \
 			--set navigator.image.pullPolicy=IfNotPresent \
 			--set-json 'navigator.env=[{"name":"ENABLE_AUTH","value":"true"},{"name":"KEYCLOAK_URL","value":"http://keycloak-keycloakx-http.keycloak.svc.cluster.local/auth"},{"name":"KEYCLOAK_REALM","value":"nebari"}]' \
-			--set navigator.nebariApp.enable=true \
-			--set navigator.nebariApp.hostname=navigator.nebari.local \
 			--show-only templates/navigator/deployment.yaml \
 			--show-only templates/navigator/service.yaml \
 			--show-only templates/navigator/serviceaccount.yaml \
 			--show-only templates/navigator/rbac.yaml \
-			--show-only templates/navigator/nebariapp.yaml \
 			> deploy/navigator/manifest.yaml; \
 	else \
 		helm template nebari-operator dist/chart \

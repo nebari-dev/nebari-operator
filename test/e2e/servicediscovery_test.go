@@ -102,15 +102,6 @@ var _ = Describe("Service Discovery API", Ordered, func() {
 		_, err = utils.Run(rollout)
 		Expect(err).NotTo(HaveOccurred(), "navigator deployment should become ready")
 
-		By("Ensuring navigator NebariApp is created")
-		Eventually(func() error {
-			var app appsv1.NebariApp
-			return k8sClient.Get(ctx, types.NamespacedName{
-				Name:      "navigator",
-				Namespace: namespace,
-			}, &app)
-		}, 2*time.Minute, 5*time.Second).Should(Succeed(), "navigator NebariApp should exist")
-
 		By("Acquiring JWT token from Keycloak for authenticated service discovery tests")
 		keycloakPFCmd = exec.Command("kubectl", "port-forward",
 			"-n", "keycloak", "svc/keycloak-keycloakx-http",
