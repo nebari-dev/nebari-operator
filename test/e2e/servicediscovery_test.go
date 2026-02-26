@@ -180,9 +180,9 @@ var _ = Describe("Service Discovery API", Ordered, func() {
 			pfCmd := exec.Command("kubectl", "port-forward",
 				"-n", namespace, "svc/navigator",
 				"18080:8080")
-			Err := pf.Start()
+			Err := pfCmd.Start()
 			Expect(Err).NotTo(HaveOccurred(), "port-forward should start")
-			defer func() { _ = pf.Process.Kill() }()
+			defer func() { _ = pfCmd.Process.Kill() }()
 
 			// Wait for port-forward to come up
 			Eventually(func() error {
