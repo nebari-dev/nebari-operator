@@ -39,6 +39,7 @@ dist/
 
 # But keep the helm chart in git
 !dist/chart/
+!dist/chart/**
 Dockerfile.cross
 
 # MacOS files

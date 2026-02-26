@@ -1,0 +1,31 @@
+{{- if and .Values.serviceDiscovery.enable .Values.serviceDiscovery.nebariApp.enable }}
+apiVersion: reconcilers.nebari.dev/v1
+kind: NebariApp
+metadata:
+    labels:
+        app.kubernetes.io/managed-by: {{ .Release.Service }}
+        app.kubernetes.io/name: {{ include "nebari-operator.name" . }}
+        helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: service-discovery
+    name: {{ include "nebari-operator.resourceName" (dict "suffix" "service-discovery" "context" $) }}
+    namespace: {{ .Release.Namespace }}
+spec:
+    hostname: {{ .Values.serviceDiscovery.nebariApp.hostname | quote }}
+    service:
+        name: {{ include "nebari-operator.resourceName" (dict "suffix" "service-discovery" "context" $) }}
+        port: {{ .Values.serviceDiscovery.service.port }}
+    routing:
+        tls:
+            enabled: true
+    auth:
+        enabled: false
+    landingPage:
+        enabled: true
+        displayName: "Nebari Portal"
+        description: "Central hub for all Nebari services"
+        icon: "dashboard"
+        category: "Platform"
+        priority: 1
+        visibility: "public"
+{{- end }}

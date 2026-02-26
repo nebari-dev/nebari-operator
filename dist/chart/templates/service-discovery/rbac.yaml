@@ -1,0 +1,40 @@
+{{- if .Values.serviceDiscovery.enable }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+    labels:
+        app.kubernetes.io/managed-by: {{ .Release.Service }}
+        app.kubernetes.io/name: {{ include "nebari-operator.name" . }}
+        helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: service-discovery
+    name: {{ include "nebari-operator.resourceName" (dict "suffix" "service-discovery-reader" "context" $) }}
+rules:
+    - apiGroups:
+          - reconcilers.nebari.dev
+      resources:
+          - nebariapps
+      verbs:
+          - get
+          - list
+          - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+    labels:
+        app.kubernetes.io/managed-by: {{ .Release.Service }}
+        app.kubernetes.io/name: {{ include "nebari-operator.name" . }}
+        helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: service-discovery
+    name: {{ include "nebari-operator.resourceName" (dict "suffix" "service-discovery-reader" "context" $) }}
+roleRef:
+    apiGroup: rbac.authorization.k8s.io
+    kind: ClusterRole
+    name: {{ include "nebari-operator.resourceName" (dict "suffix" "service-discovery-reader" "context" $) }}
+subjects:
+    - kind: ServiceAccount
+      name: {{ include "nebari-operator.resourceName" (dict "suffix" "service-discovery" "context" $) }}
+      namespace: {{ .Release.Namespace }}
+{{- end }}

@@ -1,0 +1,86 @@
+{{- if .Values.serviceDiscovery.enable }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+    labels:
+        app.kubernetes.io/managed-by: {{ .Release.Service }}
+        app.kubernetes.io/name: {{ include "nebari-operator.name" . }}
+        helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: service-discovery
+    name: {{ include "nebari-operator.resourceName" (dict "suffix" "service-discovery" "context" $) }}
+    namespace: {{ .Release.Namespace }}
+spec:
+    replicas: {{ .Values.serviceDiscovery.replicas }}
+    selector:
+        matchLabels:
+            app.kubernetes.io/name: {{ include "nebari-operator.name" . }}
+            app.kubernetes.io/component: service-discovery
+    template:
+        metadata:
+            labels:
+                app.kubernetes.io/name: {{ include "nebari-operator.name" . }}
+                helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+                app.kubernetes.io/instance: {{ .Release.Name }}
+                app.kubernetes.io/managed-by: {{ .Release.Service }}
+                app.kubernetes.io/component: service-discovery
+        spec:
+            {{- with .Values.serviceDiscovery.imagePullSecrets }}
+            imagePullSecrets: {{ toYaml . | nindent 12 }}
+            {{- end }}
+            {{- with .Values.serviceDiscovery.tolerations }}
+            tolerations: {{ toYaml . | nindent 12 }}
+            {{- end }}
+            {{- with .Values.serviceDiscovery.affinity }}
+            affinity: {{ toYaml . | nindent 12 }}
+            {{- end }}
+            {{- with .Values.serviceDiscovery.nodeSelector }}
+            nodeSelector: {{ toYaml . | nindent 12 }}
+            {{- end }}
+            serviceAccountName: {{ include "nebari-operator.resourceName" (dict "suffix" "service-discovery" "context" $) }}
+            containers:
+                - name: api
+                  image: "{{ .Values.serviceDiscovery.image.repository }}:{{ .Values.serviceDiscovery.image.tag }}"
+                  imagePullPolicy: {{ .Values.serviceDiscovery.image.pullPolicy }}
+                  ports:
+                      - containerPort: 8080
+                        name: http
+                        protocol: TCP
+                  env:
+                      {{- if .Values.serviceDiscovery.env }}
+                      {{- toYaml .Values.serviceDiscovery.env | nindent 20 }}
+                      {{- else }}
+                      []
+                      {{- end }}
+                  livenessProbe:
+                      httpGet:
+                          path: /api/v1/health
+                          port: 8080
+                      initialDelaySeconds: 10
+                      periodSeconds: 30
+                  readinessProbe:
+                      httpGet:
+                          path: /api/v1/health
+                          port: 8080
+                      initialDelaySeconds: 5
+                      periodSeconds: 10
+                  resources:
+                      {{- if .Values.serviceDiscovery.resources }}
+                      {{- toYaml .Values.serviceDiscovery.resources | nindent 20 }}
+                      {{- else }}
+                      {}
+                      {{- end }}
+                  securityContext:
+                      {{- if .Values.serviceDiscovery.securityContext }}
+                      {{- toYaml .Values.serviceDiscovery.securityContext | nindent 20 }}
+                      {{- else }}
+                      {}
+                      {{- end }}
+            securityContext:
+                {{- if .Values.serviceDiscovery.podSecurityContext }}
+                {{- toYaml .Values.serviceDiscovery.podSecurityContext | nindent 14 }}
+                {{- else }}
+                {}
+                {{- end }}
+            terminationGracePeriodSeconds: 10
+{{- end }}

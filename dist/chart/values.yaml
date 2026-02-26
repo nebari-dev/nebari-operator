@@ -10,7 +10,7 @@
 ##
 manager:
   replicas: 1
-  
+
   image:
     repository: controller
     tag: latest
@@ -110,4 +110,86 @@ certManager:
 ##
 prometheus:
   enable: false
+
+## Service Discovery API — the landing-page backend.
+## When enabled, deploys the service-discovery binary alongside the operator
+## so users get a single Helm release for the full platform.
+##
+serviceDiscovery:
+  # Set to true to deploy the service-discovery API.
+  enable: false
+
+  replicas: 1
+
+  image:
+    repository: quay.io/nebari/service-discovery-api
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  ## Environment variables forwarded to the container.
+  ## KEYCLOAK_URL, KEYCLOAK_REALM, PORT, ENABLE_AUTH and HEALTH_INTERVAL are
+  ## the recognised flags; add extra entries freely.
+  ##
+  env:
+    - name: KEYCLOAK_URL
+      value: "https://keycloak.nebari.example.com"
+    - name: KEYCLOAK_REALM
+      value: "nebari"
+    - name: PORT
+      value: "8080"
+    - name: ENABLE_AUTH
+      value: "true"
+    - name: HEALTH_INTERVAL
+      value: "30"
+
+  ## Image pull secrets
+  ##
+  imagePullSecrets: []
+
+  ## Resource limits and requests
+  ##
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  ## Pod-level security settings
+  ##
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    seccompProfile:
+      type: RuntimeDefault
+
+  ## Container-level security settings
+  ##
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+
+  ## Kubernetes Service configuration
+  ##
+  service:
+    type: ClusterIP
+    port: 8080
+
+  ## NebariApp CR that registers the landing page with the operator.
+  ## The operator must be running for this resource to be accepted.
+  ##
+  nebariApp:
+    # Create the NebariApp registration for the landing page itself.
+    enable: true
+    hostname: "service-discovery.nebari.example.com"
+
+  ## Pod affinity, node selector and tolerations
+  ##
+  affinity: {}
+  nodeSelector: {}
+  tolerations: []
 
