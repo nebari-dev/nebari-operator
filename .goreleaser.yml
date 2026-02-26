@@ -35,9 +35,9 @@ builds:
     flags:
       - -trimpath
 
-  - id: navigator
-    main: ./cmd/navigator
-    binary: navigator
+  - id: webapi
+    main: ./cmd/webapi
+    binary: webapi
     env:
       - CGO_ENABLED=0
     goos:

@@ -51,21 +51,21 @@ Dynamically calculates safe truncation to ensure total name length <= 63 chars.
 
 {{/*
 Navigator component name.
-If navigator.nameOverride is set use it directly (useful for local dev / E2E rendering
+If webapi.nameOverride is set use it directly (useful for local dev / E2E rendering
 where simple, predictable resource names are preferred).
-Otherwise falls back to <fullname>-navigator.
+Otherwise falls back to <fullname>-webapi.
 */}}
-{{- define "nebari-operator.navigatorName" -}}
-{{- if and .Values.navigator .Values.navigator.nameOverride }}
-{{- .Values.navigator.nameOverride | trunc 63 | trimSuffix "-" }}
+{{- define "nebari-operator.webapiName" -}}
+{{- if and .Values.webapi .Values.webapi.nameOverride }}
+{{- .Values.webapi.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- else }}
-{{- printf "%s-navigator" (include "nebari-operator.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- printf "%s-webapi" (include "nebari-operator.fullname" .) | trunc 63 | trimSuffix "-" }}
 {{- end }}
 {{- end }}
 
 {{/*
 Navigator RBAC reader role/binding name.
 */}}
-{{- define "nebari-operator.navigatorReaderName" -}}
-{{- printf "%s-reader" (include "nebari-operator.navigatorName" .) | trunc 63 | trimSuffix "-" }}
+{{- define "nebari-operator.webapiReaderName" -}}
+{{- printf "%s-reader" (include "nebari-operator.webapiName" .) | trunc 63 | trimSuffix "-" }}
 {{- end }}

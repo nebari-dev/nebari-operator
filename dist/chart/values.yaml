@@ -112,11 +112,11 @@ prometheus:
   enable: false
 
 ## Navigator — the Nebari landing-page and service-discovery backend.
-## When enabled, deploys the navigator binary alongside the operator
+## When enabled, deploys the webapi binary alongside the operator
 ## so users get a single Helm release for the full platform.
 ##
-navigator:
-  # Set to true to deploy the navigator.
+webapi:
+  # Set to true to deploy the webapi.
   enable: false
 
   # Override the resource names (deployment, service, serviceaccount, rbac) produced
@@ -127,7 +127,7 @@ navigator:
   replicas: 1
 
   image:
-    repository: quay.io/nebari/navigator
+    repository: quay.io/nebari/nebari-webapi
     tag: latest
     pullPolicy: IfNotPresent
 
@@ -190,7 +190,7 @@ navigator:
   nebariApp:
     # Create the NebariApp registration for the landing page itself.
     enable: true
-    hostname: "navigator.nebari.example.com"
+    hostname: "webapi.nebari.example.com"
 
   ## Pod affinity, node selector and tolerations
   ##

@@ -123,7 +123,7 @@ log_success "Roles assigned"
 # Keycloak 26+ uses "lightweight access tokens" by default: access tokens carry only
 # minimal session claims (jti, iss, exp, azp, sid, scope).  User-profile claims such
 # as preferred_username and sub only appear in the id_token and /userinfo endpoint.
-# To include those claims in the bearer access token (required by the navigator's JWT
+# To include those claims in the bearer access token (required by the webapi's JWT
 # validator today), we must explicitly create per-client protocol mappers on admin-cli
 # in the nebari realm.  The profile scope already has the mappers for the id_token
 # path; we add matching ones that explicitly target the access token.

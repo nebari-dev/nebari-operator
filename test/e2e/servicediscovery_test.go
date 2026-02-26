@@ -77,7 +77,7 @@ var _ = Describe("Service Discovery API", Ordered, func() {
 			g.Expect(output).To(Equal("1"))
 		}, 2*time.Minute, time.Second).Should(Succeed())
 
-		By("Deploying the navigator manifests")
+		By("Deploying the webapi manifests")
 		cmd = exec.Command("kubectl", "create", "namespace", namespace, "--dry-run=client", "-o", "yaml")
 		nsYaml, err := utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to generate namespace YAML")
@@ -86,20 +86,20 @@ var _ = Describe("Service Discovery API", Ordered, func() {
 		_, err = utils.Run(applyNs)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create namespace %s", namespace)
 
-		By("Rendering navigator manifests from Helm chart")
-		cmd = exec.Command("make", "render-navigator")
+		By("Rendering webapi manifests from Helm chart")
+		cmd = exec.Command("make", "render-webapi")
 		_, err = utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to render navigator manifests")
+		Expect(err).NotTo(HaveOccurred(), "Failed to render webapi manifests")
 
-		cmd = exec.Command("kubectl", "apply", "-f", "deploy/navigator/manifest.yaml")
+		cmd = exec.Command("kubectl", "apply", "-f", "deploy/webapi/manifest.yaml")
 		_, err = utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to apply navigator manifests")
+		Expect(err).NotTo(HaveOccurred(), "Failed to apply webapi manifests")
 
-		By("Waiting for navigator deployment to be ready")
-		rollout := exec.Command("kubectl", "rollout", "status", "deployment/navigator",
+		By("Waiting for webapi deployment to be ready")
+		rollout := exec.Command("kubectl", "rollout", "status", "deployment/webapi",
 			"-n", namespace, "--timeout=2m")
 		_, err = utils.Run(rollout)
-		Expect(err).NotTo(HaveOccurred(), "navigator deployment should become ready")
+		Expect(err).NotTo(HaveOccurred(), "webapi deployment should become ready")
 
 		By("Starting Keycloak port-forward for auth tests")
 		keycloakPFCmd = exec.Command("kubectl", "port-forward",
@@ -134,11 +134,11 @@ var _ = Describe("Service Discovery API", Ordered, func() {
 			_ = keycloakPFCmd.Process.Kill()
 		}
 
-		By("Removing navigator manifests")
-		cmd := exec.Command("kubectl", "delete", "-f", "deploy/navigator/manifest.yaml", "--ignore-not-found")
+		By("Removing webapi manifests")
+		cmd := exec.Command("kubectl", "delete", "-f", "deploy/webapi/manifest.yaml", "--ignore-not-found")
 		_, _ = utils.Run(cmd)
 
-		By("Deleting navigator namespace")
+		By("Deleting webapi namespace")
 		cmd = exec.Command("kubectl", "delete", "namespace", namespace, "--ignore-not-found", "--timeout=60s")
 		_, _ = utils.Run(cmd)
 
@@ -153,13 +153,13 @@ var _ = Describe("Service Discovery API", Ordered, func() {
 
 	Context("Service Discovery", func() {
 		It("should expose API endpoint", func() {
-			// Get navigator service endpoint
+			// Get webapi service endpoint
 			svc := &corev1.Service{}
 			err := k8sClient.Get(ctx, types.NamespacedName{
-				Name:      "navigator",
+				Name:      "webapi",
 				Namespace: namespace,
 			}, svc)
-			Expect(err).NotTo(HaveOccurred(), "navigator service should exist")
+			Expect(err).NotTo(HaveOccurred(), "webapi service should exist")
 
 			// For Kind cluster, we need to port-forward or use ingress
 			// For now, check service exists
@@ -207,8 +207,8 @@ var _ = Describe("Service Discovery API", Ordered, func() {
 			// The port-forward reaches Keycloak at localhost:18090, but we must set the
 			// Host header to the in-cluster hostname.  Keycloak (Quarkus, no KC_HOSTNAME
 			// configured) derives the token issuer ("iss") from the request's Host header.
-			// The navigator validates iss == KEYCLOAK_URL/realms/REALM, so the issuer
-			// embedded in the token must match the in-cluster address that the navigator uses.
+			// The webapi validates iss == KEYCLOAK_URL/realms/REALM, so the issuer
+			// embedded in the token must match the in-cluster address that the webapi uses.
 			tokenForm := url.Values{
 				"client_id":  {"admin-cli"},
 				"username":   {"admin"},
@@ -232,8 +232,8 @@ var _ = Describe("Service Discovery API", Ordered, func() {
 				AccessToken string `json:"access_token"`
 			}
 			Expect(json.NewDecoder(tokenResp.Body).Decode(&tokenData)).To(Succeed())
-			navigatorToken := tokenData.AccessToken
-			Expect(navigatorToken).NotTo(BeEmpty(), "JWT token must be non-empty")
+			webapiToken := tokenData.AccessToken
+			Expect(webapiToken).NotTo(BeEmpty(), "JWT token must be non-empty")
 
 			priority := 50
 			authApp := &appsv1.NebariApp{
@@ -262,13 +262,13 @@ var _ = Describe("Service Discovery API", Ordered, func() {
 			Expect(k8sClient.Create(ctx, authApp)).To(Succeed())
 			DeferCleanup(func() { _ = k8sClient.Delete(ctx, authApp) })
 
-			By("Port-forwarding to navigator")
+			By("Port-forwarding to webapi")
 			navPF := exec.Command("kubectl", "port-forward",
-				"-n", namespace, "svc/navigator", "18081:8080")
+				"-n", namespace, "svc/webapi", "18081:8080")
 			Expect(navPF.Start()).NotTo(HaveOccurred())
 			defer navPF.Process.Kill()
 
-			By("Waiting for navigator port-forward to be ready")
+			By("Waiting for webapi port-forward to be ready")
 			Eventually(func() error {
 				resp, err := http.Get("http://localhost:18081/api/v1/health")
 				if err != nil {
@@ -296,7 +296,7 @@ var _ = Describe("Service Discovery API", Ordered, func() {
 			By("Calling /api/v1/services with a valid JWT — authenticated services should appear")
 			req, err := http.NewRequest(http.MethodGet, "http://localhost:18081/api/v1/services", nil)
 			Expect(err).NotTo(HaveOccurred())
-			req.Header.Set("Authorization", "Bearer "+navigatorToken)
+			req.Header.Set("Authorization", "Bearer "+webapiToken)
 			authResp, err := http.DefaultClient.Do(req)
 			Expect(err).NotTo(HaveOccurred())
 			defer authResp.Body.Close()
@@ -326,9 +326,9 @@ var _ = Describe("Service Discovery API", Ordered, func() {
 
 	Context("Health Checks", func() {
 		It("should report healthy status", func() {
-			// Start a port-forward to the navigator pod
+			// Start a port-forward to the webapi pod
 			pfCmd := exec.Command("kubectl", "port-forward",
-				"-n", namespace, "svc/navigator",
+				"-n", namespace, "svc/webapi",
 				"18080:8080")
 			Err := pfCmd.Start()
 			Expect(Err).NotTo(HaveOccurred(), "port-forward should start")
@@ -393,7 +393,7 @@ type ServiceListResponse struct {
 	User       *ServiceListUser  `json:"user,omitempty"`
 }
 
-// ServiceListUser mirrors the UserInfo returned by the navigator API
+// ServiceListUser mirrors the UserInfo returned by the webapi API
 type ServiceListUser struct {
 	Authenticated bool     `json:"authenticated"`
 	Username      string   `json:"username,omitempty"`

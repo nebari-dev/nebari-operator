@@ -95,52 +95,52 @@ test-unit-html: test-unit ## Generate HTML coverage report for unit tests.
 
 .PHONY: test-e2e
 test-e2e: manifests generate fmt vet ## Run all e2e tests.
-	USE_EXISTING_CLUSTER=$(USE_EXISTING_CLUSTER) IMG=$(IMG) NAVIGATOR_IMG=$(NAVIGATOR_DEV_IMG) go test ./test/e2e -v -ginkgo.v -tags=e2e -timeout=30m
+	USE_EXISTING_CLUSTER=$(USE_EXISTING_CLUSTER) IMG=$(IMG) WEBAPI_IMG=$(WEBAPI_DEV_IMG) go test ./test/e2e -v -ginkgo.v -tags=e2e -timeout=30m
 
 .PHONY: test-e2e-operator
-test-e2e-operator: manifests generate fmt vet ## Run operator e2e tests (excludes navigator tests).
+test-e2e-operator: manifests generate fmt vet ## Run operator e2e tests (excludes webapi tests).
 	USE_EXISTING_CLUSTER=$(USE_EXISTING_CLUSTER) go test ./test/e2e -v -ginkgo.v -tags=e2e -timeout=30m -ginkgo.skip="Service Discovery API"
 
-.PHONY: render-navigator
-render-navigator: ## Render navigator Helm templates to deploy/navigator/manifest.yaml for local dev and E2E testing.
+.PHONY: render-webapi
+render-webapi: ## Render webapi Helm templates to deploy/webapi/manifest.yaml for local dev and E2E testing.
 	@command -v helm >/dev/null 2>&1 || { echo "helm is required. See https://helm.sh/docs/intro/install/"; exit 1; }
 	@if [ ! -d "dist/chart" ]; then \
 		echo "dist/chart/ not found — running make helm-chart first..."; \
 		$(MAKE) helm-chart; \
 	fi
-	@mkdir -p deploy/navigator
-	@if [ -n "$(NAVIGATOR_IMG)" ]; then \
-		_nav_repo=$$(echo "$(NAVIGATOR_IMG)" | cut -d: -f1); \
-		_nav_tag=$$(echo "$(NAVIGATOR_IMG)" | cut -d: -f2-); \
-		echo "Rendering with custom navigator image: $(NAVIGATOR_IMG) (auth enabled — Keycloak nebari realm)"; \
+	@mkdir -p deploy/webapi
+	@if [ -n "$(WEBAPI_IMG)" ]; then \
+		_nav_repo=$$(echo "$(WEBAPI_IMG)" | cut -d: -f1); \
+		_nav_tag=$$(echo "$(WEBAPI_IMG)" | cut -d: -f2-); \
+		echo "Rendering with custom webapi image: $(WEBAPI_IMG) (auth enabled — Keycloak nebari realm)"; \
 		helm template nebari-operator dist/chart \
-			--set navigator.enable=true \
-			--set navigator.nameOverride=navigator \
+			--set webapi.enable=true \
+			--set webapi.nameOverride=webapi \
 			--namespace nebari-system \
-			--set navigator.image.repository=$$_nav_repo \
-			--set navigator.image.tag=$$_nav_tag \
-			--set navigator.image.pullPolicy=IfNotPresent \
-			--set-json 'navigator.env=[{"name":"ENABLE_AUTH","value":"true"},{"name":"KEYCLOAK_URL","value":"http://keycloak-keycloakx-http.keycloak.svc.cluster.local/auth"},{"name":"KEYCLOAK_REALM","value":"nebari"}]' \
-			--show-only templates/navigator/deployment.yaml \
-			--show-only templates/navigator/service.yaml \
-			--show-only templates/navigator/serviceaccount.yaml \
-			--show-only templates/navigator/rbac.yaml \
-			> deploy/navigator/manifest.yaml; \
+			--set webapi.image.repository=$$_nav_repo \
+			--set webapi.image.tag=$$_nav_tag \
+			--set webapi.image.pullPolicy=IfNotPresent \
+			--set-json 'webapi.env=[{"name":"ENABLE_AUTH","value":"true"},{"name":"KEYCLOAK_URL","value":"http://keycloak-keycloakx-http.keycloak.svc.cluster.local/auth"},{"name":"KEYCLOAK_REALM","value":"nebari"}]' \
+			--show-only templates/webapi/deployment.yaml \
+			--show-only templates/webapi/service.yaml \
+			--show-only templates/webapi/serviceaccount.yaml \
+			--show-only templates/webapi/rbac.yaml \
+			> deploy/webapi/manifest.yaml; \
 	else \
 		helm template nebari-operator dist/chart \
-			--set navigator.enable=true \
-			--set navigator.nameOverride=navigator \
+			--set webapi.enable=true \
+			--set webapi.nameOverride=webapi \
 			--namespace nebari-system \
-			--show-only templates/navigator/deployment.yaml \
-			--show-only templates/navigator/service.yaml \
-			--show-only templates/navigator/serviceaccount.yaml \
-			--show-only templates/navigator/rbac.yaml \
-			> deploy/navigator/manifest.yaml; \
+			--show-only templates/webapi/deployment.yaml \
+			--show-only templates/webapi/service.yaml \
+			--show-only templates/webapi/serviceaccount.yaml \
+			--show-only templates/webapi/rbac.yaml \
+			> deploy/webapi/manifest.yaml; \
 	fi
-	@echo "✅ Navigator manifest rendered to deploy/navigator/manifest.yaml"
+	@echo "✅ WebAPI manifest rendered to deploy/webapi/manifest.yaml"
 
-.PHONY: test-e2e-navigator
-test-e2e-navigator: render-navigator ## Run navigator e2e tests only (renders manifests first).
+.PHONY: test-e2e-webapi
+test-e2e-webapi: render-webapi ## Run webapi e2e tests only (renders manifests first).
 	USE_EXISTING_CLUSTER=$(USE_EXISTING_CLUSTER) go test ./test/e2e -v -ginkgo.v -tags=e2e -timeout=15m -ginkgo.focus="Service Discovery API"
 
 .PHONY: test-e2e-parallel
@@ -201,64 +201,64 @@ docker-buildx: ## Build and push docker image for the manager for cross-platform
 	- $(CONTAINER_TOOL) buildx rm nebari-operator-builder
 	rm Dockerfile.cross
 
-##@ Navigator API
+##@ WebAPI
 
-NAVIGATOR_IMG ?= quay.io/nebari/navigator:latest
+WEBAPI_IMG ?= quay.io/nebari/nebari-webapi:latest
 
-.PHONY: build-navigator
-build-navigator: ## Build navigator binary
-	go build -o bin/navigator ./cmd/navigator
+.PHONY: build-webapi
+build-webapi: ## Build webapi binary
+	go build -o bin/webapi ./cmd/webapi
 
-.PHONY: docker-build-navigator
-docker-build-navigator: ## Build docker image for navigator
-	$(CONTAINER_TOOL) build -f Dockerfile.navigator -t ${NAVIGATOR_IMG} .
+.PHONY: docker-build-webapi
+docker-build-webapi: ## Build docker image for webapi
+	$(CONTAINER_TOOL) build -f Dockerfile.webapi -t ${WEBAPI_IMG} .
 
-.PHONY: docker-push-navigator
-docker-push-navigator: ## Push docker image for navigator
-	$(CONTAINER_TOOL) push ${NAVIGATOR_IMG}
+.PHONY: docker-push-webapi
+docker-push-webapi: ## Push docker image for webapi
+	$(CONTAINER_TOOL) push ${WEBAPI_IMG}
 
-.PHONY: deploy-navigator
-deploy-navigator: render-navigator ## Render and deploy navigator to cluster.
-	kubectl apply -f deploy/navigator/manifest.yaml
+.PHONY: deploy-webapi
+deploy-webapi: render-webapi ## Render and deploy webapi to cluster.
+	kubectl apply -f deploy/webapi/manifest.yaml
 
-.PHONY: undeploy-navigator
-undeploy-navigator: ## Remove navigator from cluster.
-	@if [ -f "deploy/navigator/manifest.yaml" ]; then \
-		kubectl delete -f deploy/navigator/manifest.yaml --ignore-not-found; \
+.PHONY: undeploy-webapi
+undeploy-webapi: ## Remove webapi from cluster.
+	@if [ -f "deploy/webapi/manifest.yaml" ]; then \
+		kubectl delete -f deploy/webapi/manifest.yaml --ignore-not-found; \
 	else \
-		echo "deploy/navigator/manifest.yaml not found — run make render-navigator first"; \
+		echo "deploy/webapi/manifest.yaml not found — run make render-webapi first"; \
 	fi
 
-# NAVIGATOR_DEV_IMG is the local image tag used for dev/testing
-NAVIGATOR_DEV_IMG ?= navigator:dev
+# WEBAPI_DEV_IMG is the local image tag used for dev/testing
+WEBAPI_DEV_IMG ?= webapi:dev
 # Kind cluster to load the dev image into
 KIND_CLUSTER ?= nebari-operator-dev
 
-.PHONY: dev-navigator
-dev-navigator: ## Build navigator, load into Kind, and deploy for local testing.
-	@echo "Building navigator image $(NAVIGATOR_DEV_IMG)..."
-	$(CONTAINER_TOOL) build -f Dockerfile.navigator -t $(NAVIGATOR_DEV_IMG) .
+.PHONY: dev-webapi
+dev-webapi: ## Build webapi, load into Kind, and deploy for local testing.
+	@echo "Building webapi image $(WEBAPI_DEV_IMG)..."
+	$(CONTAINER_TOOL) build -f Dockerfile.webapi -t $(WEBAPI_DEV_IMG) .
 	@echo "Loading image into Kind cluster '$(KIND_CLUSTER)'..."
-	kind load docker-image $(NAVIGATOR_DEV_IMG) --name $(KIND_CLUSTER)
-	@echo "Deploying navigator..."
+	kind load docker-image $(WEBAPI_DEV_IMG) --name $(KIND_CLUSTER)
+	@echo "Deploying webapi..."
 	kubectl create namespace nebari-system --dry-run=client -o yaml | kubectl apply -f -
-	kubectl apply -k deploy/navigator/
-	kubectl set image deployment/navigator api=$(NAVIGATOR_DEV_IMG) -n nebari-system
-	kubectl patch deployment navigator -n nebari-system --type=json \
+	kubectl apply -k deploy/webapi/
+	kubectl set image deployment/webapi api=$(WEBAPI_DEV_IMG) -n nebari-system
+	kubectl patch deployment webapi -n nebari-system --type=json \
 		-p='[{"op":"replace","path":"/spec/template/spec/containers/0/imagePullPolicy","value":"Never"},{"op":"replace","path":"/spec/template/spec/containers/0/env/3/value","value":"false"}]'
-	kubectl rollout status deployment/navigator -n nebari-system --timeout=60s
+	kubectl rollout status deployment/webapi -n nebari-system --timeout=60s
 	@echo ""
-	@echo "✅ Navigator deployed. Port-forward with:"
-	@echo "  kubectl port-forward -n nebari-system svc/navigator 8080:8080"
+	@echo "✅ WebAPI deployed. Port-forward with:"
+	@echo "  kubectl port-forward -n nebari-system svc/webapi 8080:8080"
 	@echo ""
 	@echo "Then test the API:"
 	@echo "  curl http://localhost:8080/api/v1/health"
 	@echo "  curl http://localhost:8080/api/v1/services"
 	@echo "  curl http://localhost:8080/api/v1/categories"
 
-.PHONY: navigator-pf
-navigator-pf: ## Port-forward the navigator to localhost:8080
-	kubectl port-forward -n nebari-system svc/navigator 8080:8080
+.PHONY: webapi-pf
+webapi-pf: ## Port-forward the webapi to localhost:8080
+	kubectl port-forward -n nebari-system svc/webapi 8080:8080
 
 ##@ Installer
 
