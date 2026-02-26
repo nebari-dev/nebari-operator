@@ -67,7 +67,7 @@ var _ = Describe("Service Discovery API", Ordered, func() {
 			g.Expect(output).To(Equal("1"))
 		}, 2*time.Minute, time.Second).Should(Succeed())
 
-		By("Deploying the service-discovery-api manifests")
+		By("Deploying the navigator manifests")
 		cmd = exec.Command("kubectl", "create", "namespace", namespace, "--dry-run=client", "-o", "yaml")
 		nsYaml, err := utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to generate namespace YAML")
@@ -76,29 +76,29 @@ var _ = Describe("Service Discovery API", Ordered, func() {
 		_, err = utils.Run(applyNs)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create namespace %s", namespace)
 
-		cmd = exec.Command("kubectl", "apply", "-k", "deploy/service-discovery/")
+		cmd = exec.Command("kubectl", "apply", "-f", "deploy/navigator/manifest.yaml")
 		_, err = utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to apply landing page manifests")
+		Expect(err).NotTo(HaveOccurred(), "Failed to apply navigator manifests")
 
-		By("Disabling auth on service-discovery deployment (no Keycloak in test cluster)")
-		patchAuth := exec.Command("kubectl", "set", "env", "deployment/service-discovery",
+		By("Disabling auth on navigator deployment (no Keycloak in test cluster)")
+		patchAuth := exec.Command("kubectl", "set", "env", "deployment/navigator",
 			"-n", namespace, "ENABLE_AUTH=false")
 		_, _ = utils.Run(patchAuth)
 
-		By("Waiting for service-discovery deployment to be ready")
-		rollout := exec.Command("kubectl", "rollout", "status", "deployment/service-discovery",
+		By("Waiting for navigator deployment to be ready")
+		rollout := exec.Command("kubectl", "rollout", "status", "deployment/navigator",
 			"-n", namespace, "--timeout=2m")
 		_, err = utils.Run(rollout)
-		Expect(err).NotTo(HaveOccurred(), "service-discovery deployment should become ready")
+		Expect(err).NotTo(HaveOccurred(), "navigator deployment should become ready")
 
-		By("Ensuring service-discovery NebariApp is created")
+		By("Ensuring navigator NebariApp is created")
 		Eventually(func() error {
 			var app appsv1.NebariApp
 			return k8sClient.Get(ctx, types.NamespacedName{
-				Name:      "service-discovery",
+				Name:      "navigator",
 				Namespace: namespace,
 			}, &app)
-		}, 2*time.Minute, 5*time.Second).Should(Succeed(), "service-discovery NebariApp should exist")
+		}, 2*time.Minute, 5*time.Second).Should(Succeed(), "navigator NebariApp should exist")
 	})
 
 	AfterAll(func() {
@@ -111,20 +111,20 @@ var _ = Describe("Service Discovery API", Ordered, func() {
 		}
 		_ = k8sClient.Delete(ctx, app)
 
-		By("Removing service-discovery-api manifests")
-		cmd := exec.Command("kubectl", "delete", "-k", "deploy/service-discovery/", "--ignore-not-found")
+		By("Removing navigator manifests")
+		cmd := exec.Command("kubectl", "delete", "-f", "deploy/navigator/manifest.yaml", "--ignore-not-found")
 		_, _ = utils.Run(cmd)
 	})
 
 	Context("Service Discovery", func() {
 		It("should expose API endpoint", func() {
-			// Get service-discovery service endpoint
+			// Get navigator service endpoint
 			svc := &corev1.Service{}
 			err := k8sClient.Get(ctx, types.NamespacedName{
-				Name:      "service-discovery",
+				Name:      "navigator",
 				Namespace: namespace,
 			}, svc)
-			Expect(err).NotTo(HaveOccurred(), "service-discovery service should exist")
+			Expect(err).NotTo(HaveOccurred(), "navigator service should exist")
 
 			// For Kind cluster, we need to port-forward or use ingress
 			// For now, check service exists
@@ -176,9 +176,9 @@ var _ = Describe("Service Discovery API", Ordered, func() {
 
 	Context("Health Checks", func() {
 		It("should report healthy status", func() {
-			// Start a port-forward to the service-discovery pod
-			pf := exec.Command("kubectl", "port-forward",
-				"-n", namespace, "svc/service-discovery",
+			// Start a port-forward to the navigator pod
+			pfCmd := exec.Command("kubectl", "port-forward",
+				"-n", namespace, "svc/navigator",
 				"18080:8080")
 			Err := pf.Start()
 			Expect(Err).NotTo(HaveOccurred(), "port-forward should start")

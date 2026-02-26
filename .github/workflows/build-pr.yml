@@ -205,6 +205,10 @@ jobs:
           go mod tidy
           make test-e2e-operator
 
+      - name: Install Helm
+        run: |
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
       - name: Run navigator E2E tests
         env:
           USE_EXISTING_CLUSTER: "true"

@@ -40,6 +40,10 @@ dist/
 # But keep the helm chart in git
 !dist/chart/
 !dist/chart/**
+
+# Generated deployment manifests (rendered from config/chart-extensions/ via `make render-navigator`)
+# Run `make render-navigator` to regenerate for local dev and E2E testing.
+deploy/navigator/
 Dockerfile.cross
 
 # MacOS files

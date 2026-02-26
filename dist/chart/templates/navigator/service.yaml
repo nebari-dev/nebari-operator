@@ -1,4 +1,4 @@
-{{- if .Values.navigator.enable }}
+{{- if and .Values.navigator .Values.navigator.enable }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -8,7 +8,7 @@ metadata:
         helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: navigator
-    name: {{ include "nebari-operator.resourceName" (dict "suffix" "navigator" "context" $) }}
+    name: {{ include "nebari-operator.navigatorName" . }}
     namespace: {{ .Release.Namespace }}
 spec:
     type: {{ .Values.navigator.service.type }}

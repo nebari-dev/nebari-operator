@@ -119,6 +119,11 @@ navigator:
   # Set to true to deploy the navigator.
   enable: false
 
+  # Override the resource names (deployment, service, serviceaccount, rbac) produced
+  # by the Helm release-scoped naming. Useful for local dev and E2E rendering where
+  # simple, predictable names are preferred. Leave empty for standard Helm behaviour.
+  nameOverride: ""
+
   replicas: 1
 
   image:

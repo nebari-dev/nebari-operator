@@ -1,4 +1,4 @@
-{{- if .Values.navigator.enable }}
+{{- if and .Values.navigator .Values.navigator.enable }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -8,7 +8,7 @@ metadata:
         helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: navigator
-    name: {{ include "nebari-operator.resourceName" (dict "suffix" "navigator" "context" $) }}
+    name: {{ include "nebari-operator.navigatorName" . }}
     namespace: {{ .Release.Namespace }}
 spec:
     replicas: {{ .Values.navigator.replicas }}
@@ -37,7 +37,7 @@ spec:
             {{- with .Values.navigator.nodeSelector }}
             nodeSelector: {{ toYaml . | nindent 12 }}
             {{- end }}
-            serviceAccountName: {{ include "nebari-operator.resourceName" (dict "suffix" "navigator" "context" $) }}
+            serviceAccountName: {{ include "nebari-operator.navigatorName" . }}
             containers:
                 - name: api
                   image: "{{ .Values.navigator.image.repository }}:{{ .Values.navigator.image.tag }}"

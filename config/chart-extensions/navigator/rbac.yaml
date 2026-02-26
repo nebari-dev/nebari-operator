@@ -1,4 +1,4 @@
-{{- if .Values.navigator.enable }}
+{{- if and .Values.navigator .Values.navigator.enable }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -8,7 +8,7 @@ metadata:
         helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: navigator
-    name: {{ include "nebari-operator.resourceName" (dict "suffix" "navigator-reader" "context" $) }}
+    name: {{ include "nebari-operator.navigatorReaderName" . }}
 rules:
     - apiGroups:
           - reconcilers.nebari.dev
@@ -28,13 +28,13 @@ metadata:
         helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: navigator
-    name: {{ include "nebari-operator.resourceName" (dict "suffix" "navigator-reader" "context" $) }}
+    name: {{ include "nebari-operator.navigatorReaderName" . }}
 roleRef:
     apiGroup: rbac.authorization.k8s.io
     kind: ClusterRole
-    name: {{ include "nebari-operator.resourceName" (dict "suffix" "navigator-reader" "context" $) }}
+    name: {{ include "nebari-operator.navigatorReaderName" . }}
 subjects:
     - kind: ServiceAccount
-      name: {{ include "nebari-operator.resourceName" (dict "suffix" "navigator" "context" $) }}
+      name: {{ include "nebari-operator.navigatorName" . }}
       namespace: {{ .Release.Namespace }}
 {{- end }}

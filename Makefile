@@ -101,8 +101,27 @@ test-e2e: manifests generate fmt vet ## Run all e2e tests.
 test-e2e-operator: manifests generate fmt vet ## Run operator e2e tests (excludes navigator tests).
 	USE_EXISTING_CLUSTER=$(USE_EXISTING_CLUSTER) go test ./test/e2e -v -ginkgo.v -tags=e2e -timeout=30m -ginkgo.skip="Service Discovery API"
 
+.PHONY: render-navigator
+render-navigator: ## Render navigator Helm templates to deploy/navigator/manifest.yaml for local dev and E2E testing.
+	@command -v helm >/dev/null 2>&1 || { echo "helm is required. See https://helm.sh/docs/intro/install/"; exit 1; }
+	@if [ ! -d "dist/chart" ]; then \
+		echo "dist/chart/ not found — running make helm-chart first..."; \
+		$(MAKE) helm-chart; \
+	fi
+	@mkdir -p deploy/navigator
+	helm template nebari-operator dist/chart \
+		--set navigator.enable=true \
+		--set navigator.nameOverride=navigator \
+		--namespace nebari-system \
+		--show-only templates/navigator/deployment.yaml \
+		--show-only templates/navigator/service.yaml \
+		--show-only templates/navigator/serviceaccount.yaml \
+		--show-only templates/navigator/rbac.yaml \
+		> deploy/navigator/manifest.yaml
+	@echo "✅ Navigator manifest rendered to deploy/navigator/manifest.yaml"
+
 .PHONY: test-e2e-navigator
-test-e2e-navigator: ## Run navigator e2e tests only.
+test-e2e-navigator: render-navigator ## Run navigator e2e tests only (renders manifests first).
 	USE_EXISTING_CLUSTER=$(USE_EXISTING_CLUSTER) go test ./test/e2e -v -ginkgo.v -tags=e2e -timeout=15m -ginkgo.focus="Service Discovery API"
 
 .PHONY: test-e2e-parallel
@@ -180,12 +199,16 @@ docker-push-navigator: ## Push docker image for navigator
 	$(CONTAINER_TOOL) push ${NAVIGATOR_IMG}
 
 .PHONY: deploy-navigator
-deploy-navigator: ## Deploy navigator to cluster
-	kubectl apply -k deploy/navigator/
+deploy-navigator: render-navigator ## Render and deploy navigator to cluster.
+	kubectl apply -f deploy/navigator/manifest.yaml
 
 .PHONY: undeploy-navigator
-undeploy-navigator: ## Remove navigator from cluster
-	kubectl delete -k deploy/navigator/
+undeploy-navigator: ## Remove navigator from cluster.
+	@if [ -f "deploy/navigator/manifest.yaml" ]; then \
+		kubectl delete -f deploy/navigator/manifest.yaml --ignore-not-found; \
+	else \
+		echo "deploy/navigator/manifest.yaml not found — run make render-navigator first"; \
+	fi
 
 # NAVIGATOR_DEV_IMG is the local image tag used for dev/testing
 NAVIGATOR_DEV_IMG ?= navigator:dev
