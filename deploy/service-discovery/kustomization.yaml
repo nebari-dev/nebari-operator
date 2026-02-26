@@ -12,6 +12,6 @@ resources:
   - nebariapp.yaml
 
 images:
-  - name: landing-page
-    newName: ghcr.io/nebari-dev/nebari-landing-page
+  - name: service-discovery
+    newName: quay.io/nebari/service-discovery-api
     newTag: latest

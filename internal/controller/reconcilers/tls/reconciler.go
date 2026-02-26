@@ -18,7 +18,6 @@ package tls
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	certmanagerv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
@@ -218,28 +217,9 @@ func (r *TLSReconciler) reconcileCertificate(ctx context.Context, nebariApp *app
 	return nil
 }
 
-// gatewayListenerApply is a minimal Gateway representation for Server-Side Apply.
-// Only the Listeners field is included so that the field manager does not
-// claim ownership of other Gateway spec fields (e.g. GatewayClassName).
-type gatewayListenerApply struct {
-	metav1.TypeMeta   `json:",inline"`
-	metav1.ObjectMeta `json:"metadata"`
-	Spec              gatewayListenerSpec `json:"spec"`
-}
-
-type gatewayListenerSpec struct {
-	Listeners []gatewayv1.Listener `json:"listeners"`
-}
-
-// fieldManagerName returns a unique SSA field manager name for a NebariApp.
-// Each NebariApp owns exactly one listener on the shared Gateway.
-func fieldManagerName(nebariApp *appsv1.NebariApp) string {
-	return fmt.Sprintf("nebari-operator/%s/%s", nebariApp.Namespace, nebariApp.Name)
-}
-
-// reconcileGatewayListener adds or updates a per-app HTTPS listener on the shared Gateway
-// using Server-Side Apply. Each NebariApp uses a unique field manager so that concurrent
-// reconcilers operating on the same Gateway do not conflict with each other.
+// reconcileGatewayListener adds or updates a per-app HTTPS listener on the shared Gateway.
+// It uses a Get→upsert-in-slice→Update pattern so that concurrent reconcilers operating
+// on the same Gateway each own exactly one named listener without rewriting the whole spec.
 func (r *TLSReconciler) reconcileGatewayListener(ctx context.Context, nebariApp *appsv1.NebariApp) error {
 	logger := log.FromContext(ctx)
 
@@ -256,7 +236,7 @@ func (r *TLSReconciler) reconcileGatewayListener(ctx context.Context, nebariApp 
 		Hostname: &hostname,
 		Port:     443,
 		Protocol: gatewayv1.HTTPSProtocolType,
-		TLS: &gatewayv1.ListenerTLSConfig{
+		TLS: &gatewayv1.GatewayTLSConfig{
 			Mode: &tlsMode,
 			CertificateRefs: []gatewayv1.SecretObjectReference{
 				{
@@ -278,51 +258,35 @@ func (r *TLSReconciler) reconcileGatewayListener(ctx context.Context, nebariApp 
 		},
 	}
 
-	// Verify the Gateway exists before applying. SSA Patch would create a
-	// bare Gateway if it doesn't exist, which is not what we want.
+	// Get the existing Gateway. We refuse to create a bare Gateway here —
+	// the Gateway must already exist and be managed by the infrastructure layer.
+	gateway := &gatewayv1.Gateway{}
 	if err := r.Client.Get(ctx, types.NamespacedName{
 		Name:      gatewayName,
 		Namespace: constants.GatewayNamespace,
-	}, &gatewayv1.Gateway{}); err != nil {
+	}, gateway); err != nil {
 		if apierrors.IsNotFound(err) {
 			return fmt.Errorf("gateway %s not found in namespace %s", gatewayName, constants.GatewayNamespace)
 		}
 		return fmt.Errorf("failed to get Gateway: %w", err)
 	}
 
-	// Build the SSA apply configuration with only the listener field.
-	// This avoids claiming ownership of GatewayClassName or other spec fields.
-	applyConfig := gatewayListenerApply{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: gatewayv1.SchemeGroupVersion.String(),
-			Kind:       "Gateway",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      gatewayName,
-			Namespace: constants.GatewayNamespace,
-		},
-		Spec: gatewayListenerSpec{
-			Listeners: []gatewayv1.Listener{listener},
-		},
+	// Upsert the listener: replace in-place if a listener with the same name
+	// already exists, otherwise append. This preserves all other listeners.
+	updated := false
+	for i, l := range gateway.Spec.Listeners {
+		if l.Name == gatewayv1.SectionName(listenerName) {
+			gateway.Spec.Listeners[i] = listener
+			updated = true
+			break
+		}
+	}
+	if !updated {
+		gateway.Spec.Listeners = append(gateway.Spec.Listeners, listener)
 	}
 
-	data, err := json.Marshal(applyConfig)
-	if err != nil {
-		return fmt.Errorf("failed to marshal Gateway apply configuration: %w", err)
-	}
-
-	// Apply the listener patch. The Gateway object is used as the target for
-	// the Patch call; only its identifying fields matter.
-	gateway := &gatewayv1.Gateway{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      gatewayName,
-			Namespace: constants.GatewayNamespace,
-		},
-	}
-
-	if err := r.Client.Patch(ctx, gateway, client.RawPatch(types.ApplyPatchType, data),
-		client.FieldOwner(fieldManagerName(nebariApp)), client.ForceOwnership); err != nil {
-		return fmt.Errorf("failed to apply Gateway listener: %w", err)
+	if err := r.Client.Update(ctx, gateway); err != nil {
+		return fmt.Errorf("failed to update Gateway listener: %w", err)
 	}
 
 	logger.Info("Applied Gateway listener", "listener", listenerName, "gateway", gatewayName)

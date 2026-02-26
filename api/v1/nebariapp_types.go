@@ -278,6 +278,50 @@ type HealthCheckConfig struct {
 	TimeoutSeconds *int `json:"timeoutSeconds,omitempty"`
 }
 
+// ServiceDiscoveryStatus is the service discovery descriptor computed by the
+// controller and written to status. The service-discovery-api reads this field
+// instead of re-deriving it from spec, giving it the controller's authoritative,
+// URL-resolved view of each service.
+type ServiceDiscoveryStatus struct {
+	// Enabled mirrors spec.landingPage.enabled at the time of last reconciliation.
+	Enabled bool `json:"enabled"`
+
+	// DisplayName is the human-readable name shown on the landing page.
+	// +optional
+	DisplayName string `json:"displayName,omitempty"`
+
+	// Description is supplementary text for the service card.
+	// +optional
+	Description string `json:"description,omitempty"`
+
+	// URL is the effective service URL (derived from spec.hostname or
+	// spec.landingPage.externalUrl by the controller).
+	// +optional
+	URL string `json:"url,omitempty"`
+
+	// Icon identifies the service icon.
+	// +optional
+	Icon string `json:"icon,omitempty"`
+
+	// Category groups related services on the landing page.
+	// +optional
+	Category string `json:"category,omitempty"`
+
+	// Priority controls sort order within a category (lower = higher priority).
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=1000
+	// +optional
+	Priority int `json:"priority,omitempty"`
+
+	// Visibility controls who can see this service (public/authenticated/private).
+	// +optional
+	Visibility string `json:"visibility,omitempty"`
+
+	// RequiredGroups lists groups required when visibility is "private".
+	// +optional
+	RequiredGroups []string `json:"requiredGroups,omitempty"`
+}
+
 // NebariAppStatus defines the observed state of NebariApp.
 type NebariAppStatus struct {
 	// For Kubernetes API conventions, see:
@@ -311,6 +355,13 @@ type NebariAppStatus struct {
 	// ClientSecretRef identifies the Secret containing OIDC client credentials.
 	// +optional
 	ClientSecretRef *ResourceReference `json:"clientSecretRef,omitempty"`
+
+	// ServiceDiscovery is the computed service discovery descriptor.
+	// The controller populates this after reconciling spec.landingPage so the
+	// service-discovery-api can consume a pre-validated, URL-resolved view
+	// without re-deriving it from spec.
+	// +optional
+	ServiceDiscovery *ServiceDiscoveryStatus `json:"serviceDiscovery,omitempty"`
 }
 
 // GatewayReference identifies a Gateway resource.

@@ -25,6 +25,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os/exec"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -35,25 +37,57 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
+	"github.com/nebari-dev/nebari-operator/test/utils"
 )
 
-var _ = Describe("Landing Page", Ordered, func() {
+var _ = Describe("Service Discovery API", Ordered, func() {
 	var (
 		ctx         = context.Background()
 		namespace   = "nebari-system"
-		testAppName = "test-landing-app"
+		testAppName = "test-svc-api-app"
 	)
 
 	BeforeAll(func() {
-		By("Ensuring landing page deployment is running")
+		By("Installing NebariApp CRDs")
+		cmd := exec.Command("make", "install")
+		_, err := utils.Run(cmd)
+		Expect(err).NotTo(HaveOccurred(), "Failed to install CRDs")
+
+		By("Deploying the controller-manager")
+		cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", projectImage))
+		_, err = utils.Run(cmd)
+		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
+
+		By("Waiting for controller-manager to be ready")
+		Eventually(func(g Gomega) {
+			cmd := exec.Command("kubectl", "get", "deployment", "nebari-operator-controller-manager",
+				"-n", "nebari-operator-system", "-o", "jsonpath={.status.availableReplicas}")
+			output, err := utils.Run(cmd)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(output).To(Equal("1"))
+		}, 2*time.Minute, time.Second).Should(Succeed())
+
+		By("Deploying the service-discovery-api manifests")
+		cmd = exec.Command("kubectl", "create", "namespace", namespace, "--dry-run=client", "-o", "yaml")
+		nsYaml, err := utils.Run(cmd)
+		Expect(err).NotTo(HaveOccurred(), "Failed to generate namespace YAML")
+		applyNs := exec.Command("kubectl", "apply", "-f", "-")
+		applyNs.Stdin = strings.NewReader(nsYaml)
+		_, err = utils.Run(applyNs)
+		Expect(err).NotTo(HaveOccurred(), "Failed to create namespace %s", namespace)
+
+		cmd = exec.Command("kubectl", "apply", "-k", "deploy/service-discovery/")
+		_, err = utils.Run(cmd)
+		Expect(err).NotTo(HaveOccurred(), "Failed to apply landing page manifests")
+
+		By("Ensuring service-discovery NebariApp is created")
 		Eventually(func() error {
-			var deployment appsv1.NebariApp
-			err := k8sClient.Get(ctx, types.NamespacedName{
-				Name:      "landing-page",
+			var app appsv1.NebariApp
+			return k8sClient.Get(ctx, types.NamespacedName{
+				Name:      "service-discovery",
 				Namespace: namespace,
-			}, &deployment)
-			return err
-		}, 2*time.Minute, 5*time.Second).Should(Succeed(), "Landing page deployment should exist")
+			}, &app)
+		}, 2*time.Minute, 5*time.Second).Should(Succeed(), "service-discovery NebariApp should exist")
 	})
 
 	AfterAll(func() {
@@ -65,17 +99,21 @@ var _ = Describe("Landing Page", Ordered, func() {
 			},
 		}
 		_ = k8sClient.Delete(ctx, app)
+
+		By("Removing service-discovery-api manifests")
+		cmd := exec.Command("kubectl", "delete", "-k", "deploy/service-discovery/", "--ignore-not-found")
+		_, _ = utils.Run(cmd)
 	})
 
 	Context("Service Discovery", func() {
 		It("should expose API endpoint", func() {
-			// Get landing page service endpoint
+			// Get service-discovery service endpoint
 			svc := &corev1.Service{}
 			err := k8sClient.Get(ctx, types.NamespacedName{
-				Name:      "landing-page",
+				Name:      "service-discovery",
 				Namespace: namespace,
 			}, svc)
-			Expect(err).NotTo(HaveOccurred(), "Landing page service should exist")
+			Expect(err).NotTo(HaveOccurred(), "service-discovery service should exist")
 
 			// For Kind cluster, we need to port-forward or use ingress
 			// For now, check service exists
@@ -127,13 +165,40 @@ var _ = Describe("Landing Page", Ordered, func() {
 
 	Context("Health Checks", func() {
 		It("should report healthy status", func() {
-			Skip("Requires port-forwarding or ingress to access /api/v1/health")
+			// Start a port-forward to the service-discovery pod
+			pf := exec.Command("kubectl", "port-forward",
+				"-n", namespace, "svc/service-discovery",
+				"18080:8080")
+			Err := pf.Start()
+			Expect(Err).NotTo(HaveOccurred(), "port-forward should start")
+			defer func() { _ = pf.Process.Kill() }()
+
+			// Wait for port-forward to come up
+			Eventually(func() error {
+				resp, err := http.Get("http://localhost:18080/api/v1/health")
+				if err != nil {
+					return err
+				}
+				defer resp.Body.Close()
+				if resp.StatusCode != http.StatusOK {
+					return fmt.Errorf("unexpected status %d", resp.StatusCode)
+				}
+				return nil
+			}, 30*time.Second, time.Second).Should(Succeed(), "health endpoint should return 200")
+
+			// Verify the response body
+			resp, err := http.Get("http://localhost:18080/api/v1/health")
+			Expect(err).NotTo(HaveOccurred())
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(body)).To(ContainSubstring(`"status"`))
 		})
 	})
 
 	Context("Frontend Serving", func() {
-		It("should serve static frontend files", func() {
-			Skip("Requires port-forwarding or ingress to access frontend")
+		It("should serve the static frontend files", func() {
+			Skip("Requires port-forwarding or ingress setup; covered by unit tests")
 		})
 	})
 })

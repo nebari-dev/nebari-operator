@@ -7,22 +7,22 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
-	"github.com/nebari-dev/nebari-operator/internal/landingpage/api"
-	"github.com/nebari-dev/nebari-operator/internal/landingpage/auth"
-	"github.com/nebari-dev/nebari-operator/internal/landingpage/cache"
-	"github.com/nebari-dev/nebari-operator/internal/landingpage/health"
-	"github.com/nebari-dev/nebari-operator/internal/landingpage/watcher"
+	"github.com/nebari-dev/nebari-operator/internal/servicediscovery/api"
+	"github.com/nebari-dev/nebari-operator/internal/servicediscovery/auth"
+	"github.com/nebari-dev/nebari-operator/internal/servicediscovery/cache"
+	"github.com/nebari-dev/nebari-operator/internal/servicediscovery/health"
+	"github.com/nebari-dev/nebari-operator/internal/servicediscovery/watcher"
+	wshub "github.com/nebari-dev/nebari-operator/internal/servicediscovery/websocket"
 )
 
 var (
@@ -38,20 +38,26 @@ func init() {
 func main() {
 	var (
 		port           int
-		kubeconfig     string
 		keycloakURL    string
 		keycloakRealm  string
 		enableAuth     bool
 		healthInterval int
 	)
 
-	flag.IntVar(&port, "port", 8080, "Port to listen on")
-	flag.StringVar(&kubeconfig, "kubeconfig", "",
-		"Path to kubeconfig file (optional, uses in-cluster config if not provided)")
-	flag.StringVar(&keycloakURL, "keycloak-url", "", "Keycloak base URL (e.g., https://keycloak.example.com)")
-	flag.StringVar(&keycloakRealm, "keycloak-realm", "main", "Keycloak realm name")
-	flag.BoolVar(&enableAuth, "enable-auth", false, "Enable JWT authentication and authorization")
-	flag.IntVar(&healthInterval, "health-interval", 30, "Health check interval in seconds")
+	// Flags fall back to environment variables so the binary works naturally when
+	// deployed as a Kubernetes Pod using env: in the Deployment manifest.
+	// Precedence: CLI flag > environment variable > built-in default.
+	flag.IntVar(&port, "port", envInt("PORT", 8080),
+		"Port to listen on (env: PORT)")
+	// Note: controller-runtime registers --kubeconfig in its own init(); use ctrl.GetConfig() below.
+	flag.StringVar(&keycloakURL, "keycloak-url", os.Getenv("KEYCLOAK_URL"),
+		"Keycloak base URL, e.g. https://keycloak.example.com (env: KEYCLOAK_URL)")
+	flag.StringVar(&keycloakRealm, "keycloak-realm", envStr("KEYCLOAK_REALM", "main"),
+		"Keycloak realm name (env: KEYCLOAK_REALM)")
+	flag.BoolVar(&enableAuth, "enable-auth", envBool("ENABLE_AUTH", false),
+		"Enable JWT authentication and authorization (env: ENABLE_AUTH)")
+	flag.IntVar(&healthInterval, "health-interval", envInt("HEALTH_INTERVAL", 30),
+		"Health check interval in seconds (env: HEALTH_INTERVAL)")
 
 	opts := zap.Options{
 		Development: true,
@@ -67,13 +73,14 @@ func main() {
 		"healthInterval", healthInterval,
 	)
 
-	config, err := getKubeConfig(kubeconfig)
+	config, err := ctrl.GetConfig()
 	if err != nil {
 		setupLog.Error(err, "Failed to get kubeconfig")
 		os.Exit(1)
 	}
 
 	serviceCache := cache.NewServiceCache()
+	hub := wshub.NewHub()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -83,6 +90,7 @@ func main() {
 		setupLog.Error(err, "Failed to create NebariApp watcher")
 		os.Exit(1)
 	}
+	nebariAppWatcher.SetPublisher(hub)
 
 	go func() {
 		if err := nebariAppWatcher.Start(ctx); err != nil {
@@ -117,15 +125,19 @@ func main() {
 	healthChecker := health.NewHealthChecker(serviceCache, time.Duration(healthInterval)*time.Second)
 	go healthChecker.Start(ctx)
 
-	handler := api.NewHandler(serviceCache, jwtValidator, enableAuth)
+	handler := api.NewHandler(serviceCache, jwtValidator, enableAuth, hub)
 
 	mux := handler.Routes()
 
 	server := &http.Server{
-		Addr:         fmt.Sprintf(":%d", port),
-		Handler:      mux,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
+		Addr:        fmt.Sprintf(":%d", port),
+		Handler:     mux,
+		ReadTimeout: 15 * time.Second,
+		// WriteTimeout must be 0 when WebSocket connections are active — a non-zero
+		// value causes the http.Server to cancel upgraded connections after the timeout
+		// fires, disconnecting all WS clients even when the connection is healthy.
+		// Per-frame write deadlines are enforced inside the Hub.Broadcast instead.
+		WriteTimeout: 0,
 		IdleTimeout:  60 * time.Second,
 	}
 
@@ -153,9 +165,37 @@ func main() {
 	setupLog.Info("Server stopped")
 }
 
-func getKubeConfig(kubeconfig string) (*rest.Config, error) {
-	if kubeconfig != "" {
-		return clientcmd.BuildConfigFromFlags("", kubeconfig)
+// envStr returns the value of the named environment variable, or def if unset/empty.
+func envStr(name, def string) string {
+	if v := os.Getenv(name); v != "" {
+		return v
 	}
-	return rest.InClusterConfig()
+	return def
+}
+
+// envInt returns the int value of the named environment variable, or def if unset/invalid.
+func envInt(name string, def int) int {
+	v := os.Getenv(name)
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return def
+	}
+	return n
+}
+
+// envBool returns the bool value of the named environment variable, or def if unset/invalid.
+// Accepts "1", "true", "yes" (case-insensitive) as true.
+func envBool(name string, def bool) bool {
+	v := os.Getenv(name)
+	if v == "" {
+		return def
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return def
+	}
+	return b
 }

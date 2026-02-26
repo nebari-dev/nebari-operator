@@ -9,6 +9,7 @@ on:
       - 'go.mod'
       - 'go.sum'
       - 'Dockerfile'
+      - 'Dockerfile.service-discovery'
       - 'Makefile'
       - '.github/workflows/**'
       - 'test/**'
@@ -123,6 +124,21 @@ jobs:
       - name: Load image to KinD
         run: |
           kind load docker-image quay.io/nebari/nebari-operator:v0.0.1 --name test-cluster
+
+      - name: Build service-discovery-api image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.service-discovery
+          push: false
+          load: true
+          tags: quay.io/nebari/service-discovery-api:latest
+          cache-from: type=gha,scope=svc-api
+          cache-to: type=gha,mode=max,scope=svc-api
+
+      - name: Load service-discovery-api image to KinD
+        run: |
+          kind load docker-image quay.io/nebari/service-discovery-api:latest --name test-cluster
 
       - name: Install MetalLB
         run: |

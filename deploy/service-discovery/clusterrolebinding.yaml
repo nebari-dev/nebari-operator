@@ -1,12 +1,12 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: landing-page-reader
+  name: nebari-service-discovery-reader
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: landing-page-reader
+  name: nebari-service-discovery-reader
 subjects:
   - kind: ServiceAccount
-    name: landing-page
+    name: service-discovery
     namespace: nebari-system

@@ -329,8 +329,8 @@ func TestBuildSecurityPolicySpec(t *testing.T) {
 				if spec.OIDC.Provider.Issuer != "https://keycloak.example.com/realms/test" {
 					t.Errorf("expected issuer https://keycloak.example.com/realms/test, got %s", spec.OIDC.Provider.Issuer)
 				}
-				if *spec.OIDC.ClientID != "test-client" {
-					t.Errorf("expected clientID test-client, got %s", *spec.OIDC.ClientID)
+				if spec.OIDC.ClientID != "test-client" {
+					t.Errorf("expected clientID test-client, got %s", spec.OIDC.ClientID)
 				}
 				if *spec.OIDC.RedirectURL != "https://test.example.com/oauth2/callback" {
 					t.Errorf("expected redirectURL https://test.example.com/oauth2/callback, got %s", *spec.OIDC.RedirectURL)

@@ -249,7 +249,7 @@ func (r *RoutingReconciler) buildBackendRefs(nebariApp *appsv1.NebariApp) []gate
 	// 	weight = *nebariApp.Spec.Service.Weight
 	// }
 
-	port := nebariApp.Spec.Service.Port
+	port := gatewayv1.PortNumber(nebariApp.Spec.Service.Port)
 
 	return []gatewayv1.HTTPBackendRef{
 		{

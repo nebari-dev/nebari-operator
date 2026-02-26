@@ -6,7 +6,7 @@ import (
 	"time"
 
 	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
-	landingcache "github.com/nebari-dev/nebari-operator/internal/landingpage/cache"
+	landingcache "github.com/nebari-dev/nebari-operator/internal/servicediscovery/cache"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
@@ -17,9 +17,15 @@ import (
 
 var log = ctrl.Log.WithName("watcher")
 
+// Publisher receives service change events. *websocket.Hub satisfies this interface.
+type Publisher interface {
+	Publish(eventType string, service *landingcache.ServiceInfo)
+}
+
 // NebariAppWatcher watches NebariApp resources and updates the service cache
 type NebariAppWatcher struct {
 	cache       *landingcache.ServiceCache
+	publisher   Publisher // optional; may be nil
 	kubeCache   cachepkg.Cache
 	client      client.Client
 	syncedCh    chan struct{}
@@ -52,6 +58,12 @@ func NewNebariAppWatcher(config *rest.Config, scheme *runtime.Scheme, serviceCac
 		syncedCh:    make(chan struct{}),
 		cacheSynced: false,
 	}, nil
+}
+
+// SetPublisher attaches an event publisher (e.g. a WebSocket hub) that is
+// notified whenever services are added, updated, or deleted.
+func (w *NebariAppWatcher) SetPublisher(p Publisher) {
+	w.publisher = p
 }
 
 // Start starts watching NebariApp resources
@@ -137,6 +149,9 @@ func (w *NebariAppWatcher) onAdd(obj interface{}) {
 			"displayName", nebariApp.Spec.LandingPage.DisplayName,
 		)
 		w.cache.Add(nebariApp)
+		if w.publisher != nil {
+			w.publisher.Publish("added", w.cache.Get(string(nebariApp.UID)))
+		}
 	}
 }
 
@@ -156,12 +171,19 @@ func (w *NebariAppWatcher) onUpdate(oldObj, newObj interface{}) {
 			"displayName", nebariApp.Spec.LandingPage.DisplayName,
 		)
 		w.cache.Add(nebariApp)
+		if w.publisher != nil {
+			w.publisher.Publish("modified", w.cache.Get(uid))
+		}
 	} else {
 		log.Info("Service removed (landing page disabled)",
 			"name", nebariApp.Name,
 			"namespace", nebariApp.Namespace,
 		)
+		svc := w.cache.Get(uid)
 		w.cache.Remove(uid)
+		if w.publisher != nil && svc != nil {
+			w.publisher.Publish("deleted", svc)
+		}
 	}
 }
 
@@ -177,7 +199,11 @@ func (w *NebariAppWatcher) onDelete(obj interface{}) {
 		"name", nebariApp.Name,
 		"namespace", nebariApp.Namespace,
 	)
+	svc := w.cache.Get(uid)
 	w.cache.Remove(uid)
+	if w.publisher != nil && svc != nil {
+		w.publisher.Publish("deleted", svc)
+	}
 }
 
 // WaitForCacheSync waits for the cache to be synced

@@ -1,13 +1,13 @@
 apiVersion: reconcilers.nebari.dev/v1
 kind: NebariApp
 metadata:
-  name: landing-page
+  name: service-discovery
   namespace: nebari-system
 spec:
-  hostname: landing.nebari.example.com
+  hostname: service-discovery.nebari.example.com
   service:
-    name: landing-page
-    port: 80
+    name: service-discovery
+    port: 8080
   routing:
     tls:
       enabled: true

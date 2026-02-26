@@ -47,25 +47,25 @@ NebariApp CRD → Kubernetes Informer → Service Cache → REST API → Fronten
 
 ```bash
 # Build the landing page image
-docker build -f Dockerfile.landingpage -t ghcr.io/nebari-dev/nebari-landing-page:latest .
+docker build -f Dockerfile.service-discovery -t quay.io/nebari/service-discovery-api:latest .
 
 # Push to registry (or load into Kind)
-docker push ghcr.io/nebari-dev/nebari-landing-page:latest
+docker push quay.io/nebari/service-discovery-api:latest
 # OR for Kind:
-kind load docker-image ghcr.io/nebari-dev/nebari-landing-page:latest --name nebari-operator-dev
+kind load docker-image quay.io/nebari/service-discovery-api:latest --name nebari-operator-dev
 
 # Deploy using kustomize
-kubectl apply -k config/landingpage/
+kubectl apply -k deploy/service-discovery/
 
 # Verify deployment
-kubectl get pods -n nebari-system -l app=landing-page
-kubectl get svc -n nebari-system landing-page
-kubectl get nebariapp -n nebari-system landing-page
+kubectl get pods -n nebari-system -l app=service-discovery
+kubectl get svc -n nebari-system service-discovery
+kubectl get nebariapp -n nebari-system service-discovery
 ```
 
 ### Configuration
 
-Edit [config/landingpage/deployment.yaml](../../config/landingpage/deployment.yaml) to configure:
+Edit [deploy/service-discovery/deployment.yaml](../../deploy/service-discovery/deployment.yaml) to configure:
 
 ```yaml
 env:
@@ -77,19 +77,19 @@ env:
     value: "8080"
   - name: ENABLE_AUTH
     value: "true"                                  # Enable JWT validation
-  - name: LOG_LEVEL
-    value: "info"
+  - name: HEALTH_INTERVAL
+    value: "30"                                    # Health check interval (seconds)
 ```
 
 ### Keycloak Client Setup
 
-Create a Keycloak client for the landing page frontend:
+Create a Keycloak client for the service-discovery-api:
 
 1. Go to Keycloak Admin Console → Clients → Create Client
-2. **Client ID**: `landing-page`
+2. **Client ID**: `service-discovery`
 3. **Client authentication**: Disabled (public client)
-4. **Valid redirect URIs**: `https://landing.nebari.example.com/*`
-5. **Web origins**: `https://landing.nebari.example.com`
+4. **Valid redirect URIs**: `https://service-discovery.nebari.example.com/*`
+5. **Web origins**: `https://service-discovery.nebari.example.com`
 6. **Advanced Settings**:
    - Proof Key for Code Exchange (PKCE): `S256` required
 7. **Client scopes**: Add `groups` scope to access user groups in JWT
@@ -215,12 +215,12 @@ Health check endpoint for the landing page service.
 
 ```bash
 # Run all landing page unit tests
-go test ./internal/landingpage/... -v
+go test ./internal/servicediscovery/... -v
 
 # Run specific package tests
-go test ./internal/landingpage/cache -v
-go test ./internal/landingpage/auth -v
-go test ./internal/landingpage/api -v
+go test ./internal/servicediscovery/cache -v
+go test ./internal/servicediscovery/auth -v
+go test ./internal/servicediscovery/api -v
 ```
 
 Note: Current unit tests are structural placeholders and may require refinement to match exact implementation details.
@@ -239,12 +239,12 @@ go test -v -tags=e2e ./test/e2e -ginkgo.focus="Landing Page"
 
 1. **Deploy landing page**:
    ```bash
-   kubectl apply -k config/landingpage/
+   kubectl apply -k deploy/service-discovery/
    ```
 
 2. **Port-forward to access locally**:
    ```bash
-   kubectl port-forward -n nebari-system svc/landing-page 8080:80
+   kubectl port-forward -n nebari-system svc/service-discovery 8080:8080
    ```
 
 3. **Open browser**:
@@ -282,8 +282,8 @@ go test -v -tags=e2e ./test/e2e -ginkgo.focus="Landing Page"
 ### Services Not Appearing
 1. Check if landing page pod is running:
    ```bash
-   kubectl get pods -n nebari-system -l app=landing-page
-   kubectl logs -n nebari-system -l app=landing-page
+   kubectl get pods -n nebari-system -l app=service-discovery
+   kubectl logs -n nebari-system -l app=service-discovery
    ```
 
 2. Verify NebariApp has `landingPage.enabled: true`
@@ -293,7 +293,7 @@ go test -v -tags=e2e ./test/e2e -ginkgo.focus="Landing Page"
 
 3. Check watcher logs for errors:
    ```bash
-   kubectl logs -n nebari-system -l app=landing-page | grep -i watch
+   kubectl logs -n nebari-system -l app=service-discovery | grep -i watch
    ```
 
 ### Authentication Not Working
@@ -314,8 +314,8 @@ go test -v -tags=e2e ./test/e2e -ginkgo.focus="Landing Page"
 Landing page needs permissions to read NebariApps across all namespaces:
 
 ```bash
-kubectl get clusterrole landing-page-reader -o yaml
-kubectl get clusterrolebinding landing-page-reader -o yaml
+kubectl get clusterrole nebari-service-discovery-reader -o yaml
+kubectl get clusterrolebinding nebari-service-discovery-reader -o yaml
 ```
 
 ## Development
@@ -324,7 +324,7 @@ kubectl get clusterrolebinding landing-page-reader -o yaml
 
 ```bash
 # Run backend locally (requires kubeconfig)
-go run ./cmd/landingpage \
+go run ./cmd/service-discovery \
   --kubeconfig ~/.kube/config \
   --keycloak-url http://localhost:8180 \
   --keycloak-realm nebari \
@@ -340,16 +340,16 @@ go run ./cmd/landingpage \
 
 ```bash
 # Build binary
-go build -o bin/landingpage ./cmd/landingpage
+go build -o bin/service-discovery ./cmd/service-discovery
 
 # Build Docker image
-docker build -f Dockerfile.landingpage -t landing-page:dev .
+docker build -f Dockerfile.service-discovery -t service-discovery-api:dev .
 
 # Run container locally
 docker run -p 8080:8080 \
   -v ~/.kube/config:/kubeconfig \
   -e KUBECONFIG=/kubeconfig \
-  landing-page:dev
+  service-discovery-api:dev
 ```
 
 ## Future Enhancements

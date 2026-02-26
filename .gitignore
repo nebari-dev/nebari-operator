@@ -55,3 +55,10 @@ CLAUDE.md
 
 # Git worktrees
 .worktrees/
+
+# Local dev artefacts
+diff.txt
+landingpage
+bin/service-discovery
+*-coverage.out
+*-coverage.html

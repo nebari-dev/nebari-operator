@@ -3,10 +3,12 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 	"strings"
 
-	"github.com/nebari-dev/nebari-operator/internal/landingpage/auth"
-	"github.com/nebari-dev/nebari-operator/internal/landingpage/cache"
+	"github.com/nebari-dev/nebari-operator/internal/servicediscovery/auth"
+	"github.com/nebari-dev/nebari-operator/internal/servicediscovery/cache"
+	wshub "github.com/nebari-dev/nebari-operator/internal/servicediscovery/websocket"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
@@ -17,14 +19,16 @@ type Handler struct {
 	cache        *cache.ServiceCache
 	jwtValidator *auth.JWTValidator
 	enableAuth   bool
+	hub          *wshub.Hub
 }
 
 // NewHandler creates a new API handler
-func NewHandler(serviceCache *cache.ServiceCache, jwtValidator *auth.JWTValidator, enableAuth bool) *Handler {
+func NewHandler(serviceCache *cache.ServiceCache, jwtValidator *auth.JWTValidator, enableAuth bool, hub *wshub.Hub) *Handler {
 	return &Handler{
 		cache:        serviceCache,
 		jwtValidator: jwtValidator,
 		enableAuth:   enableAuth,
+		hub:          hub,
 	}
 }
 
@@ -34,22 +38,34 @@ func (h *Handler) Routes() http.Handler {
 
 	// API routes
 	mux.HandleFunc("/api/v1/services", h.handleGetServices)
-	mux.HandleFunc("/api/v1/services/", h.handleGetService)
+	mux.HandleFunc("/api/v1/services/", h.handleGetService) // matches /{namespace}/{name}
 	mux.HandleFunc("/api/v1/categories", h.handleGetCategories)
 	mux.HandleFunc("/api/v1/health", h.handleHealth)
 
-	// Static file serving
-	fs := http.FileServer(http.Dir("/web/static"))
-	mux.Handle("/static/", http.StripPrefix("/static/", fs))
+	// WebSocket — real-time service updates
+	if h.hub != nil {
+		mux.HandleFunc("/api/v1/ws", h.hub.ServeWS)
+	}
 
-	// Serve index.html for root and any unknown paths (SPA fallback)
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
-			http.ServeFile(w, r, "/web/static/index.html")
-		} else {
-			http.NotFound(w, r)
-		}
-	})
+	// Static file serving — only registered when /web/static is present (i.e. frontend
+	// assets were built and included in the image). When running the API-only image
+	// the root path simply returns 404 so API clients are unaffected.
+	const staticDir = "/web/static"
+	if _, err := os.Stat(staticDir); err == nil {
+		fs := http.FileServer(http.Dir(staticDir))
+		mux.Handle("/static/", http.StripPrefix("/static/", fs))
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/" || r.URL.Path == "/index.html" {
+				http.ServeFile(w, r, staticDir+"/index.html")
+			} else {
+				http.NotFound(w, r)
+			}
+		})
+	} else {
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "frontend not deployed", http.StatusNotFound)
+		})
+	}
 
 	return corsMiddleware(mux)
 }
@@ -136,13 +152,16 @@ func (h *Handler) handleGetService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	uid := strings.TrimPrefix(r.URL.Path, "/api/v1/services/")
-	if uid == "" {
-		http.Error(w, "Service UID required", http.StatusBadRequest)
+	// Path format: /api/v1/services/{namespace}/{name}
+	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/services/")
+	parts := strings.SplitN(rest, "/", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		http.Error(w, "Path must be /api/v1/services/{namespace}/{name}", http.StatusBadRequest)
 		return
 	}
+	namespace, name := parts[0], parts[1]
 
-	service := h.cache.Get(uid)
+	service := h.cache.GetByNamespacedName(namespace, name)
 	if service == nil {
 		http.Error(w, "Service not found", http.StatusNotFound)
 		return

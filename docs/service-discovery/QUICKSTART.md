@@ -13,10 +13,10 @@ This guide will help you quickly deploy and test the Nebari Landing Page.
 
 ```bash
 # Build the Docker image
-make docker-build-landingpage
+make docker-build-svc-api
 
 # For Kind clusters, load the image
-kind load docker-image ghcr.io/nebari-dev/nebari-landing-page:latest --name <your-cluster-name>
+kind load docker-image quay.io/nebari/service-discovery-api:latest --name <your-cluster-name>
 ```
 
 ## Step 2: Configure Keycloak
@@ -29,7 +29,7 @@ kind load docker-image ghcr.io/nebari-dev/nebari-landing-page:latest --name <you
 
 **Settings:**
 ```
-Client ID: landing-page
+Client ID: service-discovery
 Client type: OpenID Connect
 Client authentication: OFF (public client)
 ```
@@ -42,13 +42,13 @@ Direct access grants: OFF
 
 **Valid redirect URIs:**
 ```
-https://landing.nebari.example.com/*
+https://service-discovery.nebari.example.com/*
 http://localhost:8080/*  (for local testing)
 ```
 
 **Web origins:**
 ```
-https://landing.nebari.example.com
+https://service-discovery.nebari.example.com
 http://localhost:8080
 ```
 
@@ -59,7 +59,7 @@ Proof Key for Code Exchange Code Challenge Method: S256
 
 ### Add Groups to Token
 
-1. Go to **Client scopes** → **landing-page-dedicated**
+1. Go to **Client scopes** → **service-discovery-dedicated**
 2. Add mapper:
    - **Name**: groups
    - **Mapper type**: User Client Role
@@ -72,7 +72,7 @@ Proof Key for Code Exchange Code Challenge Method: S256
 
 ### Update Configuration
 
-Edit `config/landingpage/deployment.yaml` and set your Keycloak URL:
+Edit `deploy/service-discovery/deployment.yaml` and set your Keycloak URL:
 
 ```yaml
 env:
@@ -86,14 +86,14 @@ env:
 
 ```bash
 # Apply all landing page resources
-make deploy-landingpage
+make deploy-svc-api
 
 # Or manually:
-kubectl apply -k config/landingpage/
+kubectl apply -k deploy/service-discovery/
 
 # Verify deployment
-kubectl get pods -n nebari-system -l app=landing-page
-kubectl get svc -n nebari-system landing-page
+kubectl get pods -n nebari-system -l app=service-discovery
+kubectl get svc -n nebari-system service-discovery
 ```
 
 ## Step 4: Create Test Services
@@ -176,7 +176,7 @@ EOF
 
 ```bash
 # Forward landing page service to localhost
-kubectl port-forward -n nebari-system svc/landing-page 8080:80
+kubectl port-forward -n nebari-system svc/service-discovery 8080:8080
 
 # Open in browser
 open http://localhost:8080
@@ -188,10 +188,10 @@ The landing page is deployed as a NebariApp itself, so it will automatically get
 
 ```bash
 # Check the NebariApp
-kubectl get nebariapp -n nebari-system landing-page
+kubectl get nebariapp -n nebari-system service-discovery
 
 # Get the hostname
-kubectl get nebariapp -n nebari-system landing-page -o jsonpath='{.spec.hostname}'
+kubectl get nebariapp -n nebari-system service-discovery -o jsonpath='{.spec.hostname}'
 
 # Access via browser (assuming DNS is configured)
 open https://landing.nebari.example.com
@@ -223,17 +223,17 @@ open https://landing.nebari.example.com
 
 ```bash
 # Check pod logs
-kubectl logs -n nebari-system -l app=landing-page
+kubectl logs -n nebari-system -l app=service-discovery
 
 # Check pod status
-kubectl describe pod -n nebari-system -l app=landing-page
+kubectl describe pod -n nebari-system -l app=service-discovery
 ```
 
 ### Services Not Appearing
 
 ```bash
 # Check if NebariApps are being watched
-kubectl logs -n nebari-system -l app=landing-page | grep -i watch
+kubectl logs -n nebari-system -l app=service-discovery | grep -i watch
 
 # Verify NebariApps have landingPage enabled
 kubectl get nebariapp -A -o jsonpath='{range .items[?(@.spec.landingPage.enabled)]}{.metadata.name}{"\t"}{.spec.landingPage.displayName}{"\n"}{end}'
@@ -243,7 +243,7 @@ kubectl get nebariapp -A -o jsonpath='{range .items[?(@.spec.landingPage.enabled
 
 ```bash
 # Check Keycloak configuration in deployment
-kubectl get deploy -n nebari-system landing-page -o yaml | grep -A5 env:
+kubectl get deploy -n nebari-system service-discovery -o yaml | grep -A5 env:
 
 # Check browser console for errors
 # Check Keycloak logs
@@ -253,7 +253,7 @@ kubectl get deploy -n nebari-system landing-page -o yaml | grep -A5 env:
 
 ```bash
 # Test API directly
-kubectl port-forward -n nebari-system svc/landing-page 8080:80
+kubectl port-forward -n nebari-system svc/service-discovery 8080:8080
 
 # In another terminal:
 curl http://localhost:8080/api/v1/services
@@ -272,10 +272,10 @@ curl http://localhost:8080/api/v1/health
 
 ```bash
 # Remove landing page
-make undeploy-landingpage
+make undeploy-svc-api
 
 # Or manually:
-kubectl delete -k config/landingpage/
+kubectl delete -k deploy/service-discovery/
 
 # Remove test services
 kubectl delete nebariapp docs jupyter admin-panel -n default

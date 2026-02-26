@@ -425,6 +425,54 @@ spec:
                   It corresponds to the NebariApp's generation, which is updated on mutation by the API Server.
                 format: int64
                 type: integer
+              serviceDiscovery:
+                description: |-
+                  ServiceDiscovery is the computed service discovery descriptor.
+                  The controller populates this after reconciling spec.landingPage so the
+                  service-discovery-api can consume a pre-validated, URL-resolved view
+                  without re-deriving it from spec.
+                properties:
+                  category:
+                    description: Category groups related services on the landing page.
+                    type: string
+                  description:
+                    description: Description is supplementary text for the service
+                      card.
+                    type: string
+                  displayName:
+                    description: DisplayName is the human-readable name shown on the
+                      landing page.
+                    type: string
+                  enabled:
+                    description: Enabled mirrors spec.landingPage.enabled at the time
+                      of last reconciliation.
+                    type: boolean
+                  icon:
+                    description: Icon identifies the service icon.
+                    type: string
+                  priority:
+                    description: Priority controls sort order within a category (lower
+                      = higher priority).
+                    maximum: 1000
+                    minimum: 0
+                    type: integer
+                  requiredGroups:
+                    description: RequiredGroups lists groups required when visibility
+                      is "private".
+                    items:
+                      type: string
+                    type: array
+                  url:
+                    description: |-
+                      URL is the effective service URL (derived from spec.hostname or
+                      spec.landingPage.externalUrl by the controller).
+                    type: string
+                  visibility:
+                    description: Visibility controls who can see this service (public/authenticated/private).
+                    type: string
+                required:
+                - enabled
+                type: object
             type: object
         required:
         - spec

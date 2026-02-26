@@ -74,11 +74,24 @@ test-unit: ## Run controller unit tests with coverage.
 	@echo "\nCoverage Summary:"
 	@go tool cover -func=unit-coverage.out | tail -1
 
+.PHONY: test-svc-api
+test-svc-api: ## Run service-discovery-api unit tests (cache, api handlers, auth).
+	@echo "Running service-discovery-api unit tests..."
+	@go test ./internal/servicediscovery/api/... ./internal/servicediscovery/auth/... ./internal/servicediscovery/cache/... -v -coverprofile=svc-api-coverage.out
+	@echo "\nCoverage Summary:"
+	@go tool cover -func=svc-api-coverage.out | tail -1
+
+.PHONY: test-svc-api-html
+test-svc-api-html: test-svc-api ## Generate HTML coverage report for service-discovery-api tests.
+	@go tool cover -html=svc-api-coverage.out -o svc-api-coverage.html
+	@echo "Coverage report generated: svc-api-coverage.html"
+	@xdg-open svc-api-coverage.html 2>/dev/null || echo "Open svc-api-coverage.html in your browser"
+
 .PHONY: test-unit-html
 test-unit-html: test-unit ## Generate HTML coverage report for unit tests.
 	@go tool cover -html=unit-coverage.out -o unit-coverage.html
 	@echo "Coverage report generated: unit-coverage.html"
-	@open unit-coverage.html 2>/dev/null || xdg-open unit-coverage.html 2>/dev/null || echo "Open unit-coverage.html in your browser"
+	@xdg-open unit-coverage.html 2>/dev/null || open unit-coverage.html 2>/dev/null || echo "Open unit-coverage.html in your browser"
 
 .PHONY: test-e2e
 test-e2e: manifests generate fmt vet ## Run e2e tests.
@@ -142,29 +155,60 @@ docker-buildx: ## Build and push docker image for the manager for cross-platform
 	- $(CONTAINER_TOOL) buildx rm nebari-operator-builder
 	rm Dockerfile.cross
 
-##@ Landing Page
+##@ Service Discovery API
 
-LANDING_PAGE_IMG ?= ghcr.io/nebari-dev/nebari-landing-page:latest
+SVC_API_IMG ?= quay.io/nebari/service-discovery-api:latest
 
-.PHONY: build-landingpage
-build-landingpage: ## Build landing page backend binary
-	go build -o bin/landingpage ./cmd/landingpage
+.PHONY: build-svc-api
+build-svc-api: ## Build service-discovery-api binary
+	go build -o bin/service-discovery ./cmd/service-discovery
 
-.PHONY: docker-build-landingpage
-docker-build-landingpage: ## Build docker image for landing page
-	$(CONTAINER_TOOL) build -f Dockerfile.landingpage -t ${LANDING_PAGE_IMG} .
+.PHONY: docker-build-svc-api
+docker-build-svc-api: ## Build docker image for service-discovery-api
+	$(CONTAINER_TOOL) build -f Dockerfile.service-discovery -t ${SVC_API_IMG} .
 
-.PHONY: docker-push-landingpage
-docker-push-landingpage: ## Push docker image for landing page
-	$(CONTAINER_TOOL) push ${LANDING_PAGE_IMG}
+.PHONY: docker-push-svc-api
+docker-push-svc-api: ## Push docker image for service-discovery-api
+	$(CONTAINER_TOOL) push ${SVC_API_IMG}
 
-.PHONY: deploy-landingpage
-deploy-landingpage: ## Deploy landing page to cluster
-	kubectl apply -k config/landingpage/
+.PHONY: deploy-svc-api
+deploy-svc-api: ## Deploy service-discovery-api to cluster
+	kubectl apply -k deploy/service-discovery/
 
-.PHONY: undeploy-landingpage
-undeploy-landingpage: ## Remove landing page from cluster
-	kubectl delete -k config/landingpage/
+.PHONY: undeploy-svc-api
+undeploy-svc-api: ## Remove service-discovery-api from cluster
+	kubectl delete -k deploy/service-discovery/
+
+# SVC_API_DEV_IMG is the local image tag used for dev/testing
+SVC_API_DEV_IMG ?= service-discovery-api:dev
+# Kind cluster to load the dev image into
+KIND_CLUSTER ?= nebari-operator-dev
+
+.PHONY: dev-svc-api
+dev-svc-api: ## Build service-discovery-api, load into Kind, and deploy for local testing.
+	@echo "Building service-discovery-api image $(SVC_API_DEV_IMG)..."
+	$(CONTAINER_TOOL) build -f Dockerfile.service-discovery -t $(SVC_API_DEV_IMG) .
+	@echo "Loading image into Kind cluster '$(KIND_CLUSTER)'..."
+	kind load docker-image $(SVC_API_DEV_IMG) --name $(KIND_CLUSTER)
+	@echo "Deploying service-discovery-api..."
+	kubectl create namespace nebari-system --dry-run=client -o yaml | kubectl apply -f -
+	kubectl apply -k deploy/service-discovery/
+	kubectl set image deployment/service-discovery api=$(SVC_API_DEV_IMG) -n nebari-system
+	kubectl patch deployment service-discovery -n nebari-system --type=json \
+		-p='[{"op":"replace","path":"/spec/template/spec/containers/0/imagePullPolicy","value":"Never"},{"op":"replace","path":"/spec/template/spec/containers/0/env/3/value","value":"false"}]'
+	kubectl rollout status deployment/service-discovery -n nebari-system --timeout=60s
+	@echo ""
+	@echo "✅ Service Discovery API deployed. Port-forward with:"
+	@echo "  kubectl port-forward -n nebari-system svc/service-discovery 8080:8080"
+	@echo ""
+	@echo "Then test the API:"
+	@echo "  curl http://localhost:8080/api/v1/health"
+	@echo "  curl http://localhost:8080/api/v1/services"
+	@echo "  curl http://localhost:8080/api/v1/categories"
+
+.PHONY: svc-api-pf
+svc-api-pf: ## Port-forward the service-discovery-api to localhost:8080
+	kubectl port-forward -n nebari-system svc/service-discovery 8080:8080
 
 ##@ Installer
 

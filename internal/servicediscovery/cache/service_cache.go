@@ -44,7 +44,10 @@ func NewServiceCache() *ServiceCache {
 	}
 }
 
-// Add adds or updates a service in the cache
+// Add adds or updates a service in the cache.
+// It prefers status.ServiceDiscovery (pre-computed by the controller) when present
+// and enabled, falling back to deriving fields directly from spec for backward
+// compatibility (e.g., before the controller has written the status field).
 func (c *ServiceCache) Add(nebariApp *appsv1.NebariApp) {
 	if nebariApp.Spec.LandingPage == nil || !nebariApp.Spec.LandingPage.Enabled {
 		c.Remove(string(nebariApp.UID))
@@ -53,28 +56,60 @@ func (c *ServiceCache) Add(nebariApp *appsv1.NebariApp) {
 
 	uid := string(nebariApp.UID)
 
-	priority := 100
-	if nebariApp.Spec.LandingPage.Priority != nil {
-		priority = *nebariApp.Spec.LandingPage.Priority
-	}
+	var (
+		displayName    string
+		description    string
+		url            string
+		icon           string
+		category       string
+		priority       = 100
+		visibility     = "authenticated"
+		requiredGroups []string
+	)
 
-	visibility := "authenticated"
-	if nebariApp.Spec.LandingPage.Visibility != "" {
-		visibility = nebariApp.Spec.LandingPage.Visibility
+	if sd := nebariApp.Status.ServiceDiscovery; sd != nil && sd.Enabled {
+		// Use the controller's pre-computed, URL-resolved view.
+		displayName = sd.DisplayName
+		description = sd.Description
+		url = sd.URL
+		icon = sd.Icon
+		category = sd.Category
+		if sd.Priority != 0 {
+			priority = sd.Priority
+		}
+		if sd.Visibility != "" {
+			visibility = sd.Visibility
+		}
+		requiredGroups = sd.RequiredGroups
+	} else {
+		// Fall back to spec-derived values (controller hasn't written status yet).
+		lp := nebariApp.Spec.LandingPage
+		displayName = lp.DisplayName
+		description = lp.Description
+		url = buildURL(nebariApp)
+		icon = lp.Icon
+		category = lp.Category
+		if lp.Priority != nil {
+			priority = *lp.Priority
+		}
+		if lp.Visibility != "" {
+			visibility = lp.Visibility
+		}
+		requiredGroups = lp.RequiredGroups
 	}
 
 	service := &ServiceInfo{
 		UID:            uid,
 		Name:           nebariApp.Name,
 		Namespace:      nebariApp.Namespace,
-		DisplayName:    nebariApp.Spec.LandingPage.DisplayName,
-		Description:    nebariApp.Spec.LandingPage.Description,
-		Icon:           nebariApp.Spec.LandingPage.Icon,
-		Category:       nebariApp.Spec.LandingPage.Category,
+		DisplayName:    displayName,
+		Description:    description,
+		URL:            url,
+		Icon:           icon,
+		Category:       category,
 		Priority:       priority,
 		Visibility:     visibility,
-		RequiredGroups: nebariApp.Spec.LandingPage.RequiredGroups,
-		URL:            buildURL(nebariApp),
+		RequiredGroups: requiredGroups,
 		Health:         c.preserveHealthStatus(uid),
 	}
 
@@ -95,6 +130,18 @@ func (c *ServiceCache) Get(uid string) *ServiceInfo {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.services[uid]
+}
+
+// GetByNamespacedName retrieves a service by namespace and name.
+func (c *ServiceCache) GetByNamespacedName(namespace, name string) *ServiceInfo {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	for _, svc := range c.services {
+		if svc.Namespace == namespace && svc.Name == name {
+			return svc
+		}
+	}
+	return nil
 }
 
 // GetAll returns all services as a slice

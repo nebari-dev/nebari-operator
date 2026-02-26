@@ -1,24 +1,24 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: landing-page
+  name: service-discovery
   namespace: nebari-system
   labels:
-    app: landing-page
+    app: service-discovery
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: landing-page
+      app: service-discovery
   template:
     metadata:
       labels:
-        app: landing-page
+        app: service-discovery
     spec:
-      serviceAccountName: landing-page
+      serviceAccountName: service-discovery
       containers:
-        - name: backend
-          image: landing-page:latest
+        - name: api
+          image: service-discovery:latest
           ports:
             - containerPort: 8080
               name: http
@@ -32,8 +32,8 @@ spec:
               value: "8080"
             - name: ENABLE_AUTH
               value: "true"
-            - name: LOG_LEVEL
-              value: "info"
+            - name: HEALTH_INTERVAL
+              value: "30"
           livenessProbe:
             httpGet:
               path: /api/v1/health

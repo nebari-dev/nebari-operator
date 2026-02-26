@@ -1,0 +1,306 @@
+// Copyright 2026, OpenTeams.
+// SPDX-License-Identifier: Apache-2.0
+
+package auth
+
+import (
+	"crypto/rand"
+	"crypto/rsa"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"math/big"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+)
+
+// --- fixtures ---
+
+const testKID = "test-key-id"
+const testRealm = "nebari"
+
+func generateTestKey(t *testing.T) *rsa.PrivateKey {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("failed to generate RSA key: %v", err)
+	}
+	return key
+}
+
+func encodeBase64URL(n *big.Int) string {
+	return base64.RawURLEncoding.EncodeToString(n.Bytes())
+}
+
+func eToBytes(e int) []byte {
+	b := [4]byte{byte(e >> 24), byte(e >> 16), byte(e >> 8), byte(e)}
+	i := 0
+	for i < 3 && b[i] == 0 {
+		i++
+	}
+	return b[i:]
+}
+
+func startJWKSServer(t *testing.T, key *rsa.PrivateKey) *httptest.Server {
+	t.Helper()
+	jwks := map[string]interface{}{
+		"keys": []map[string]interface{}{
+			{
+				"kty": "RSA",
+				"kid": testKID,
+				"use": "sig",
+				"n":   encodeBase64URL(key.PublicKey.N),
+				"e":   base64.RawURLEncoding.EncodeToString(eToBytes(key.PublicKey.E)),
+			},
+		},
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(jwks)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func signJWT(t *testing.T, key *rsa.PrivateKey, kid, issuer string, exp time.Time, extra *Claims) string {
+	t.Helper()
+	if extra == nil {
+		extra = &Claims{}
+	}
+	extra.RegisteredClaims = jwt.RegisteredClaims{
+		Issuer:    issuer,
+		ExpiresAt: jwt.NewNumericDate(exp),
+		IssuedAt:  jwt.NewNumericDate(time.Now()),
+	}
+	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, extra)
+	tok.Header["kid"] = kid
+	s, err := tok.SignedString(key)
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	return s
+}
+
+func newValidator(t *testing.T, srv *httptest.Server) *JWTValidator {
+	t.Helper()
+	v, err := NewJWTValidator(srv.URL, testRealm)
+	if err != nil {
+		t.Fatalf("NewJWTValidator: %v", err)
+	}
+	return v
+}
+
+// --- parseRSAPublicKey ---
+
+func TestParseRSAPublicKey_ValidJWK(t *testing.T) {
+	key := generateTestKey(t)
+	jwk := JWK{
+		Kty: "RSA",
+		Kid: testKID,
+		N:   encodeBase64URL(key.PublicKey.N),
+		E:   base64.RawURLEncoding.EncodeToString(eToBytes(key.PublicKey.E)),
+	}
+	pub, err := parseRSAPublicKey(jwk)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if pub.N.Cmp(key.PublicKey.N) != 0 {
+		t.Error("N mismatch")
+	}
+	if pub.E != key.PublicKey.E {
+		t.Errorf("E: got %d, want %d", pub.E, key.PublicKey.E)
+	}
+}
+
+func TestParseRSAPublicKey_InvalidN(t *testing.T) {
+	_, err := parseRSAPublicKey(JWK{Kty: "RSA", Kid: "k", N: "!!!not base64", E: "AQAB"})
+	if err == nil {
+		t.Error("expected error for invalid N")
+	}
+}
+
+func TestParseRSAPublicKey_InvalidE(t *testing.T) {
+	key := generateTestKey(t)
+	_, err := parseRSAPublicKey(JWK{Kty: "RSA", Kid: "k", N: encodeBase64URL(key.PublicKey.N), E: "!!!"})
+	if err == nil {
+		t.Error("expected error for invalid E")
+	}
+}
+
+// --- NewJWTValidator ---
+
+func TestNewJWTValidator_InvalidURL_ReturnsError(t *testing.T) {
+	_, err := NewJWTValidator("http://127.0.0.1:1", "realm")
+	if err == nil {
+		t.Error("expected error connecting to invalid URL")
+	}
+}
+
+func TestNewJWTValidator_EmptyKeys_ReturnsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"keys": []interface{}{}})
+	}))
+	defer srv.Close()
+	_, err := NewJWTValidator(srv.URL, testRealm)
+	if err == nil {
+		t.Error("expected error when JWKS has no keys")
+	}
+}
+
+func TestNewJWTValidator_Success(t *testing.T) {
+	key := generateTestKey(t)
+	srv := startJWKSServer(t, key)
+	v := newValidator(t, srv)
+	if v == nil {
+		t.Fatal("expected non-nil validator")
+	}
+}
+
+// --- ValidateToken ---
+
+func TestValidateToken_Valid(t *testing.T) {
+	key := generateTestKey(t)
+	srv := startJWKSServer(t, key)
+	v := newValidator(t, srv)
+
+	issuer := fmt.Sprintf("%s/realms/%s", srv.URL, testRealm)
+	claims := &Claims{
+		PreferredUsername: "jdoe",
+		Email:             "jdoe@example.com",
+		Name:              "John Doe",
+		Groups:            []string{"admin", "data-science"},
+	}
+	tokenStr := signJWT(t, key, testKID, issuer, time.Now().Add(time.Hour), claims)
+
+	got, err := v.ValidateToken(tokenStr)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.PreferredUsername != "jdoe" {
+		t.Errorf("username: got %q, want jdoe", got.PreferredUsername)
+	}
+	if got.Email != "jdoe@example.com" {
+		t.Errorf("email: got %q, want jdoe@example.com", got.Email)
+	}
+	if len(got.Groups) != 2 {
+		t.Errorf("groups: got %v, want 2 items", got.Groups)
+	}
+}
+
+func TestValidateToken_Expired(t *testing.T) {
+	key := generateTestKey(t)
+	srv := startJWKSServer(t, key)
+	v := newValidator(t, srv)
+
+	issuer := fmt.Sprintf("%s/realms/%s", srv.URL, testRealm)
+	tokenStr := signJWT(t, key, testKID, issuer, time.Now().Add(-time.Hour), nil)
+
+	_, err := v.ValidateToken(tokenStr)
+	if err == nil {
+		t.Error("expected error for expired token")
+	}
+}
+
+func TestValidateToken_WrongIssuer(t *testing.T) {
+	key := generateTestKey(t)
+	srv := startJWKSServer(t, key)
+	v := newValidator(t, srv)
+
+	tokenStr := signJWT(t, key, testKID, "https://wrong-issuer.example.com/realms/other", time.Now().Add(time.Hour), nil)
+
+	_, err := v.ValidateToken(tokenStr)
+	if err == nil {
+		t.Error("expected error for wrong issuer")
+	}
+}
+
+func TestValidateToken_UnknownKID(t *testing.T) {
+	key := generateTestKey(t)
+	srv := startJWKSServer(t, key)
+	v := newValidator(t, srv)
+
+	issuer := fmt.Sprintf("%s/realms/%s", srv.URL, testRealm)
+	claims := &Claims{}
+	claims.RegisteredClaims = jwt.RegisteredClaims{
+		Issuer:    issuer,
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+		IssuedAt:  jwt.NewNumericDate(time.Now()),
+	}
+	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	tok.Header["kid"] = "unknown-kid"
+	tokenStr, err := tok.SignedString(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = v.ValidateToken(tokenStr)
+	if err == nil {
+		t.Error("expected error for unknown kid")
+	}
+}
+
+func TestValidateToken_Tampered(t *testing.T) {
+	key := generateTestKey(t)
+	srv := startJWKSServer(t, key)
+	v := newValidator(t, srv)
+
+	issuer := fmt.Sprintf("%s/realms/%s", srv.URL, testRealm)
+	tokenStr := signJWT(t, key, testKID, issuer, time.Now().Add(time.Hour), nil)
+
+	tampered := tokenStr[:len(tokenStr)-5] + "xxxxx"
+	_, err := v.ValidateToken(tampered)
+	if err == nil {
+		t.Error("expected error for tampered token")
+	}
+}
+
+func TestValidateToken_WrongAlgorithm(t *testing.T) {
+	key := generateTestKey(t)
+	srv := startJWKSServer(t, key)
+	v := newValidator(t, srv)
+
+	issuer := fmt.Sprintf("%s/realms/%s", srv.URL, testRealm)
+	claims := &Claims{}
+	claims.RegisteredClaims = jwt.RegisteredClaims{
+		Issuer:    issuer,
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+	}
+	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tok.Header["kid"] = testKID
+	tokenStr, err := tok.SignedString([]byte("secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = v.ValidateToken(tokenStr)
+	if err == nil {
+		t.Error("expected error for wrong algorithm")
+	}
+}
+
+// --- Claims struct ---
+
+func TestClaims_JSON_RoundTrip(t *testing.T) {
+	c := Claims{
+		Email:             "user@example.com",
+		Name:              "Test User",
+		PreferredUsername: "testuser",
+		Groups:            []string{"group-a", "group-b"},
+	}
+	data, err := json.Marshal(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got Claims
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Email != c.Email || got.PreferredUsername != c.PreferredUsername {
+		t.Errorf("round-trip mismatch: got %+v, want %+v", got, c)
+	}
+	if len(got.Groups) != 2 {
+		t.Errorf("expected 2 groups, got %v", got.Groups)
+	}
+}
