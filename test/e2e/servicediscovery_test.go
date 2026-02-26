@@ -137,6 +137,18 @@ var _ = Describe("Service Discovery API", Ordered, func() {
 		By("Removing navigator manifests")
 		cmd := exec.Command("kubectl", "delete", "-f", "deploy/navigator/manifest.yaml", "--ignore-not-found")
 		_, _ = utils.Run(cmd)
+
+		By("Deleting navigator namespace")
+		cmd = exec.Command("kubectl", "delete", "namespace", namespace, "--ignore-not-found", "--timeout=60s")
+		_, _ = utils.Run(cmd)
+
+		By("Undeploying the controller-manager")
+		cmd = exec.Command("make", "undeploy")
+		_, _ = utils.Run(cmd)
+
+		By("Uninstalling CRDs")
+		cmd = exec.Command("make", "uninstall")
+		_, _ = utils.Run(cmd)
 	})
 
 	Context("Service Discovery", func() {
@@ -202,6 +214,7 @@ var _ = Describe("Service Discovery API", Ordered, func() {
 				"username":   {"admin"},
 				"password":   {"nebari-admin"},
 				"grant_type": {"password"},
+				"scope":      {"openid profile"},
 			}
 			tokenReq, err := http.NewRequest(http.MethodPost,
 				"http://localhost:18090/auth/realms/nebari/protocol/openid-connect/token",
