@@ -192,14 +192,25 @@ var _ = Describe("Service Discovery API", Ordered, func() {
 
 		It("should filter services based on visibility", func() {
 			By("Acquiring a fresh JWT token from Keycloak")
-			tokenResp, err := http.PostForm(
+			// The port-forward reaches Keycloak at localhost:18090, but we must set the
+			// Host header to the in-cluster hostname.  Keycloak (Quarkus, no KC_HOSTNAME
+			// configured) derives the token issuer ("iss") from the request's Host header.
+			// The navigator validates iss == KEYCLOAK_URL/realms/REALM, so the issuer
+			// embedded in the token must match the in-cluster address that the navigator uses.
+			tokenForm := url.Values{
+				"client_id":  {"admin-cli"},
+				"username":   {"admin"},
+				"password":   {"nebari-admin"},
+				"grant_type": {"password"},
+			}
+			tokenReq, err := http.NewRequest(http.MethodPost,
 				"http://localhost:18090/auth/realms/nebari/protocol/openid-connect/token",
-				url.Values{
-					"client_id":  {"admin-cli"},
-					"username":   {"admin"},
-					"password":   {"nebari-admin"},
-					"grant_type": {"password"},
-				})
+				strings.NewReader(tokenForm.Encode()))
+			Expect(err).NotTo(HaveOccurred())
+			tokenReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			// Override Host so Keycloak sets iss = http://keycloak-keycloakx-http.keycloak.svc.cluster.local/auth/realms/nebari
+			tokenReq.Host = "keycloak-keycloakx-http.keycloak.svc.cluster.local"
+			tokenResp, err := http.DefaultClient.Do(tokenReq)
 			Expect(err).NotTo(HaveOccurred(), "Should be able to request token from Keycloak nebari realm")
 			defer tokenResp.Body.Close()
 			Expect(tokenResp.StatusCode).To(Equal(http.StatusOK),
