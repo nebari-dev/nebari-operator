@@ -30,7 +30,7 @@ permissions:
 env:
   REGISTRY: quay.io
   IMAGE_NAME: nebari/nebari-operator
-  SVC_API_IMAGE_NAME: nebari/service-discovery-api
+  SVC_API_IMAGE_NAME: nebari/navigator
 
 jobs:
   lint:
@@ -126,20 +126,20 @@ jobs:
         run: |
           kind load docker-image quay.io/nebari/nebari-operator:v0.0.1 --name test-cluster
 
-      - name: Build service-discovery-api image
+      - name: Build navigator image
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: Dockerfile.service-discovery
+          file: Dockerfile.navigator
           push: false
           load: true
-          tags: quay.io/nebari/service-discovery-api:latest
-          cache-from: type=gha,scope=svc-api
-          cache-to: type=gha,mode=max,scope=svc-api
+          tags: quay.io/nebari/navigator:latest
+          cache-from: type=gha,scope=navigator
+          cache-to: type=gha,mode=max,scope=navigator
 
-      - name: Load service-discovery-api image to KinD
+      - name: Load navigator image to KinD
         run: |
-          kind load docker-image quay.io/nebari/service-discovery-api:latest --name test-cluster
+          kind load docker-image quay.io/nebari/navigator:latest --name test-cluster
 
       - name: Install MetalLB
         run: |
@@ -196,14 +196,22 @@ jobs:
           ./scripts/services/keycloak/setup.sh
           cd ..
 
-      - name: Running Test e2e
+      - name: Run operator E2E tests
         env:
           USE_EXISTING_CLUSTER: "true"
           CLUSTER_NAME: test-cluster
           SKIP_DOCKER_BUILD: "true"
         run: |
           go mod tidy
-          make test-e2e
+          make test-e2e-operator
+
+      - name: Run navigator E2E tests
+        env:
+          USE_EXISTING_CLUSTER: "true"
+          CLUSTER_NAME: test-cluster
+          SKIP_DOCKER_BUILD: "true"
+        run: |
+          make test-e2e-navigator
 
   test-chart:
     name: Helm Chart Tests
@@ -444,12 +452,12 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: Dockerfile.service-discovery
+          file: Dockerfile.navigator
           platforms: ${{ matrix.platform }}
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.SVC_API_IMAGE_NAME }}
-          cache-from: type=gha,scope=svc-${{ matrix.platform }}
-          cache-to: type=gha,mode=max,scope=svc-${{ matrix.platform }}
+          cache-from: type=gha,scope=navigator-${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=navigator-${{ matrix.platform }}
           provenance: false
           outputs: type=image,push-by-digest=true,name-canonical=true,push=true
 
@@ -458,12 +466,12 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: Dockerfile.service-discovery
+          file: Dockerfile.navigator
           platforms: ${{ matrix.platform }}
           push: false
           tags: ${{ env.REGISTRY }}/${{ env.SVC_API_IMAGE_NAME }}:${{ steps.branch.outputs.tag }}
-          cache-from: type=gha,scope=svc-${{ matrix.platform }}
-          cache-to: type=gha,mode=max,scope=svc-${{ matrix.platform }}
+          cache-from: type=gha,scope=navigator-${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=navigator-${{ matrix.platform }}
           provenance: false
 
       - name: Export digest

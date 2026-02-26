@@ -1,7 +1,7 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: nebari-service-discovery-reader
+  name: nebari-navigator-reader
 rules:
   - apiGroups:
       - reconcilers.nebari.dev

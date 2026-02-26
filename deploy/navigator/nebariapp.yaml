@@ -1,12 +1,12 @@
 apiVersion: reconcilers.nebari.dev/v1
 kind: NebariApp
 metadata:
-  name: service-discovery
+  name: navigator
   namespace: nebari-system
 spec:
-  hostname: service-discovery.nebari.example.com
+  hostname: navigator.nebari.example.com
   service:
-    name: service-discovery
+    name: navigator
     port: 8080
   routing:
     tls:

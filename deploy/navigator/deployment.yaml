@@ -1,21 +1,21 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: service-discovery
+  name: navigator
   namespace: nebari-system
   labels:
-    app: service-discovery
+    app: navigator
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: service-discovery
+      app: navigator
   template:
     metadata:
       labels:
-        app: service-discovery
+        app: navigator
     spec:
-      serviceAccountName: service-discovery
+      serviceAccountName: navigator
       containers:
         - name: api
           image: service-discovery:latest

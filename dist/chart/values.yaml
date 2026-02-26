@@ -111,18 +111,18 @@ certManager:
 prometheus:
   enable: false
 
-## Service Discovery API — the landing-page backend.
-## When enabled, deploys the service-discovery binary alongside the operator
+## Navigator — the Nebari landing-page and service-discovery backend.
+## When enabled, deploys the navigator binary alongside the operator
 ## so users get a single Helm release for the full platform.
 ##
-serviceDiscovery:
-  # Set to true to deploy the service-discovery API.
+navigator:
+  # Set to true to deploy the navigator.
   enable: false
 
   replicas: 1
 
   image:
-    repository: quay.io/nebari/service-discovery-api
+    repository: quay.io/nebari/navigator
     tag: latest
     pullPolicy: IfNotPresent
 
@@ -185,7 +185,7 @@ serviceDiscovery:
   nebariApp:
     # Create the NebariApp registration for the landing page itself.
     enable: true
-    hostname: "service-discovery.nebari.example.com"
+    hostname: "navigator.nebari.example.com"
 
   ## Pod affinity, node selector and tolerations
   ##

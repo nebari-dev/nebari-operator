@@ -13,11 +13,11 @@ RUN go mod download
 
 # Copy source code
 COPY api/ api/
-COPY cmd/service-discovery/ cmd/service-discovery/
+COPY cmd/navigator/ cmd/navigator/
 COPY internal/servicediscovery/ internal/servicediscovery/
 
 # Build — use TARGETARCH so the binary matches the platform being built for.
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -a -o service-discovery ./cmd/service-discovery
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -a -o navigator ./cmd/navigator
 
 # Final stage
 FROM gcr.io/distroless/static:nonroot
@@ -25,7 +25,7 @@ FROM gcr.io/distroless/static:nonroot
 WORKDIR /
 
 # Copy the binary from builder
-COPY --from=builder /workspace/service-discovery .
+COPY --from=builder /workspace/navigator .
 
 USER 65532:65532
 

@@ -1,4 +1,4 @@
-{{- if and .Values.serviceDiscovery.enable .Values.serviceDiscovery.nebariApp.enable }}
+{{- if and .Values.navigator.enable .Values.navigator.nebariApp.enable }}
 apiVersion: reconcilers.nebari.dev/v1
 kind: NebariApp
 metadata:
@@ -7,14 +7,14 @@ metadata:
         app.kubernetes.io/name: {{ include "nebari-operator.name" . }}
         helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
         app.kubernetes.io/instance: {{ .Release.Name }}
-        app.kubernetes.io/component: service-discovery
-    name: {{ include "nebari-operator.resourceName" (dict "suffix" "service-discovery" "context" $) }}
+        app.kubernetes.io/component: navigator
+    name: {{ include "nebari-operator.resourceName" (dict "suffix" "navigator" "context" $) }}
     namespace: {{ .Release.Namespace }}
 spec:
-    hostname: {{ .Values.serviceDiscovery.nebariApp.hostname | quote }}
+    hostname: {{ .Values.navigator.nebariApp.hostname | quote }}
     service:
-        name: {{ include "nebari-operator.resourceName" (dict "suffix" "service-discovery" "context" $) }}
-        port: {{ .Values.serviceDiscovery.service.port }}
+        name: {{ include "nebari-operator.resourceName" (dict "suffix" "navigator" "context" $) }}
+        port: {{ .Values.navigator.service.port }}
     routing:
         tls:
             enabled: true

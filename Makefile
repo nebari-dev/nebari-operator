@@ -94,8 +94,16 @@ test-unit-html: test-unit ## Generate HTML coverage report for unit tests.
 	@xdg-open unit-coverage.html 2>/dev/null || open unit-coverage.html 2>/dev/null || echo "Open unit-coverage.html in your browser"
 
 .PHONY: test-e2e
-test-e2e: manifests generate fmt vet ## Run e2e tests.
+test-e2e: manifests generate fmt vet ## Run all e2e tests.
 	USE_EXISTING_CLUSTER=$(USE_EXISTING_CLUSTER) go test ./test/e2e -v -ginkgo.v -tags=e2e -timeout=30m
+
+.PHONY: test-e2e-operator
+test-e2e-operator: manifests generate fmt vet ## Run operator e2e tests (excludes navigator tests).
+	USE_EXISTING_CLUSTER=$(USE_EXISTING_CLUSTER) go test ./test/e2e -v -ginkgo.v -tags=e2e -timeout=30m -ginkgo.skip="Service Discovery API"
+
+.PHONY: test-e2e-navigator
+test-e2e-navigator: ## Run navigator e2e tests only.
+	USE_EXISTING_CLUSTER=$(USE_EXISTING_CLUSTER) go test ./test/e2e -v -ginkgo.v -tags=e2e -timeout=15m -ginkgo.focus="Service Discovery API"
 
 .PHONY: test-e2e-parallel
 test-e2e-parallel: manifests generate fmt vet ## Run e2e tests in parallel (faster).
@@ -155,60 +163,60 @@ docker-buildx: ## Build and push docker image for the manager for cross-platform
 	- $(CONTAINER_TOOL) buildx rm nebari-operator-builder
 	rm Dockerfile.cross
 
-##@ Service Discovery API
+##@ Navigator API
 
-SVC_API_IMG ?= quay.io/nebari/service-discovery-api:latest
+NAVIGATOR_IMG ?= quay.io/nebari/navigator:latest
 
-.PHONY: build-svc-api
-build-svc-api: ## Build service-discovery-api binary
-	go build -o bin/service-discovery ./cmd/service-discovery
+.PHONY: build-navigator
+build-navigator: ## Build navigator binary
+	go build -o bin/navigator ./cmd/navigator
 
-.PHONY: docker-build-svc-api
-docker-build-svc-api: ## Build docker image for service-discovery-api
-	$(CONTAINER_TOOL) build -f Dockerfile.service-discovery -t ${SVC_API_IMG} .
+.PHONY: docker-build-navigator
+docker-build-navigator: ## Build docker image for navigator
+	$(CONTAINER_TOOL) build -f Dockerfile.navigator -t ${NAVIGATOR_IMG} .
 
-.PHONY: docker-push-svc-api
-docker-push-svc-api: ## Push docker image for service-discovery-api
-	$(CONTAINER_TOOL) push ${SVC_API_IMG}
+.PHONY: docker-push-navigator
+docker-push-navigator: ## Push docker image for navigator
+	$(CONTAINER_TOOL) push ${NAVIGATOR_IMG}
 
-.PHONY: deploy-svc-api
-deploy-svc-api: ## Deploy service-discovery-api to cluster
-	kubectl apply -k deploy/service-discovery/
+.PHONY: deploy-navigator
+deploy-navigator: ## Deploy navigator to cluster
+	kubectl apply -k deploy/navigator/
 
-.PHONY: undeploy-svc-api
-undeploy-svc-api: ## Remove service-discovery-api from cluster
-	kubectl delete -k deploy/service-discovery/
+.PHONY: undeploy-navigator
+undeploy-navigator: ## Remove navigator from cluster
+	kubectl delete -k deploy/navigator/
 
-# SVC_API_DEV_IMG is the local image tag used for dev/testing
-SVC_API_DEV_IMG ?= service-discovery-api:dev
+# NAVIGATOR_DEV_IMG is the local image tag used for dev/testing
+NAVIGATOR_DEV_IMG ?= navigator:dev
 # Kind cluster to load the dev image into
 KIND_CLUSTER ?= nebari-operator-dev
 
-.PHONY: dev-svc-api
-dev-svc-api: ## Build service-discovery-api, load into Kind, and deploy for local testing.
-	@echo "Building service-discovery-api image $(SVC_API_DEV_IMG)..."
-	$(CONTAINER_TOOL) build -f Dockerfile.service-discovery -t $(SVC_API_DEV_IMG) .
+.PHONY: dev-navigator
+dev-navigator: ## Build navigator, load into Kind, and deploy for local testing.
+	@echo "Building navigator image $(NAVIGATOR_DEV_IMG)..."
+	$(CONTAINER_TOOL) build -f Dockerfile.navigator -t $(NAVIGATOR_DEV_IMG) .
 	@echo "Loading image into Kind cluster '$(KIND_CLUSTER)'..."
-	kind load docker-image $(SVC_API_DEV_IMG) --name $(KIND_CLUSTER)
-	@echo "Deploying service-discovery-api..."
+	kind load docker-image $(NAVIGATOR_DEV_IMG) --name $(KIND_CLUSTER)
+	@echo "Deploying navigator..."
 	kubectl create namespace nebari-system --dry-run=client -o yaml | kubectl apply -f -
-	kubectl apply -k deploy/service-discovery/
-	kubectl set image deployment/service-discovery api=$(SVC_API_DEV_IMG) -n nebari-system
-	kubectl patch deployment service-discovery -n nebari-system --type=json \
+	kubectl apply -k deploy/navigator/
+	kubectl set image deployment/navigator api=$(NAVIGATOR_DEV_IMG) -n nebari-system
+	kubectl patch deployment navigator -n nebari-system --type=json \
 		-p='[{"op":"replace","path":"/spec/template/spec/containers/0/imagePullPolicy","value":"Never"},{"op":"replace","path":"/spec/template/spec/containers/0/env/3/value","value":"false"}]'
-	kubectl rollout status deployment/service-discovery -n nebari-system --timeout=60s
+	kubectl rollout status deployment/navigator -n nebari-system --timeout=60s
 	@echo ""
-	@echo "✅ Service Discovery API deployed. Port-forward with:"
-	@echo "  kubectl port-forward -n nebari-system svc/service-discovery 8080:8080"
+	@echo "✅ Navigator deployed. Port-forward with:"
+	@echo "  kubectl port-forward -n nebari-system svc/navigator 8080:8080"
 	@echo ""
 	@echo "Then test the API:"
 	@echo "  curl http://localhost:8080/api/v1/health"
 	@echo "  curl http://localhost:8080/api/v1/services"
 	@echo "  curl http://localhost:8080/api/v1/categories"
 
-.PHONY: svc-api-pf
-svc-api-pf: ## Port-forward the service-discovery-api to localhost:8080
-	kubectl port-forward -n nebari-system svc/service-discovery 8080:8080
+.PHONY: navigator-pf
+navigator-pf: ## Port-forward the navigator to localhost:8080
+	kubectl port-forward -n nebari-system svc/navigator 8080:8080
 
 ##@ Installer
 
@@ -222,6 +230,12 @@ build-installer: manifests generate kustomize ## Generate a consolidated YAML wi
 helm-chart: build-installer ## Generate Helm chart from manifests using kubebuilder.
 	@command -v kubebuilder >/dev/null 2>&1 || { echo >&2 "kubebuilder is required but not installed. See https://book.kubebuilder.io/quick-start.html#installation"; exit 1; }
 	kubebuilder edit --plugins=helm/v2-alpha --force
+	@echo "Merging chart extensions from config/chart-extensions/..."
+	@for dir in config/chart-extensions/*/; do \
+		name=$$(basename $$dir); \
+		mkdir -p dist/chart/templates/$$name; \
+		cp -r $$dir/. dist/chart/templates/$$name/; \
+	done
 	@echo "✅ Helm chart generated in dist/chart/"
 	@echo ""
 	@echo "To package the chart:"

@@ -35,9 +35,9 @@ builds:
     flags:
       - -trimpath
 
-  - id: service-discovery-api
-    main: ./cmd/service-discovery
-    binary: service-discovery-api
+  - id: navigator
+    main: ./cmd/navigator
+    binary: navigator
     env:
       - CGO_ENABLED=0
     goos:

@@ -1,4 +1,4 @@
-{{- if .Values.serviceDiscovery.enable }}
+{{- if .Values.navigator.enable }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -7,15 +7,15 @@ metadata:
         app.kubernetes.io/name: {{ include "nebari-operator.name" . }}
         helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
         app.kubernetes.io/instance: {{ .Release.Name }}
-        app.kubernetes.io/component: service-discovery
-    name: {{ include "nebari-operator.resourceName" (dict "suffix" "service-discovery" "context" $) }}
+        app.kubernetes.io/component: navigator
+    name: {{ include "nebari-operator.resourceName" (dict "suffix" "navigator" "context" $) }}
     namespace: {{ .Release.Namespace }}
 spec:
-    replicas: {{ .Values.serviceDiscovery.replicas }}
+    replicas: {{ .Values.navigator.replicas }}
     selector:
         matchLabels:
             app.kubernetes.io/name: {{ include "nebari-operator.name" . }}
-            app.kubernetes.io/component: service-discovery
+            app.kubernetes.io/component: navigator
     template:
         metadata:
             labels:
@@ -23,32 +23,32 @@ spec:
                 helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
                 app.kubernetes.io/instance: {{ .Release.Name }}
                 app.kubernetes.io/managed-by: {{ .Release.Service }}
-                app.kubernetes.io/component: service-discovery
+                app.kubernetes.io/component: navigator
         spec:
-            {{- with .Values.serviceDiscovery.imagePullSecrets }}
+            {{- with .Values.navigator.imagePullSecrets }}
             imagePullSecrets: {{ toYaml . | nindent 12 }}
             {{- end }}
-            {{- with .Values.serviceDiscovery.tolerations }}
+            {{- with .Values.navigator.tolerations }}
             tolerations: {{ toYaml . | nindent 12 }}
             {{- end }}
-            {{- with .Values.serviceDiscovery.affinity }}
+            {{- with .Values.navigator.affinity }}
             affinity: {{ toYaml . | nindent 12 }}
             {{- end }}
-            {{- with .Values.serviceDiscovery.nodeSelector }}
+            {{- with .Values.navigator.nodeSelector }}
             nodeSelector: {{ toYaml . | nindent 12 }}
             {{- end }}
-            serviceAccountName: {{ include "nebari-operator.resourceName" (dict "suffix" "service-discovery" "context" $) }}
+            serviceAccountName: {{ include "nebari-operator.resourceName" (dict "suffix" "navigator" "context" $) }}
             containers:
                 - name: api
-                  image: "{{ .Values.serviceDiscovery.image.repository }}:{{ .Values.serviceDiscovery.image.tag }}"
-                  imagePullPolicy: {{ .Values.serviceDiscovery.image.pullPolicy }}
+                  image: "{{ .Values.navigator.image.repository }}:{{ .Values.navigator.image.tag }}"
+                  imagePullPolicy: {{ .Values.navigator.image.pullPolicy }}
                   ports:
                       - containerPort: 8080
                         name: http
                         protocol: TCP
                   env:
-                      {{- if .Values.serviceDiscovery.env }}
-                      {{- toYaml .Values.serviceDiscovery.env | nindent 20 }}
+                      {{- if .Values.navigator.env }}
+                      {{- toYaml .Values.navigator.env | nindent 20 }}
                       {{- else }}
                       []
                       {{- end }}
@@ -65,20 +65,20 @@ spec:
                       initialDelaySeconds: 5
                       periodSeconds: 10
                   resources:
-                      {{- if .Values.serviceDiscovery.resources }}
-                      {{- toYaml .Values.serviceDiscovery.resources | nindent 20 }}
+                      {{- if .Values.navigator.resources }}
+                      {{- toYaml .Values.navigator.resources | nindent 20 }}
                       {{- else }}
                       {}
                       {{- end }}
                   securityContext:
-                      {{- if .Values.serviceDiscovery.securityContext }}
-                      {{- toYaml .Values.serviceDiscovery.securityContext | nindent 20 }}
+                      {{- if .Values.navigator.securityContext }}
+                      {{- toYaml .Values.navigator.securityContext | nindent 20 }}
                       {{- else }}
                       {}
                       {{- end }}
             securityContext:
-                {{- if .Values.serviceDiscovery.podSecurityContext }}
-                {{- toYaml .Values.serviceDiscovery.podSecurityContext | nindent 14 }}
+                {{- if .Values.navigator.podSecurityContext }}
+                {{- toYaml .Values.navigator.podSecurityContext | nindent 14 }}
                 {{- else }}
                 {}
                 {{- end }}
