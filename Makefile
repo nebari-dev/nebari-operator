@@ -109,15 +109,33 @@ render-navigator: ## Render navigator Helm templates to deploy/navigator/manifes
 		$(MAKE) helm-chart; \
 	fi
 	@mkdir -p deploy/navigator
-	helm template nebari-operator dist/chart \
-		--set navigator.enable=true \
-		--set navigator.nameOverride=navigator \
-		--namespace nebari-system \
-		--show-only templates/navigator/deployment.yaml \
-		--show-only templates/navigator/service.yaml \
-		--show-only templates/navigator/serviceaccount.yaml \
-		--show-only templates/navigator/rbac.yaml \
-		> deploy/navigator/manifest.yaml
+	@if [ -n "$(NAVIGATOR_IMG)" ]; then \
+		_nav_repo=$$(echo "$(NAVIGATOR_IMG)" | cut -d: -f1); \
+		_nav_tag=$$(echo "$(NAVIGATOR_IMG)" | cut -d: -f2-); \
+		echo "Rendering with custom navigator image: $(NAVIGATOR_IMG)"; \
+		helm template nebari-operator dist/chart \
+			--set navigator.enable=true \
+			--set navigator.nameOverride=navigator \
+			--namespace nebari-system \
+			--set navigator.image.repository=$$_nav_repo \
+			--set navigator.image.tag=$$_nav_tag \
+			--set navigator.image.pullPolicy=Never \
+			--show-only templates/navigator/deployment.yaml \
+			--show-only templates/navigator/service.yaml \
+			--show-only templates/navigator/serviceaccount.yaml \
+			--show-only templates/navigator/rbac.yaml \
+			> deploy/navigator/manifest.yaml; \
+	else \
+		helm template nebari-operator dist/chart \
+			--set navigator.enable=true \
+			--set navigator.nameOverride=navigator \
+			--namespace nebari-system \
+			--show-only templates/navigator/deployment.yaml \
+			--show-only templates/navigator/service.yaml \
+			--show-only templates/navigator/serviceaccount.yaml \
+			--show-only templates/navigator/rbac.yaml \
+			> deploy/navigator/manifest.yaml; \
+	fi
 	@echo "✅ Navigator manifest rendered to deploy/navigator/manifest.yaml"
 
 .PHONY: test-e2e-navigator

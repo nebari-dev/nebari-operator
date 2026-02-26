@@ -25,7 +25,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -98,17 +97,6 @@ var _ = Describe("Service Discovery API", Ordered, func() {
 		patchAuth := exec.Command("kubectl", "set", "env", "deployment/navigator",
 			"-n", namespace, "ENABLE_AUTH=false")
 		_, _ = utils.Run(patchAuth)
-
-		if navImg := os.Getenv("NAVIGATOR_IMG"); navImg != "" {
-			By("Overriding navigator image with locally built image: " + navImg)
-			setImg := exec.Command("kubectl", "set", "image", "deployment/navigator",
-				"api="+navImg, "-n", namespace)
-			_, _ = utils.Run(setImg)
-			patchPull := exec.Command("kubectl", "patch", "deployment/navigator",
-				"-n", namespace, "--type=json",
-				`[{"op":"replace","path":"/spec/template/spec/containers/0/imagePullPolicy","value":"Never"}]`)
-			_, _ = utils.Run(patchPull)
-		}
 
 		By("Waiting for navigator deployment to be ready")
 		rollout := exec.Command("kubectl", "rollout", "status", "deployment/navigator",
