@@ -85,6 +85,14 @@ var _ = Describe("NebariApp Reconciliation", Ordered, func() {
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to label namespace")
 
+		By("waiting for operator namespace to be fully terminated from previous runs")
+		Eventually(func() error {
+			cmd = exec.Command("kubectl", "get", "namespace", "nebari-operator-system")
+			_, err = utils.Run(cmd)
+			return err
+		}, 2*time.Minute, time.Second).Should(HaveOccurred(),
+			"nebari-operator-system should be absent before deploying")
+
 		By("deploying the controller-manager")
 		cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", projectImage))
 		_, err = utils.Run(cmd)
