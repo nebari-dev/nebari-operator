@@ -52,7 +52,7 @@ var _ = Describe("Manager", Ordered, func() {
 		cmd := exec.Command("kubectl", "create", "ns", namespace, "--dry-run=client", "-o", "yaml")
 		output, err := utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to generate namespace yaml")
-		
+
 		cmd = exec.Command("kubectl", "apply", "-f", "-")
 		cmd.Stdin = strings.NewReader(output)
 		_, err = utils.Run(cmd)

@@ -389,8 +389,8 @@ type ServiceListResponse struct {
 		Authenticated []interface{} `json:"authenticated"`
 		Private       []interface{} `json:"private"`
 	} `json:"services"`
-	Categories []string          `json:"categories"`
-	User       *ServiceListUser  `json:"user,omitempty"`
+	Categories []string         `json:"categories"`
+	User       *ServiceListUser `json:"user,omitempty"`
 }
 
 // ServiceListUser mirrors the UserInfo returned by the webapi API
