@@ -378,7 +378,7 @@ func (p *KeycloakProvider) syncClientScopes(ctx context.Context, kcClient *goclo
 	}
 
 	for _, scopeName := range nebariApp.Spec.Auth.Scopes {
-		// "openid" is always implicit in OIDC — skip it
+		// "openid" is always implicit in OIDC - skip it
 		if scopeName == "openid" {
 			continue
 		}
@@ -592,7 +592,7 @@ func (p *KeycloakProvider) ensureGroup(ctx context.Context, kcClient *gocloak.Go
 		}
 	}
 
-	// Group doesn't exist — create it
+	// Group doesn't exist - create it
 	newGroup := gocloak.Group{
 		Name: gocloak.StringP(groupName),
 	}

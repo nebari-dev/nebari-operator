@@ -124,7 +124,7 @@ spec:
                           OIDC client. These are applied directly to the client (not to shared client
                           scopes), so each NebariApp gets isolated mapper configuration.
                           When specified, the operator's default mappers (e.g., group-membership) are
-                          not auto-created — the user's configuration takes full control.
+                          not auto-created - the user's configuration takes full control.
                         items:
                           description: KeycloakProtocolMapperConfig defines a protocol
                             mapper with arbitrary configuration.

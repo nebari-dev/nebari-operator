@@ -199,7 +199,7 @@ type KeycloakClientConfig struct {
 	// OIDC client. These are applied directly to the client (not to shared client
 	// scopes), so each NebariApp gets isolated mapper configuration.
 	// When specified, the operator's default mappers (e.g., group-membership) are
-	// not auto-created — the user's configuration takes full control.
+	// not auto-created - the user's configuration takes full control.
 	// +optional
 	ProtocolMappers []KeycloakProtocolMapperConfig `json:"protocolMappers,omitempty"`
 }
