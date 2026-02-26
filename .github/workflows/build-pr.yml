@@ -584,18 +584,18 @@ jobs:
             | Image | Tag | Platforms |
             |-------|-----|-----------|
             | Operator | \`${operatorImage}\` | linux/amd64 + linux/arm64 |
-            | Service Discovery | \`${svcImage}\` | linux/amd64 + linux/arm64 |
+            | WebAPI | \`${svcImage}\` | linux/amd64 + linux/arm64 |
 
             **Test the operator:**
             \`\`\`bash
-            kubectl apply -f https://raw.githubusercontent.com/${{ github.repository }}/${{ github.head_ref || github.ref_name }}/config/default/
+            kubectl apply -k https://github.com/${{ github.repository }}.git/config/default?ref=${{ github.head_ref || github.ref_name }}
             kubectl set image deployment/nebari-operator-controller-manager manager=${operatorImage} -n nebari-operator-system
             \`\`\`
 
-            **Test service discovery:**
+            **Test webapi (service discovery):**
             \`\`\`bash
-            kubectl apply -k deploy/service-discovery/
-            kubectl set image deployment/service-discovery api=${svcImage} -n nebari-system
+            kubectl apply -f https://raw.githubusercontent.com/${{ github.repository }}/${{ github.head_ref || github.ref_name }}/deploy/webapi/manifest.yaml
+            kubectl set image deployment/webapi api=${svcImage} -n nebari-system
             \`\`\`
             `;
 
