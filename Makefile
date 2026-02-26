@@ -119,7 +119,7 @@ render-navigator: ## Render navigator Helm templates to deploy/navigator/manifes
 			--namespace nebari-system \
 			--set navigator.image.repository=$$_nav_repo \
 			--set navigator.image.tag=$$_nav_tag \
-			--set navigator.image.pullPolicy=Never \
+			--set navigator.image.pullPolicy=IfNotPresent \
 			--show-only templates/navigator/deployment.yaml \
 			--show-only templates/navigator/service.yaml \
 			--show-only templates/navigator/serviceaccount.yaml \
