@@ -21,6 +21,7 @@ import (
 	"github.com/nebari-dev/nebari-operator/internal/servicediscovery/auth"
 	"github.com/nebari-dev/nebari-operator/internal/servicediscovery/cache"
 	"github.com/nebari-dev/nebari-operator/internal/servicediscovery/health"
+	"github.com/nebari-dev/nebari-operator/internal/servicediscovery/pins"
 	"github.com/nebari-dev/nebari-operator/internal/servicediscovery/watcher"
 	wshub "github.com/nebari-dev/nebari-operator/internal/servicediscovery/websocket"
 )
@@ -42,6 +43,7 @@ func main() {
 		keycloakRealm  string
 		enableAuth     bool
 		healthInterval int
+		pinsDBPath     string
 	)
 
 	// Flags fall back to environment variables so the binary works naturally when
@@ -58,6 +60,8 @@ func main() {
 		"Enable JWT authentication and authorization (env: ENABLE_AUTH)")
 	flag.IntVar(&healthInterval, "health-interval", envInt("HEALTH_INTERVAL", 30),
 		"Health check interval in seconds (env: HEALTH_INTERVAL)")
+	flag.StringVar(&pinsDBPath, "pins-db", envStr("PINS_DB_PATH", "/data/pins.db"),
+		"Path to the bbolt database file for user pin storage (env: PINS_DB_PATH)")
 
 	opts := zap.Options{
 		Development: true,
@@ -125,7 +129,22 @@ func main() {
 	healthChecker := health.NewHealthChecker(serviceCache, time.Duration(healthInterval)*time.Second)
 	go healthChecker.Start(ctx)
 
-	handler := api.NewHandler(serviceCache, jwtValidator, enableAuth, hub)
+	// Open the pin store (bbolt). The database file is created if it doesn't exist.
+	// A nil store disables the /api/v1/pins endpoints gracefully.
+	var pinStore *pins.PinStore
+	if pinsDBPath != "" {
+		ps, err := pins.NewPinStore(pinsDBPath)
+		if err != nil {
+			setupLog.Error(err, "Failed to open pin store", "path", pinsDBPath)
+			os.Exit(1)
+		}
+		pinStore = ps
+		setupLog.Info("Pin store opened", "path", pinsDBPath)
+	} else {
+		setupLog.Info("PINS_DB_PATH is empty — pin endpoints disabled")
+	}
+
+	handler := api.NewHandler(serviceCache, jwtValidator, enableAuth, hub, pinStore)
 
 	mux := handler.Routes()
 
@@ -160,6 +179,12 @@ func main() {
 
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		setupLog.Error(err, "Server shutdown failed")
+	}
+
+	if pinStore != nil {
+		if err := pinStore.Close(); err != nil {
+			setupLog.Error(err, "Failed to close pin store")
+		}
 	}
 
 	setupLog.Info("Server stopped")

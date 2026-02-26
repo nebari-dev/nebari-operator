@@ -7,31 +7,21 @@ import (
 	"testing"
 	"time"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
-
-	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
+	sdapp "github.com/nebari-dev/nebari-operator/internal/servicediscovery/app"
 )
 
-func intPtr(i int) *int    { return &i }
-func boolPtr(b bool) *bool { return &b }
-
-func makeApp(uid, name, ns, hostname string, lp *appsv1.LandingPageConfig) *appsv1.NebariApp {
-	return &appsv1.NebariApp{
-		ObjectMeta: metav1.ObjectMeta{
-			UID:       types.UID(uid),
-			Name:      name,
-			Namespace: ns,
-		},
-		Spec: appsv1.NebariAppSpec{
-			Hostname:    hostname,
-			Service:     appsv1.ServiceReference{Name: "svc", Port: 80},
-			LandingPage: lp,
-		},
+// makeApp constructs an sdapp.App for use in cache tests.
+// lp may be nil to simulate an app with no landing-page config.
+func makeApp(uid, name, ns, hostname string, lp *sdapp.LandingPage) *sdapp.App {
+	return &sdapp.App{
+		UID:         uid,
+		Name:        name,
+		Namespace:   ns,
+		Hostname:    hostname,
+		TLSEnabled:  true,
+		LandingPage: lp,
 	}
 }
-
-// --- Add / Remove ---
 
 func TestAdd_NilLandingPage_NoEntry(t *testing.T) {
 	c := NewServiceCache()
@@ -43,11 +33,13 @@ func TestAdd_NilLandingPage_NoEntry(t *testing.T) {
 
 func TestAdd_DisabledLandingPage_RemovesExisting(t *testing.T) {
 	c := NewServiceCache()
-	c.Add(makeApp("uid-1", "app", "ns", "app.example.com", &appsv1.LandingPageConfig{Enabled: true, DisplayName: "App"}))
+	c.Add(makeApp("uid-1", "app", "ns", "app.example.com",
+		&sdapp.LandingPage{Enabled: true, DisplayName: "App"}))
 	if c.Get("uid-1") == nil {
 		t.Fatal("expected service to be cached after Add with Enabled=true")
 	}
-	c.Add(makeApp("uid-1", "app", "ns", "app.example.com", &appsv1.LandingPageConfig{Enabled: false}))
+	c.Add(makeApp("uid-1", "app", "ns", "app.example.com",
+		&sdapp.LandingPage{Enabled: false}))
 	if got := c.Get("uid-1"); got != nil {
 		t.Fatalf("expected nil after disabling, got %+v", got)
 	}
@@ -55,17 +47,16 @@ func TestAdd_DisabledLandingPage_RemovesExisting(t *testing.T) {
 
 func TestAdd_Enabled_StoresCorrectFields(t *testing.T) {
 	c := NewServiceCache()
-	prio := 42
-	lp := &appsv1.LandingPageConfig{
+	lp := &sdapp.LandingPage{
 		Enabled:        true,
 		DisplayName:    "My App",
 		Description:    "A test app",
 		Icon:           "jupyter",
 		Category:       "Development",
-		Priority:       &prio,
+		Priority:       42,
 		Visibility:     "public",
 		RequiredGroups: []string{"admins"},
-		ExternalUrl:    "https://external.example.com",
+		ExternalURL:    "https://external.example.com",
 	}
 	c.Add(makeApp("uid-2", "myapp", "default", "myapp.example.com", lp))
 	svc := c.Get("uid-2")
@@ -96,15 +87,17 @@ func TestAdd_Enabled_StoresCorrectFields(t *testing.T) {
 
 func TestAdd_DefaultPriority(t *testing.T) {
 	c := NewServiceCache()
-	c.Add(makeApp("uid-3", "app", "ns", "app.example.com", &appsv1.LandingPageConfig{Enabled: true}))
+	c.Add(makeApp("uid-3", "app", "ns", "app.example.com",
+		&sdapp.LandingPage{Enabled: true, Priority: 100}))
 	if svc := c.Get("uid-3"); svc.Priority != 100 {
-		t.Errorf("expected default priority 100, got %d", svc.Priority)
+		t.Errorf("expected priority 100, got %d", svc.Priority)
 	}
 }
 
 func TestAdd_DefaultVisibility(t *testing.T) {
 	c := NewServiceCache()
-	c.Add(makeApp("uid-4", "app", "ns", "app.example.com", &appsv1.LandingPageConfig{Enabled: true}))
+	c.Add(makeApp("uid-4", "app", "ns", "app.example.com",
+		&sdapp.LandingPage{Enabled: true, Visibility: "authenticated"}))
 	if svc := c.Get("uid-4"); svc.Visibility != "authenticated" {
 		t.Errorf("expected default visibility 'authenticated', got %q", svc.Visibility)
 	}
@@ -112,7 +105,8 @@ func TestAdd_DefaultVisibility(t *testing.T) {
 
 func TestRemove(t *testing.T) {
 	c := NewServiceCache()
-	c.Add(makeApp("uid-5", "app", "ns", "app.example.com", &appsv1.LandingPageConfig{Enabled: true}))
+	c.Add(makeApp("uid-5", "app", "ns", "app.example.com",
+		&sdapp.LandingPage{Enabled: true}))
 	c.Remove("uid-5")
 	if svc := c.Get("uid-5"); svc != nil {
 		t.Fatalf("expected nil after Remove, got %+v", svc)
@@ -121,23 +115,22 @@ func TestRemove(t *testing.T) {
 
 func TestRemove_NonExistentUID_Noop(t *testing.T) {
 	c := NewServiceCache()
-	c.Remove("does-not-exist") // must not panic
+	c.Remove("does-not-exist")
 }
 
-// --- URL building ---
-
-func TestBuildURL_ExternalUrl(t *testing.T) {
+func TestBuildURL_ExternalURL(t *testing.T) {
 	c := NewServiceCache()
 	c.Add(makeApp("uid-u1", "app", "ns", "app.example.com",
-		&appsv1.LandingPageConfig{Enabled: true, ExternalUrl: "https://custom.example.com/path"}))
+		&sdapp.LandingPage{Enabled: true, ExternalURL: "https://custom.example.com/path"}))
 	if svc := c.Get("uid-u1"); svc.URL != "https://custom.example.com/path" {
-		t.Errorf("expected ExternalUrl, got %q", svc.URL)
+		t.Errorf("expected ExternalURL, got %q", svc.URL)
 	}
 }
 
 func TestBuildURL_DefaultHTTPS(t *testing.T) {
 	c := NewServiceCache()
-	c.Add(makeApp("uid-u2", "app", "ns", "myapp.example.com", &appsv1.LandingPageConfig{Enabled: true}))
+	c.Add(makeApp("uid-u2", "app", "ns", "myapp.example.com",
+		&sdapp.LandingPage{Enabled: true}))
 	if svc := c.Get("uid-u2"); svc.URL != "https://myapp.example.com" {
 		t.Errorf("expected https URL, got %q", svc.URL)
 	}
@@ -145,15 +138,14 @@ func TestBuildURL_DefaultHTTPS(t *testing.T) {
 
 func TestBuildURL_TLSDisabled_HTTP(t *testing.T) {
 	c := NewServiceCache()
-	app := makeApp("uid-u3", "app", "ns", "myapp.example.com", &appsv1.LandingPageConfig{Enabled: true})
-	app.Spec.Routing = &appsv1.RoutingConfig{TLS: &appsv1.RoutingTLSConfig{Enabled: boolPtr(false)}}
-	c.Add(app)
+	a := makeApp("uid-u3", "app", "ns", "myapp.example.com",
+		&sdapp.LandingPage{Enabled: true})
+	a.TLSEnabled = false
+	c.Add(a)
 	if svc := c.Get("uid-u3"); svc.URL != "http://myapp.example.com" {
-		t.Errorf("expected http URL when TLS disabled, got %q", svc.URL)
+		t.Errorf("expected http URL, got %q", svc.URL)
 	}
 }
-
-// --- GetAll ---
 
 func TestGetAll_SortsByPriorityThenName(t *testing.T) {
 	c := NewServiceCache()
@@ -166,14 +158,13 @@ func TestGetAll_SortsByPriorityThenName(t *testing.T) {
 		{"u2", "beta", 50},
 		{"u4", "first", 1},
 	} {
-		lp := &appsv1.LandingPageConfig{Enabled: true, Priority: intPtr(a.prio)}
+		lp := &sdapp.LandingPage{Enabled: true, Priority: a.prio}
 		c.Add(makeApp(a.uid, a.name, "ns", "h.example.com", lp))
 	}
 	all := c.GetAll()
 	if len(all) != 4 {
 		t.Fatalf("expected 4, got %d", len(all))
 	}
-	// Expected order: first(1), zepth(10), alpha(50), beta(50)
 	for i, want := range []string{"first", "zepth", "alpha", "beta"} {
 		if all[i].Name != want {
 			t.Errorf("pos %d: got %q, want %q", i, all[i].Name, want)
@@ -188,13 +179,12 @@ func TestGetAll_EmptyCache(t *testing.T) {
 	}
 }
 
-// --- GetCategories ---
-
 func TestGetCategories_UniqueAndSorted(t *testing.T) {
 	c := NewServiceCache()
 	for i, cat := range []string{"Monitoring", "Development", "Monitoring", "Platform"} {
-		uid := "uid-cat-" + string(rune('0'+i))
-		c.Add(makeApp(uid, "app", "ns", "h.com", &appsv1.LandingPageConfig{Enabled: true, Category: cat}))
+		uid := "uid-cat-" + string(rune(48+i))
+		c.Add(makeApp(uid, "app", "ns", "h.com",
+			&sdapp.LandingPage{Enabled: true, Category: cat}))
 	}
 	cats := c.GetCategories()
 	want := []string{"Development", "Monitoring", "Platform"}
@@ -210,17 +200,17 @@ func TestGetCategories_UniqueAndSorted(t *testing.T) {
 
 func TestGetCategories_EmptyCategory_Excluded(t *testing.T) {
 	c := NewServiceCache()
-	c.Add(makeApp("uid-nc", "app", "ns", "h.com", &appsv1.LandingPageConfig{Enabled: true, Category: ""}))
+	c.Add(makeApp("uid-nc", "app", "ns", "h.com",
+		&sdapp.LandingPage{Enabled: true, Category: ""}))
 	if cats := c.GetCategories(); len(cats) != 0 {
 		t.Errorf("expected no categories, got %v", cats)
 	}
 }
 
-// --- UpdateHealth ---
-
 func TestUpdateHealth_ExistingService(t *testing.T) {
 	c := NewServiceCache()
-	c.Add(makeApp("uid-h", "app", "ns", "h.com", &appsv1.LandingPageConfig{Enabled: true}))
+	c.Add(makeApp("uid-h", "app", "ns", "h.com",
+		&sdapp.LandingPage{Enabled: true}))
 	now := time.Now()
 	c.UpdateHealth("uid-h", &HealthStatus{Status: "healthy", LastCheck: &now, Message: "OK"})
 	svc := c.Get("uid-h")
@@ -231,20 +221,17 @@ func TestUpdateHealth_ExistingService(t *testing.T) {
 
 func TestUpdateHealth_NonExistentUID_Noop(t *testing.T) {
 	c := NewServiceCache()
-	c.UpdateHealth("does-not-exist", &HealthStatus{Status: "healthy"}) // must not panic
+	c.UpdateHealth("does-not-exist", &HealthStatus{Status: "healthy"})
 }
-
-// --- Health preservation ---
 
 func TestAdd_PreservesExistingHealthStatus(t *testing.T) {
 	c := NewServiceCache()
-	app := makeApp("uid-hp", "app", "ns", "h.com", &appsv1.LandingPageConfig{Enabled: true})
-	c.Add(app)
+	a := makeApp("uid-hp", "app", "ns", "h.com", &sdapp.LandingPage{Enabled: true})
+	c.Add(a)
 	now := time.Now()
 	c.UpdateHealth("uid-hp", &HealthStatus{Status: "healthy", LastCheck: &now})
-	// Re-add same app (simulates an update watch event)
-	app.Spec.LandingPage.DisplayName = "Updated"
-	c.Add(app)
+	a.LandingPage.DisplayName = "Updated"
+	c.Add(a)
 	svc := c.Get("uid-hp")
 	if svc.Health == nil || svc.Health.Status != "healthy" {
 		t.Errorf("expected preserved health, got %v", svc.Health)
@@ -253,9 +240,30 @@ func TestAdd_PreservesExistingHealthStatus(t *testing.T) {
 
 func TestAdd_InitialHealthStatus_Unknown(t *testing.T) {
 	c := NewServiceCache()
-	c.Add(makeApp("uid-init", "app", "ns", "h.com", &appsv1.LandingPageConfig{Enabled: true}))
+	c.Add(makeApp("uid-init", "app", "ns", "h.com",
+		&sdapp.LandingPage{Enabled: true}))
 	svc := c.Get("uid-init")
 	if svc.Health == nil || svc.Health.Status != "unknown" {
 		t.Errorf("expected initial health 'unknown', got %v", svc.Health)
+	}
+}
+
+func TestGetByNamespacedName(t *testing.T) {
+	c := NewServiceCache()
+	c.Add(makeApp("uid-ns1", "grafana", "monitoring", "grafana.example.com",
+		&sdapp.LandingPage{Enabled: true}))
+	svc := c.GetByNamespacedName("monitoring", "grafana")
+	if svc == nil {
+		t.Fatal("expected service, got nil")
+	}
+	if svc.UID != "uid-ns1" {
+		t.Errorf("got UID %q, want uid-ns1", svc.UID)
+	}
+}
+
+func TestGetByNamespacedName_NotFound(t *testing.T) {
+	c := NewServiceCache()
+	if svc := c.GetByNamespacedName("ns", "missing"); svc != nil {
+		t.Errorf("expected nil, got %+v", svc)
 	}
 }

@@ -8,6 +8,7 @@ import (
 
 	"github.com/nebari-dev/nebari-operator/internal/servicediscovery/auth"
 	"github.com/nebari-dev/nebari-operator/internal/servicediscovery/cache"
+	"github.com/nebari-dev/nebari-operator/internal/servicediscovery/pins"
 	wshub "github.com/nebari-dev/nebari-operator/internal/servicediscovery/websocket"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
@@ -20,15 +21,18 @@ type Handler struct {
 	jwtValidator *auth.JWTValidator
 	enableAuth   bool
 	hub          *wshub.Hub
+	pinStore     *pins.PinStore
 }
 
-// NewHandler creates a new API handler
-func NewHandler(serviceCache *cache.ServiceCache, jwtValidator *auth.JWTValidator, enableAuth bool, hub *wshub.Hub) *Handler {
+// NewHandler creates a new API handler.
+// pinStore may be nil; when nil the /api/v1/pins endpoints return 501.
+func NewHandler(serviceCache *cache.ServiceCache, jwtValidator *auth.JWTValidator, enableAuth bool, hub *wshub.Hub, pinStore *pins.PinStore) *Handler {
 	return &Handler{
 		cache:        serviceCache,
 		jwtValidator: jwtValidator,
 		enableAuth:   enableAuth,
 		hub:          hub,
+		pinStore:     pinStore,
 	}
 }
 
@@ -46,6 +50,10 @@ func (h *Handler) Routes() http.Handler {
 	if h.hub != nil {
 		mux.HandleFunc("/api/v1/ws", h.hub.ServeWS)
 	}
+
+	// User pins — requires authentication; 501 when no PinStore is configured
+	mux.HandleFunc("/api/v1/pins", h.handleGetPins)
+	mux.HandleFunc("/api/v1/pins/", h.handlePinByUID)
 
 	// Static file serving — only registered when /web/static is present (i.e. frontend
 	// assets were built and included in the image). When running the API-only image
@@ -268,10 +276,111 @@ func (h *Handler) hasRequiredGroups(userGroups, requiredGroups []string) bool {
 	return false
 }
 
+// PinsResponse is the response body for GET /api/v1/pins.
+type PinsResponse struct {
+	// Pins is the ordered list of pinned services (cached ServiceInfo snapshots).
+	Pins []*cache.ServiceInfo `json:"pins"`
+	// UIDs lists exactly which UIDs are stored, including those that are no longer
+	// cached (e.g. the NebariApp was deleted).
+	UIDs []string `json:"uids"`
+}
+
+// handleGetPins serves GET /api/v1/pins.
+// Requires a valid JWT. Returns the caller's pinned services as full ServiceInfo
+// objects, resolved from the live cache. Pins whose UIDs are no longer in the
+// cache are included in UIDs but absent from Pins (graceful stale handling).
+func (h *Handler) handleGetPins(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if h.pinStore == nil {
+		http.Error(w, "Pins feature not configured", http.StatusNotImplemented)
+		return
+	}
+	claims, ok := h.requireAuth(w, r)
+	if !ok {
+		return
+	}
+	uids, err := h.pinStore.Get(claims.PreferredUsername)
+	if err != nil {
+		log.Error(err, "Failed to read pins", "user", claims.PreferredUsername)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	svcs := make([]*cache.ServiceInfo, 0, len(uids))
+	for _, uid := range uids {
+		if svc := h.cache.Get(uid); svc != nil {
+			svcs = append(svcs, svc)
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(PinsResponse{Pins: svcs, UIDs: uids}); err != nil {
+		log.Error(err, "Failed to encode pins response")
+	}
+}
+
+// handlePinByUID serves PUT and DELETE /api/v1/pins/{uid}.
+// PUT pins the service; DELETE unpins it. Both are idempotent.
+// The {uid} segment is the NebariApp UID (UIDType string from status.serviceDiscovery).
+func (h *Handler) handlePinByUID(w http.ResponseWriter, r *http.Request) {
+	if h.pinStore == nil {
+		http.Error(w, "Pins feature not configured", http.StatusNotImplemented)
+		return
+	}
+	claims, ok := h.requireAuth(w, r)
+	if !ok {
+		return
+	}
+	uid := strings.TrimPrefix(r.URL.Path, "/api/v1/pins/")
+	if uid == "" {
+		http.Error(w, "UID is required: /api/v1/pins/{uid}", http.StatusBadRequest)
+		return
+	}
+	switch r.Method {
+	case http.MethodPut:
+		if err := h.pinStore.Pin(claims.PreferredUsername, uid); err != nil {
+			log.Error(err, "Failed to pin service", "user", claims.PreferredUsername, "uid", uid)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	case http.MethodDelete:
+		if err := h.pinStore.Unpin(claims.PreferredUsername, uid); err != nil {
+			log.Error(err, "Failed to unpin service", "user", claims.PreferredUsername, "uid", uid)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// requireAuth validates the JWT on r and returns the claims.
+// On failure it writes an appropriate HTTP error and returns ok=false.
+func (h *Handler) requireAuth(w http.ResponseWriter, r *http.Request) (*auth.Claims, bool) {
+	if !h.enableAuth || h.jwtValidator == nil {
+		// Auth disabled globally — return a synthetic claims with empty username
+		// so that pin operations still work in dev/test mode (all stored under "").
+		return &auth.Claims{PreferredUsername: "_anonymous"}, true
+	}
+	claims, ok := h.extractAndValidateJWT(r)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return nil, false
+	}
+	if claims.PreferredUsername == "" {
+		http.Error(w, "JWT missing preferred_username claim", http.StatusUnauthorized)
+		return nil, false
+	}
+	return claims, true
+}
+
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
 		if r.Method == http.MethodOptions {

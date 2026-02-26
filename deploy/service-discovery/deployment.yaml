@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: service-discovery
+  namespace: nebari-system
+  labels:
+    app: service-discovery
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: service-discovery
+  template:
+    metadata:
+      labels:
+        app: service-discovery
+    spec:
+      serviceAccountName: service-discovery
+      containers:
+        - name: api
+          image: service-discovery:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+              protocol: TCP
+          env:
+            - name: KEYCLOAK_URL
+              value: "https://keycloak.nebari.example.com"
+            - name: KEYCLOAK_REALM
+              value: "nebari"
+            - name: PORT
+              value: "8080"
+            - name: ENABLE_AUTH
+              value: "true"
+            - name: HEALTH_INTERVAL
+              value: "30"
+            - name: PINS_DB_PATH
+              value: "/data/pins.db"
+          volumeMounts:
+            - name: pins-data
+              mountPath: /data
+              # For persistent pins across pod restarts, replace emptyDir with
+              # a PersistentVolumeClaim in a production overlay.
+          livenessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+      volumes:
+        - name: pins-data
+          emptyDir: {}

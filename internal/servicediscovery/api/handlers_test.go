@@ -9,10 +9,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
-
-	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
+	sdapp "github.com/nebari-dev/nebari-operator/internal/servicediscovery/app"
 	"github.com/nebari-dev/nebari-operator/internal/servicediscovery/cache"
 )
 
@@ -24,38 +21,32 @@ func buildCache(entries ...struct {
 }) *cache.ServiceCache {
 	sc := cache.NewServiceCache()
 	for _, e := range entries {
-		prio := e.priority
-		app := &appsv1.NebariApp{
-			ObjectMeta: metav1.ObjectMeta{
-				UID:       types.UID(e.uid),
-				Name:      e.name,
-				Namespace: "default",
+		sc.Add(&sdapp.App{
+			UID:        e.uid,
+			Name:       e.name,
+			Namespace:  "default",
+			Hostname:   e.name + ".example.com",
+			TLSEnabled: true,
+			LandingPage: &sdapp.LandingPage{
+				Enabled:     true,
+				DisplayName: e.name,
+				Category:    e.category,
+				Priority:    e.priority,
+				Visibility:  e.visibility,
 			},
-			Spec: appsv1.NebariAppSpec{
-				Hostname: e.name + ".example.com",
-				Service:  appsv1.ServiceReference{Name: "svc", Port: 80},
-				LandingPage: &appsv1.LandingPageConfig{
-					Enabled:     true,
-					DisplayName: e.name,
-					Category:    e.category,
-					Priority:    &prio,
-					Visibility:  e.visibility,
-				},
-			},
-		}
-		sc.Add(app)
+		})
 	}
 	return sc
 }
 
 // newHandler returns a Handler with auth disabled.
 func newTestHandler(sc *cache.ServiceCache) *Handler {
-	return NewHandler(sc, nil, false, nil)
+	return NewHandler(sc, nil, false, nil, nil)
 }
 
 // newAuthHandler returns a Handler with auth enabled but no validator.
 func newAuthTestHandler(sc *cache.ServiceCache) *Handler {
-	return NewHandler(sc, nil, true, nil)
+	return NewHandler(sc, nil, true, nil, nil)
 }
 
 type entry = struct {
@@ -196,15 +187,17 @@ func TestHandleGetServices_AuthEnabledNoToken_OnlyPublicVisible(t *testing.T) {
 
 func TestHandleGetServices_DefaultVisibility_TreatedAsAuthenticated(t *testing.T) {
 	sc := cache.NewServiceCache()
-	app := &appsv1.NebariApp{
-		ObjectMeta: metav1.ObjectMeta{UID: "u-def", Name: "default-vis", Namespace: "ns"},
-		Spec: appsv1.NebariAppSpec{
-			Hostname:    "h.com",
-			Service:     appsv1.ServiceReference{Name: "svc", Port: 80},
-			LandingPage: &appsv1.LandingPageConfig{Enabled: true}, // no Visibility → defaults to "authenticated"
+	sc.Add(&sdapp.App{
+		UID:        "u-def",
+		Name:       "default-vis",
+		Namespace:  "ns",
+		Hostname:   "h.com",
+		TLSEnabled: true,
+		LandingPage: &sdapp.LandingPage{
+			Enabled:    true,
+			Visibility: "", // no Visibility → defaults to "authenticated"
 		},
-	}
-	sc.Add(app)
+	})
 	rr := doGet(t, newTestHandler(sc).Routes(), "/api/v1/services")
 	var resp ServiceResponse
 	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {

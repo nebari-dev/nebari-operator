@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
+	sdapp "github.com/nebari-dev/nebari-operator/internal/servicediscovery/app"
 )
 
 // ServiceInfo represents a service that appears on the landing page
@@ -44,78 +44,45 @@ func NewServiceCache() *ServiceCache {
 	}
 }
 
-// Add adds or updates a service in the cache.
-// It prefers status.ServiceDiscovery (pre-computed by the controller) when present
-// and enabled, falling back to deriving fields directly from spec for backward
-// compatibility (e.g., before the controller has written the status field).
-func (c *ServiceCache) Add(nebariApp *appsv1.NebariApp) {
-	if nebariApp.Spec.LandingPage == nil || !nebariApp.Spec.LandingPage.Enabled {
-		c.Remove(string(nebariApp.UID))
+// Add adds or updates a service in the cache from an internal App domain object.
+// If a is nil, has no LandingPage, or has a disabled LandingPage, the UID is
+// removed from the cache.
+func (c *ServiceCache) Add(a *sdapp.App) {
+	if a == nil || a.LandingPage == nil || !a.LandingPage.Enabled {
+		if a != nil {
+			c.Remove(a.UID)
+		}
 		return
 	}
 
-	uid := string(nebariApp.UID)
-
-	var (
-		displayName    string
-		description    string
-		url            string
-		icon           string
-		category       string
-		priority       = 100
-		visibility     = "authenticated"
-		requiredGroups []string
-	)
-
-	if sd := nebariApp.Status.ServiceDiscovery; sd != nil && sd.Enabled {
-		// Use the controller's pre-computed, URL-resolved view.
-		displayName = sd.DisplayName
-		description = sd.Description
-		url = sd.URL
-		icon = sd.Icon
-		category = sd.Category
-		if sd.Priority != 0 {
-			priority = sd.Priority
-		}
-		if sd.Visibility != "" {
-			visibility = sd.Visibility
-		}
-		requiredGroups = sd.RequiredGroups
-	} else {
-		// Fall back to spec-derived values (controller hasn't written status yet).
-		lp := nebariApp.Spec.LandingPage
-		displayName = lp.DisplayName
-		description = lp.Description
-		url = buildURL(nebariApp)
-		icon = lp.Icon
-		category = lp.Category
-		if lp.Priority != nil {
-			priority = *lp.Priority
-		}
-		if lp.Visibility != "" {
-			visibility = lp.Visibility
-		}
-		requiredGroups = lp.RequiredGroups
+	lp := a.LandingPage
+	priority := 100
+	if lp.Priority != 0 {
+		priority = lp.Priority
+	}
+	visibility := "authenticated"
+	if lp.Visibility != "" {
+		visibility = lp.Visibility
 	}
 
 	service := &ServiceInfo{
-		UID:            uid,
-		Name:           nebariApp.Name,
-		Namespace:      nebariApp.Namespace,
-		DisplayName:    displayName,
-		Description:    description,
-		URL:            url,
-		Icon:           icon,
-		Category:       category,
+		UID:            a.UID,
+		Name:           a.Name,
+		Namespace:      a.Namespace,
+		DisplayName:    lp.DisplayName,
+		Description:    lp.Description,
+		URL:            buildURL(a),
+		Icon:           lp.Icon,
+		Category:       lp.Category,
 		Priority:       priority,
 		Visibility:     visibility,
-		RequiredGroups: requiredGroups,
-		Health:         c.preserveHealthStatus(uid),
+		RequiredGroups: lp.RequiredGroups,
+		Health:         c.preserveHealthStatus(a.UID),
 	}
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.services[uid] = service
+	c.services[a.UID] = service
 }
 
 // Remove removes a service from the cache
@@ -204,17 +171,13 @@ func (c *ServiceCache) preserveHealthStatus(uid string) *HealthStatus {
 	}
 }
 
-func buildURL(nebariApp *appsv1.NebariApp) string {
-	if nebariApp.Spec.LandingPage.ExternalUrl != "" {
-		return nebariApp.Spec.LandingPage.ExternalUrl
+func buildURL(a *sdapp.App) string {
+	if a.LandingPage != nil && a.LandingPage.ExternalURL != "" {
+		return a.LandingPage.ExternalURL
 	}
-
 	scheme := "https"
-	if nebariApp.Spec.Routing != nil && nebariApp.Spec.Routing.TLS != nil {
-		if nebariApp.Spec.Routing.TLS.Enabled != nil && !*nebariApp.Spec.Routing.TLS.Enabled {
-			scheme = "http"
-		}
+	if !a.TLSEnabled {
+		scheme = "http"
 	}
-
-	return scheme + "://" + nebariApp.Spec.Hostname
+	return scheme + "://" + a.Hostname
 }
