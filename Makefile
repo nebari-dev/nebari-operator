@@ -112,7 +112,7 @@ render-navigator: ## Render navigator Helm templates to deploy/navigator/manifes
 	@if [ -n "$(NAVIGATOR_IMG)" ]; then \
 		_nav_repo=$$(echo "$(NAVIGATOR_IMG)" | cut -d: -f1); \
 		_nav_tag=$$(echo "$(NAVIGATOR_IMG)" | cut -d: -f2-); \
-		echo "Rendering with custom navigator image: $(NAVIGATOR_IMG)"; \
+		echo "Rendering with custom navigator image: $(NAVIGATOR_IMG) (auth enabled — Keycloak nebari realm)"; \
 		helm template nebari-operator dist/chart \
 			--set navigator.enable=true \
 			--set navigator.nameOverride=navigator \
@@ -120,6 +120,7 @@ render-navigator: ## Render navigator Helm templates to deploy/navigator/manifes
 			--set navigator.image.repository=$$_nav_repo \
 			--set navigator.image.tag=$$_nav_tag \
 			--set navigator.image.pullPolicy=IfNotPresent \
+			--set-json 'navigator.env=[{"name":"ENABLE_AUTH","value":"true"},{"name":"KEYCLOAK_URL","value":"http://keycloak-keycloakx-http.keycloak.svc.cluster.local/auth"},{"name":"KEYCLOAK_REALM","value":"nebari"}]' \
 			--show-only templates/navigator/deployment.yaml \
 			--show-only templates/navigator/service.yaml \
 			--show-only templates/navigator/serviceaccount.yaml \

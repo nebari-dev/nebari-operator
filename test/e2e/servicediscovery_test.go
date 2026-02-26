@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os/exec"
 	"strings"
 	"time"
@@ -42,9 +43,11 @@ import (
 
 var _ = Describe("Service Discovery API", Ordered, func() {
 	var (
-		ctx         = context.Background()
-		namespace   = "nebari-system"
-		testAppName = "test-svc-api-app"
+		ctx            = context.Background()
+		namespace      = "nebari-system"
+		testAppName    = "test-svc-api-app"
+		navigatorToken string
+		keycloakPFCmd  *exec.Cmd
 	)
 
 	BeforeAll(func() {
@@ -93,11 +96,6 @@ var _ = Describe("Service Discovery API", Ordered, func() {
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to apply navigator manifests")
 
-		By("Disabling auth on navigator deployment (no Keycloak in test cluster)")
-		patchAuth := exec.Command("kubectl", "set", "env", "deployment/navigator",
-			"-n", namespace, "ENABLE_AUTH=false")
-		_, _ = utils.Run(patchAuth)
-
 		By("Waiting for navigator deployment to be ready")
 		rollout := exec.Command("kubectl", "rollout", "status", "deployment/navigator",
 			"-n", namespace, "--timeout=2m")
@@ -112,6 +110,42 @@ var _ = Describe("Service Discovery API", Ordered, func() {
 				Namespace: namespace,
 			}, &app)
 		}, 2*time.Minute, 5*time.Second).Should(Succeed(), "navigator NebariApp should exist")
+
+		By("Acquiring JWT token from Keycloak for authenticated service discovery tests")
+		keycloakPFCmd = exec.Command("kubectl", "port-forward",
+			"-n", "keycloak", "svc/keycloak-keycloakx-http",
+			"18090:80")
+		Expect(keycloakPFCmd.Start()).NotTo(HaveOccurred(), "keycloak port-forward should start")
+		Eventually(func() error {
+			resp, err := http.Get("http://localhost:18090/auth/realms/nebari/.well-known/openid-configuration")
+			if err != nil {
+				return err
+			}
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				return fmt.Errorf("keycloak not ready: status %d", resp.StatusCode)
+			}
+			return nil
+		}, 30*time.Second, time.Second).Should(Succeed(), "keycloak should be reachable via port-forward")
+
+		tokenResp, err := http.PostForm(
+			"http://localhost:18090/auth/realms/nebari/protocol/openid-connect/token",
+			url.Values{
+				"client_id":  {"admin-cli"},
+				"username":   {"admin"},
+				"password":   {"nebari-admin"},
+				"grant_type": {"password"},
+			})
+		Expect(err).NotTo(HaveOccurred(), "Should be able to request token from Keycloak nebari realm")
+		defer tokenResp.Body.Close()
+		Expect(tokenResp.StatusCode).To(Equal(http.StatusOK),
+			"Keycloak token request should succeed (realm=nebari, user=admin/nebari-admin)")
+		var tokenData struct {
+			AccessToken string `json:"access_token"`
+		}
+		Expect(json.NewDecoder(tokenResp.Body).Decode(&tokenData)).To(Succeed())
+		navigatorToken = tokenData.AccessToken
+		Expect(navigatorToken).NotTo(BeEmpty(), "JWT token must be non-empty")
 	})
 
 	AfterAll(func() {
@@ -123,6 +157,11 @@ var _ = Describe("Service Discovery API", Ordered, func() {
 			},
 		}
 		_ = k8sClient.Delete(ctx, app)
+
+		By("Stopping Keycloak port-forward")
+		if keycloakPFCmd != nil && keycloakPFCmd.Process != nil {
+			_ = keycloakPFCmd.Process.Kill()
+		}
 
 		By("Removing navigator manifests")
 		cmd := exec.Command("kubectl", "delete", "-f", "deploy/navigator/manifest.yaml", "--ignore-not-found")
@@ -181,9 +220,91 @@ var _ = Describe("Service Discovery API", Ordered, func() {
 		})
 
 		It("should filter services based on visibility", func() {
-			// This test would require JWT token generation and API calls
-			// For now, verify the structure is in place
-			Skip("Requires JWT authentication setup in test environment")
+			Expect(navigatorToken).NotTo(BeEmpty(), "JWT token must be available from BeforeAll")
+
+			priority := 50
+			authApp := &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-auth-visibility",
+					Namespace: namespace,
+				},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "test-auth-visibility.nebari.test",
+					Service: appsv1.ServiceReference{
+						Name: "test-service",
+						Port: 8080,
+					},
+					LandingPage: &appsv1.LandingPageConfig{
+						Enabled:     true,
+						DisplayName: "Test Authenticated Service",
+						Description: "Visible only to authenticated users",
+						Category:    "Testing",
+						Visibility:  "authenticated",
+						Priority:    &priority,
+					},
+				},
+			}
+
+			By("Creating NebariApp with authenticated visibility")
+			Expect(k8sClient.Create(ctx, authApp)).To(Succeed())
+			DeferCleanup(func() { _ = k8sClient.Delete(ctx, authApp) })
+
+			By("Port-forwarding to navigator")
+			navPF := exec.Command("kubectl", "port-forward",
+				"-n", namespace, "svc/navigator", "18081:8080")
+			Expect(navPF.Start()).NotTo(HaveOccurred())
+			defer navPF.Process.Kill()
+
+			By("Waiting for navigator port-forward to be ready")
+			Eventually(func() error {
+				resp, err := http.Get("http://localhost:18081/api/v1/health")
+				if err != nil {
+					return err
+				}
+				resp.Body.Close()
+				return nil
+			}, 30*time.Second, time.Second).Should(Succeed())
+
+			// Allow the watcher to process the newly created app
+			time.Sleep(5 * time.Second)
+
+			By("Calling /api/v1/services without a token — authenticated services should be hidden")
+			resp, err := http.Get("http://localhost:18081/api/v1/services")
+			Expect(err).NotTo(HaveOccurred())
+			defer resp.Body.Close()
+			Expect(resp.StatusCode).To(Equal(http.StatusOK))
+			var unauthResult ServiceListResponse
+			Expect(json.NewDecoder(resp.Body).Decode(&unauthResult)).To(Succeed())
+			Expect(unauthResult.Services.Authenticated).To(BeEmpty(),
+				"Authenticated services must not appear without a token")
+			Expect(unauthResult.User).To(BeNil(),
+				"User field must be absent for unauthenticated request")
+
+			By("Calling /api/v1/services with a valid JWT — authenticated services should appear")
+			req, err := http.NewRequest(http.MethodGet, "http://localhost:18081/api/v1/services", nil)
+			Expect(err).NotTo(HaveOccurred())
+			req.Header.Set("Authorization", "Bearer "+navigatorToken)
+			authResp, err := http.DefaultClient.Do(req)
+			Expect(err).NotTo(HaveOccurred())
+			defer authResp.Body.Close()
+			Expect(authResp.StatusCode).To(Equal(http.StatusOK))
+			var authResult ServiceListResponse
+			Expect(json.NewDecoder(authResp.Body).Decode(&authResult)).To(Succeed())
+			Expect(authResult.User).NotTo(BeNil(), "User field must be present for authenticated request")
+			Expect(authResult.User.Authenticated).To(BeTrue())
+			Expect(authResult.User.Username).To(Equal("admin"))
+			Expect(authResult.Services.Authenticated).NotTo(BeEmpty(),
+				"Authenticated services must appear for a logged-in user")
+			authNames := make([]string, 0, len(authResult.Services.Authenticated))
+			for _, s := range authResult.Services.Authenticated {
+				if m, ok := s.(map[string]interface{}); ok {
+					if n, ok := m["name"].(string); ok {
+						authNames = append(authNames, n)
+					}
+				}
+			}
+			Expect(authNames).To(ContainElement("test-auth-visibility"),
+				"The authenticated-visibility NebariApp must appear in authenticated services list")
 		})
 	})
 
@@ -252,7 +373,17 @@ type ServiceListResponse struct {
 		Authenticated []interface{} `json:"authenticated"`
 		Private       []interface{} `json:"private"`
 	} `json:"services"`
-	Categories []string `json:"categories"`
+	Categories []string          `json:"categories"`
+	User       *ServiceListUser  `json:"user,omitempty"`
+}
+
+// ServiceListUser mirrors the UserInfo returned by the navigator API
+type ServiceListUser struct {
+	Authenticated bool     `json:"authenticated"`
+	Username      string   `json:"username,omitempty"`
+	Email         string   `json:"email,omitempty"`
+	Name          string   `json:"name,omitempty"`
+	Groups        []string `json:"groups,omitempty"`
 }
 
 // Helper to parse service list from API
