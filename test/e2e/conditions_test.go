@@ -54,7 +54,8 @@ var _ = Describe("NebariApp Status Conditions", Ordered, func() {
 		cmd = exec.Command("kubectl", "label", "namespace", testNamespace, "nebari.dev/managed=true")
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to label namespace")
-
+			By("undeploying any existing controller-manager")
+			_, _ = utils.Run(exec.Command("make", "undeploy"))
 		By("waiting for operator namespace to be fully terminated from previous runs")
 		Eventually(func() error {
 			cmd = exec.Command("kubectl", "get", "namespace", "nebari-operator-system")

@@ -38,6 +38,9 @@ var _ = Describe("Manager", Ordered, func() {
 	// enforce the restricted security policy to the namespace, installing CRDs,
 	// and deploying the controller.
 	BeforeAll(func() {
+		By("undeploying any existing controller-manager")
+		_, _ = utils.Run(exec.Command("make", "undeploy"))
+
 		By("waiting for operator namespace to be fully terminated from previous runs")
 		// Ginkgo randomizes suite execution order, so a prior suite may have left
 		// nebari-operator-system in a terminating state. Wait for it to be gone.
