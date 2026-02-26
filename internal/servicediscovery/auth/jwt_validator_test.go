@@ -53,8 +53,8 @@ func startJWKSServer(t *testing.T, key *rsa.PrivateKey) *httptest.Server {
 				"kty": "RSA",
 				"kid": testKID,
 				"use": "sig",
-				"n":   encodeBase64URL(key.PublicKey.N),
-				"e":   base64.RawURLEncoding.EncodeToString(eToBytes(key.PublicKey.E)),
+				"n":   encodeBase64URL(key.N),
+				"e":   base64.RawURLEncoding.EncodeToString(eToBytes(key.E)),
 			},
 		},
 	}
@@ -66,7 +66,7 @@ func startJWKSServer(t *testing.T, key *rsa.PrivateKey) *httptest.Server {
 	return srv
 }
 
-func signJWT(t *testing.T, key *rsa.PrivateKey, kid, issuer string, exp time.Time, extra *Claims) string {
+func signJWT(t *testing.T, key *rsa.PrivateKey, issuer string, exp time.Time, extra *Claims) string {
 	t.Helper()
 	if extra == nil {
 		extra = &Claims{}
@@ -77,7 +77,7 @@ func signJWT(t *testing.T, key *rsa.PrivateKey, kid, issuer string, exp time.Tim
 		IssuedAt:  jwt.NewNumericDate(time.Now()),
 	}
 	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, extra)
-	tok.Header["kid"] = kid
+	tok.Header["kid"] = testKID
 	s, err := tok.SignedString(key)
 	if err != nil {
 		t.Fatalf("sign: %v", err)
@@ -101,18 +101,18 @@ func TestParseRSAPublicKey_ValidJWK(t *testing.T) {
 	jwk := JWK{
 		Kty: "RSA",
 		Kid: testKID,
-		N:   encodeBase64URL(key.PublicKey.N),
-		E:   base64.RawURLEncoding.EncodeToString(eToBytes(key.PublicKey.E)),
+		N:   encodeBase64URL(key.N),
+		E:   base64.RawURLEncoding.EncodeToString(eToBytes(key.E)),
 	}
 	pub, err := parseRSAPublicKey(jwk)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if pub.N.Cmp(key.PublicKey.N) != 0 {
+	if pub.N.Cmp(key.N) != 0 {
 		t.Error("N mismatch")
 	}
-	if pub.E != key.PublicKey.E {
-		t.Errorf("E: got %d, want %d", pub.E, key.PublicKey.E)
+	if pub.E != key.E {
+		t.Errorf("E: got %d, want %d", pub.E, key.E)
 	}
 }
 
@@ -125,7 +125,7 @@ func TestParseRSAPublicKey_InvalidN(t *testing.T) {
 
 func TestParseRSAPublicKey_InvalidE(t *testing.T) {
 	key := generateTestKey(t)
-	_, err := parseRSAPublicKey(JWK{Kty: "RSA", Kid: "k", N: encodeBase64URL(key.PublicKey.N), E: "!!!"})
+	_, err := parseRSAPublicKey(JWK{Kty: "RSA", Kid: "k", N: encodeBase64URL(key.N), E: "!!!"})
 	if err == nil {
 		t.Error("expected error for invalid E")
 	}
@@ -174,7 +174,7 @@ func TestValidateToken_Valid(t *testing.T) {
 		Name:              "John Doe",
 		Groups:            []string{"admin", "data-science"},
 	}
-	tokenStr := signJWT(t, key, testKID, issuer, time.Now().Add(time.Hour), claims)
+	tokenStr := signJWT(t, key, issuer, time.Now().Add(time.Hour), claims)
 
 	got, err := v.ValidateToken(tokenStr)
 	if err != nil {
@@ -197,7 +197,7 @@ func TestValidateToken_Expired(t *testing.T) {
 	v := newValidator(t, srv)
 
 	issuer := fmt.Sprintf("%s/realms/%s", srv.URL, testRealm)
-	tokenStr := signJWT(t, key, testKID, issuer, time.Now().Add(-time.Hour), nil)
+	tokenStr := signJWT(t, key, issuer, time.Now().Add(-time.Hour), nil)
 
 	_, err := v.ValidateToken(tokenStr)
 	if err == nil {
@@ -210,7 +210,7 @@ func TestValidateToken_WrongIssuer(t *testing.T) {
 	srv := startJWKSServer(t, key)
 	v := newValidator(t, srv)
 
-	tokenStr := signJWT(t, key, testKID, "https://wrong-issuer.example.com/realms/other", time.Now().Add(time.Hour), nil)
+	tokenStr := signJWT(t, key, "https://wrong-issuer.example.com/realms/other", time.Now().Add(time.Hour), nil)
 
 	_, err := v.ValidateToken(tokenStr)
 	if err == nil {
@@ -248,7 +248,7 @@ func TestValidateToken_Tampered(t *testing.T) {
 	v := newValidator(t, srv)
 
 	issuer := fmt.Sprintf("%s/realms/%s", srv.URL, testRealm)
-	tokenStr := signJWT(t, key, testKID, issuer, time.Now().Add(time.Hour), nil)
+	tokenStr := signJWT(t, key, issuer, time.Now().Add(time.Hour), nil)
 
 	tampered := tokenStr[:len(tokenStr)-5] + "xxxxx"
 	_, err := v.ValidateToken(tampered)

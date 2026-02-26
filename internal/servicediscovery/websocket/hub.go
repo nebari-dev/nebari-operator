@@ -131,7 +131,7 @@ func (h *Hub) drop(conn *websocket.Conn) {
 	defer h.mu.Unlock()
 	if _, ok := h.clients[conn]; ok {
 		delete(h.clients, conn)
-		conn.Close()
+		_ = conn.Close()
 		log.V(1).Info("WebSocket client disconnected")
 	}
 }

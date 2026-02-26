@@ -53,7 +53,7 @@ func TestHub_ClientConnectsAndDisconnects(t *testing.T) {
 		t.Errorf("expected 1 client after connect, got %d", h.ClientCount())
 	}
 
-	conn.Close()
+	_ = conn.Close()
 	time.Sleep(50 * time.Millisecond)
 	if h.ClientCount() != 0 {
 		t.Errorf("expected 0 clients after disconnect, got %d", h.ClientCount())
@@ -65,13 +65,13 @@ func TestHub_BroadcastDeliveredToClient(t *testing.T) {
 	srv := newServer(t, h)
 
 	conn := dialWS(t, srv)
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	time.Sleep(20 * time.Millisecond)
 
 	svc := &landingcache.ServiceInfo{Name: "grafana", Namespace: "monitoring"}
 	h.Broadcast(wshub.Event{Type: wshub.EventAdded, Service: svc})
 
-	conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+	_ = conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
 	_, msg, err := conn.ReadMessage()
 	if err != nil {
 		t.Fatalf("read: %v", err)
@@ -106,13 +106,13 @@ func TestHub_PublishMapsEventTypes(t *testing.T) {
 			srv := newServer(t, h)
 
 			conn := dialWS(t, srv)
-			defer conn.Close()
+			defer func() { _ = conn.Close() }()
 			time.Sleep(20 * time.Millisecond)
 
 			svc := &landingcache.ServiceInfo{Name: "svc"}
 			h.Publish(tc.input, svc)
 
-			conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+			_ = conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
 			_, msg, err := conn.ReadMessage()
 			if err != nil {
 				t.Fatalf("read: %v", err)
@@ -134,8 +134,8 @@ func TestHub_BroadcastToMultipleClients(t *testing.T) {
 
 	conn1 := dialWS(t, srv)
 	conn2 := dialWS(t, srv)
-	defer conn1.Close()
-	defer conn2.Close()
+	defer func() { _ = conn1.Close() }()
+	defer func() { _ = conn2.Close() }()
 	time.Sleep(30 * time.Millisecond)
 
 	if h.ClientCount() != 2 {
@@ -146,7 +146,7 @@ func TestHub_BroadcastToMultipleClients(t *testing.T) {
 	h.Broadcast(wshub.Event{Type: wshub.EventModified, Service: svc})
 
 	for i, c := range []*websocket.Conn{conn1, conn2} {
-		c.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+		_ = c.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
 		_, msg, err := c.ReadMessage()
 		if err != nil {
 			t.Fatalf("client %d read: %v", i+1, err)
