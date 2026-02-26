@@ -80,6 +80,17 @@ var _ = Describe("Service Discovery API", Ordered, func() {
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to apply landing page manifests")
 
+		By("Disabling auth on service-discovery deployment (no Keycloak in test cluster)")
+		patchAuth := exec.Command("kubectl", "set", "env", "deployment/service-discovery",
+			"-n", namespace, "ENABLE_AUTH=false")
+		_, _ = utils.Run(patchAuth)
+
+		By("Waiting for service-discovery deployment to be ready")
+		rollout := exec.Command("kubectl", "rollout", "status", "deployment/service-discovery",
+			"-n", namespace, "--timeout=2m")
+		_, err = utils.Run(rollout)
+		Expect(err).NotTo(HaveOccurred(), "service-discovery deployment should become ready")
+
 		By("Ensuring service-discovery NebariApp is created")
 		Eventually(func() error {
 			var app appsv1.NebariApp
