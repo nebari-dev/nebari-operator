@@ -143,7 +143,7 @@ webapi:
     - name: PORT
       value: "8080"
     - name: ENABLE_AUTH
-      value: "true"
+      value: "false"
     - name: HEALTH_INTERVAL
       value: "30"
 
