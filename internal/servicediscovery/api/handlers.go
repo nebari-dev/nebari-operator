@@ -139,9 +139,15 @@ func (h *Handler) handleGetServices(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if authenticated {
+		username := claims.PreferredUsername
+		if username == "" {
+			// Fall back to the JWT Subject (sub) when preferred_username is not
+			// present in the access token (e.g. Keycloak lightweight tokens).
+			username = claims.Subject
+		}
 		response.User = &UserInfo{
 			Authenticated: true,
-			Username:      claims.PreferredUsername,
+			Username:      username,
 			Email:         claims.Email,
 			Name:          claims.Name,
 			Groups:        claims.Groups,
@@ -370,8 +376,13 @@ func (h *Handler) requireAuth(w http.ResponseWriter, r *http.Request) (*auth.Cla
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return nil, false
 	}
+	// Identify the user by preferred_username; fall back to the JWT Subject (sub)
+	// for Keycloak configurations that omit preferred_username from access tokens.
 	if claims.PreferredUsername == "" {
-		http.Error(w, "JWT missing preferred_username claim", http.StatusUnauthorized)
+		claims.PreferredUsername = claims.Subject
+	}
+	if claims.PreferredUsername == "" {
+		http.Error(w, "JWT missing user identity claim (preferred_username or sub)", http.StatusUnauthorized)
 		return nil, false
 	}
 	return claims, true
