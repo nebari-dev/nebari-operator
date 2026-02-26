@@ -21,7 +21,9 @@ import (
 	"fmt"
 	"time"
 
+	certmanagerv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 
 	corev1 "k8s.io/api/core/v1"
@@ -29,14 +31,17 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/auth"
 	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/core"
 	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/routing"
+	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/tls"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/conditions"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/constants"
 )
@@ -47,6 +52,7 @@ type NebariAppReconciler struct {
 	Scheme            *runtime.Scheme
 	Recorder          record.EventRecorder
 	CoreReconciler    *core.CoreReconciler
+	TLSReconciler     *tls.TLSReconciler
 	RoutingReconciler *routing.RoutingReconciler
 	AuthReconciler    *auth.AuthReconciler
 }
@@ -59,7 +65,7 @@ type NebariAppReconciler struct {
 // +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways,verbs=get;list;watch
+// +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=cert-manager.io,resources=certificates,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gateway.envoyproxy.io,resources=securitypolicies,verbs=get;list;watch;create;update;patch;delete
 
@@ -82,27 +88,6 @@ func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		logger.Error(err, "Failed to get NebariApp")
 		return ctrl.Result{}, err
 	}
-
-	// Initialize core reconciler
-	if r.CoreReconciler == nil {
-		r.CoreReconciler = &core.CoreReconciler{
-			Client:   r.Client,
-			Scheme:   r.Scheme,
-			Recorder: r.Recorder,
-		}
-	}
-
-	// Initialize routing reconciler if needed
-	if r.RoutingReconciler == nil {
-		r.RoutingReconciler = &routing.RoutingReconciler{
-			Client:   r.Client,
-			Scheme:   r.Scheme,
-			Recorder: r.Recorder,
-		}
-	}
-
-	// Note: AuthReconciler should be initialized in main.go with providers configured
-	// Do not lazy-initialize here as it would create an empty Providers map
 
 	// Handle finalizer
 	if nebariApp.DeletionTimestamp.IsZero() {
@@ -157,9 +142,43 @@ func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	// Core validation completed successfully (logged by CoreReconciler)
 
+	// Reconcile TLS certificates and Gateway listener.
+	// When TLSReconciler is nil (TLS_CLUSTER_ISSUER_NAME not set), no per-app Certificate
+	// or Gateway listener is created. The routing reconciler will fall back to the static
+	// "https" listener on the Gateway, which assumes a pre-existing shared HTTPS listener
+	// with a wildcard certificate is already configured.
+	var tlsListenerName string
+	if r.TLSReconciler != nil {
+		tlsResult, err := r.TLSReconciler.ReconcileTLS(ctx, nebariApp)
+		if err != nil {
+			logger.Error(err, "TLS reconciliation failed")
+			conditions.SetCondition(nebariApp, appsv1.ConditionTypeReady, metav1.ConditionFalse,
+				appsv1.ReasonFailed, fmt.Sprintf("TLS reconciliation failed: %v", err))
+			if err := r.Status().Update(ctx, nebariApp); err != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{RequeueAfter: time.Minute}, nil
+		}
+		if tlsResult != nil {
+			tlsListenerName = tlsResult.ListenerName
+			if !tlsResult.CertReady {
+				logger.Info("TLS Certificate not ready yet, will requeue")
+				// Save status so TLSReady=False is visible, then requeue.
+				// The Certificate watch will also trigger re-reconciliation
+				// when the cert becomes ready.
+				nebariApp.Status.ObservedGeneration = nebariApp.Generation
+				if err := r.Status().Update(ctx, nebariApp); err != nil {
+					return ctrl.Result{}, err
+				}
+				return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+			}
+		}
+		logger.Info("TLS reconciled successfully", "nebariapp", nebariApp.Name, "listenerName", tlsListenerName)
+	}
+
 	// Reconcile routing (HTTPRoute creation/update) if routing is configured
 	if nebariApp.Spec.Routing != nil {
-		if err := r.RoutingReconciler.ReconcileRouting(ctx, nebariApp); err != nil {
+		if err := r.RoutingReconciler.ReconcileRouting(ctx, nebariApp, tlsListenerName); err != nil {
 			logger.Error(err, "Routing reconciliation failed")
 			conditions.SetCondition(nebariApp, appsv1.ConditionTypeReady, metav1.ConditionFalse,
 				appsv1.ReasonFailed, fmt.Sprintf("Routing reconciliation failed: %v", err))
@@ -212,6 +231,19 @@ func (r *NebariAppReconciler) cleanup(ctx context.Context, nebariApp *appsv1.Neb
 	logger.Info("Cleaning up resources for NebariApp", "name", nebariApp.Name, "namespace", nebariApp.Namespace)
 
 	r.Recorder.Event(nebariApp, corev1.EventTypeNormal, "Cleanup", "Starting resource cleanup")
+
+	// Cleanup in reverse pipeline order: Auth -> Routing -> TLS.
+	// Auth depends on routing (SecurityPolicy references HTTPRoute), and
+	// routing depends on TLS (HTTPRoute references the per-app listener).
+
+	// Cleanup authentication resources (delete OIDC client if provisioned)
+	if r.AuthReconciler != nil {
+		if err := r.AuthReconciler.CleanupAuth(ctx, nebariApp); err != nil {
+			logger.Error(err, "Failed to cleanup auth resources")
+			return err
+		}
+	}
+
 	// Delete HTTPRoute explicitly (also has ownerReferences for GC)
 	if r.RoutingReconciler != nil {
 		if err := r.RoutingReconciler.CleanupHTTPRoute(ctx, nebariApp); err != nil {
@@ -220,10 +252,10 @@ func (r *NebariAppReconciler) cleanup(ctx context.Context, nebariApp *appsv1.Neb
 		}
 	}
 
-	// Cleanup authentication resources (delete OIDC client if provisioned)
-	if r.AuthReconciler != nil {
-		if err := r.AuthReconciler.CleanupAuth(ctx, nebariApp); err != nil {
-			logger.Error(err, "Failed to cleanup auth resources")
+	// Cleanup TLS resources (Certificate + Gateway listener)
+	if r.TLSReconciler != nil {
+		if err := r.TLSReconciler.CleanupTLS(ctx, nebariApp); err != nil {
+			logger.Error(err, "Failed to cleanup TLS resources")
 			return err
 		}
 	}
@@ -236,11 +268,33 @@ func (r *NebariAppReconciler) cleanup(ctx context.Context, nebariApp *appsv1.Neb
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *NebariAppReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	// Initialize the event recorder
-	r.Recorder = mgr.GetEventRecorderFor("nebariapp-controller")
-
-	return ctrl.NewControllerManagedBy(mgr).
+	builder := ctrl.NewControllerManagedBy(mgr).
 		For(&appsv1.NebariApp{}).
-		Named("nebariapp").
-		Complete(r)
+		Named("nebariapp")
+
+	// Watch cert-manager Certificates so that Certificate readiness transitions
+	// trigger NebariApp reconciliation without waiting for the periodic requeue.
+	// Certificates are matched to NebariApps via the nebari.dev/nebariapp-name
+	// and nebari.dev/nebariapp-namespace labels.
+	if r.TLSReconciler != nil {
+		builder = builder.Watches(
+			&certmanagerv1.Certificate{},
+			handler.EnqueueRequestsFromMapFunc(r.certificateToNebariApp),
+		)
+	}
+
+	return builder.Complete(r)
+}
+
+// certificateToNebariApp maps a cert-manager Certificate to the NebariApp that owns it
+// using the labels set by the TLS reconciler.
+func (r *NebariAppReconciler) certificateToNebariApp(_ context.Context, obj client.Object) []reconcile.Request {
+	name := obj.GetLabels()["nebari.dev/nebariapp-name"]
+	namespace := obj.GetLabels()["nebari.dev/nebariapp-namespace"]
+	if name == "" || namespace == "" {
+		return nil
+	}
+	return []reconcile.Request{
+		{NamespacedName: types.NamespacedName{Name: name, Namespace: namespace}},
+	}
 }

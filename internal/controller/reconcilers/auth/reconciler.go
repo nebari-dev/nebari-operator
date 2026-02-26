@@ -56,6 +56,15 @@ func shouldProvisionClient(auth *appsv1.AuthConfig) bool {
 	return *auth.ProvisionClient
 }
 
+// shouldEnforceAtGateway returns true if the operator should create an Envoy SecurityPolicy.
+// Defaults to true if not explicitly set to false.
+func shouldEnforceAtGateway(auth *appsv1.AuthConfig) bool {
+	if auth == nil || auth.EnforceAtGateway == nil {
+		return true // default
+	}
+	return *auth.EnforceAtGateway
+}
+
 // ReconcileAuth handles authentication configuration for a NebariApp.
 // It validates the auth configuration, provisions OIDC clients if needed,
 // and creates/updates Envoy SecurityPolicy resources.
@@ -109,11 +118,21 @@ func (r *AuthReconciler) ReconcileAuth(ctx context.Context, nebariApp *appsv1.Ne
 		return err
 	}
 
-	// Reconcile SecurityPolicy
-	if err := r.reconcileSecurityPolicy(ctx, nebariApp, provider); err != nil {
-		conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionFalse,
-			"SecurityPolicyFailed", fmt.Sprintf("Failed to reconcile SecurityPolicy: %v", err))
-		return err
+	// Reconcile SecurityPolicy (only if enforceAtGateway is enabled)
+	if shouldEnforceAtGateway(nebariApp.Spec.Auth) {
+		if err := r.reconcileSecurityPolicy(ctx, nebariApp, provider); err != nil {
+			conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionFalse,
+				"SecurityPolicyFailed", fmt.Sprintf("Failed to reconcile SecurityPolicy: %v", err))
+			return err
+		}
+	} else {
+		logger.Info("enforceAtGateway disabled, skipping SecurityPolicy creation")
+		// Delete existing SecurityPolicy if transitioning from enforceAtGateway=true to false
+		if err := r.deleteSecurityPolicyIfExists(ctx, nebariApp); err != nil {
+			conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionFalse,
+				"SecurityPolicyCleanupFailed", fmt.Sprintf("Failed to delete existing SecurityPolicy: %v", err))
+			return err
+		}
 	}
 
 	// Auth configured successfully
@@ -197,6 +216,33 @@ func (r *AuthReconciler) validateAuthConfig(ctx context.Context, nebariApp *apps
 	}
 
 	logger.Info("OIDC client secret validated successfully", "secret", clientSecretName)
+	return nil
+}
+
+// deleteSecurityPolicyIfExists deletes the SecurityPolicy for a NebariApp if it exists.
+// This is used when transitioning from enforceAtGateway=true to enforceAtGateway=false.
+func (r *AuthReconciler) deleteSecurityPolicyIfExists(ctx context.Context, nebariApp *appsv1.NebariApp) error {
+	logger := log.FromContext(ctx)
+
+	securityPolicy := &egv1alpha1.SecurityPolicy{}
+	err := r.Client.Get(ctx, types.NamespacedName{
+		Name:      naming.SecurityPolicyName(nebariApp),
+		Namespace: nebariApp.Namespace,
+	}, securityPolicy)
+
+	if apierrors.IsNotFound(err) {
+		return nil // Nothing to delete
+	}
+	if err != nil {
+		return fmt.Errorf("failed to get SecurityPolicy: %w", err)
+	}
+
+	logger.Info("Deleting SecurityPolicy (enforceAtGateway disabled)", "name", securityPolicy.Name)
+	if err := r.Client.Delete(ctx, securityPolicy); err != nil {
+		return fmt.Errorf("failed to delete SecurityPolicy: %w", err)
+	}
+
+	r.Recorder.Event(nebariApp, corev1.EventTypeNormal, "SecurityPolicyDeleted", "SecurityPolicy deleted (enforceAtGateway disabled)")
 	return nil
 }
 

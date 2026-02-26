@@ -487,6 +487,60 @@ func TestKeycloakProvider_LoadCredentials_RefreshesOnSecretChange(t *testing.T) 
 	}
 }
 
+func TestKeycloakProvider_SyncClientScopes_NoScopes(t *testing.T) {
+	// syncClientScopes should return nil immediately when no scopes are configured
+	provider := &KeycloakProvider{
+		Config: config.KeycloakConfig{
+			Realm: "test",
+		},
+	}
+
+	tests := []struct {
+		name      string
+		nebariApp *appsv1.NebariApp
+	}{
+		{
+			name: "Nil auth config",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app",
+					Namespace: "default",
+				},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "test.example.com",
+				},
+			},
+		},
+		{
+			name: "Empty scopes",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app",
+					Namespace: "default",
+				},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "test.example.com",
+					Auth: &appsv1.AuthConfig{
+						Enabled: true,
+						Scopes:  []string{},
+					},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// syncClientScopes should return nil without making any Keycloak calls
+			// (passing nil kcClient and token proves no API calls are made)
+			err := provider.syncClientScopes(context.Background(), nil, nil, "fake-id", tt.nebariApp)
+			if err != nil {
+				t.Errorf("expected no error, got: %v", err)
+			}
+		})
+	}
+}
+
 func TestKeycloakProvider_DeleteClient(t *testing.T) {
 	// Note: This test is limited because it requires a live Keycloak instance
 	// In a real test environment, you would use httptest to mock the Keycloak API

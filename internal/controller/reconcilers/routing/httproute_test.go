@@ -29,6 +29,7 @@ import (
 
 	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/constants"
+	"github.com/nebari-dev/nebari-operator/internal/controller/utils/naming"
 )
 
 func TestValidateGateway(t *testing.T) {
@@ -83,13 +84,6 @@ func TestValidateGateway(t *testing.T) {
 }
 
 func TestGetGatewayName(t *testing.T) {
-	scheme := runtime.NewScheme()
-	_ = appsv1.AddToScheme(scheme)
-
-	reconciler := &RoutingReconciler{
-		Scheme: scheme,
-	}
-
 	tests := []struct {
 		name            string
 		nebariApp       *appsv1.NebariApp
@@ -126,7 +120,7 @@ func TestGetGatewayName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gatewayName := reconciler.getGatewayName(tt.nebariApp)
+			gatewayName := naming.GatewayName(tt.nebariApp)
 			if gatewayName != tt.expectedGateway {
 				t.Errorf("expected gateway=%s, got gateway=%s", tt.expectedGateway, gatewayName)
 			}
@@ -208,7 +202,7 @@ func TestBuildHTTPRoute(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			route := reconciler.buildHTTPRoute(tt.nebariApp, tt.gatewayName)
+			route := reconciler.buildHTTPRoute(tt.nebariApp, tt.gatewayName, "")
 
 			// Check basic metadata
 			if route.Name == "" {
@@ -437,7 +431,7 @@ func TestReconcileRouting(t *testing.T) {
 				Recorder: record.NewFakeRecorder(10),
 			}
 
-			err := reconciler.ReconcileRouting(context.Background(), tt.nebariApp)
+			err := reconciler.ReconcileRouting(context.Background(), tt.nebariApp, "")
 			if (err != nil) != tt.expectError {
 				t.Errorf("expected error=%v, got error=%v", tt.expectError, err)
 			}
@@ -518,6 +512,96 @@ func TestCleanupHTTPRoute(t *testing.T) {
 			err := reconciler.CleanupHTTPRoute(context.Background(), tt.nebariApp)
 			if (err != nil) != tt.expectError {
 				t.Errorf("expected error=%v, got error=%v", tt.expectError, err)
+			}
+		})
+	}
+}
+
+func TestBuildHTTPRouteWithTLSListener(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = gatewayv1.Install(scheme)
+	_ = appsv1.AddToScheme(scheme)
+
+	boolPtr := func(b bool) *bool { return &b }
+
+	tests := []struct {
+		name                string
+		nebariApp           *appsv1.NebariApp
+		tlsListenerName     string
+		expectedSectionName string
+	}{
+		{
+			name: "TLS listener provided",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-app", Namespace: "default"},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "test.example.com",
+					Service:  appsv1.ServiceReference{Name: "test-svc", Port: 8080},
+					Routing: &appsv1.RoutingConfig{
+						TLS: &appsv1.RoutingTLSConfig{Enabled: boolPtr(true)},
+					},
+				},
+			},
+			tlsListenerName:     "tls-test-app-default",
+			expectedSectionName: "tls-test-app-default",
+		},
+		{
+			name: "No TLS listener falls back to https",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-app", Namespace: "default"},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "test.example.com",
+					Service:  appsv1.ServiceReference{Name: "test-svc", Port: 8080},
+					Routing: &appsv1.RoutingConfig{
+						TLS: &appsv1.RoutingTLSConfig{Enabled: boolPtr(true)},
+					},
+				},
+			},
+			tlsListenerName:     "",
+			expectedSectionName: "https",
+		},
+		{
+			name: "TLS disabled uses http",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-app", Namespace: "default"},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "test.example.com",
+					Service:  appsv1.ServiceReference{Name: "test-svc", Port: 8080},
+					Routing: &appsv1.RoutingConfig{
+						TLS: &appsv1.RoutingTLSConfig{Enabled: boolPtr(false)},
+					},
+				},
+			},
+			tlsListenerName:     "",
+			expectedSectionName: "http",
+		},
+		{
+			name: "TLS disabled ignores listener name",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-app", Namespace: "default"},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "test.example.com",
+					Service:  appsv1.ServiceReference{Name: "test-svc", Port: 8080},
+					Routing: &appsv1.RoutingConfig{
+						TLS: &appsv1.RoutingTLSConfig{Enabled: boolPtr(false)},
+					},
+				},
+			},
+			tlsListenerName:     "tls-test-app-default",
+			expectedSectionName: "http",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reconciler := &RoutingReconciler{Scheme: scheme}
+			route := reconciler.buildHTTPRoute(tt.nebariApp, constants.PublicGatewayName, tt.tlsListenerName)
+			if len(route.Spec.ParentRefs) == 0 {
+				t.Fatal("expected at least one ParentRef")
+			}
+			sectionName := string(*route.Spec.ParentRefs[0].SectionName)
+			if sectionName != tt.expectedSectionName {
+				t.Errorf("expected sectionName %q, got %q", tt.expectedSectionName, sectionName)
 			}
 		})
 	}
