@@ -43,11 +43,10 @@ import (
 
 var _ = Describe("Service Discovery API", Ordered, func() {
 	var (
-		ctx            = context.Background()
-		namespace      = "nebari-system"
-		testAppName    = "test-svc-api-app"
-		navigatorToken string
-		keycloakPFCmd  *exec.Cmd
+		ctx           = context.Background()
+		namespace     = "nebari-system"
+		testAppName   = "test-svc-api-app"
+		keycloakPFCmd *exec.Cmd
 	)
 
 	BeforeAll(func() {
@@ -102,7 +101,7 @@ var _ = Describe("Service Discovery API", Ordered, func() {
 		_, err = utils.Run(rollout)
 		Expect(err).NotTo(HaveOccurred(), "navigator deployment should become ready")
 
-		By("Acquiring JWT token from Keycloak for authenticated service discovery tests")
+		By("Starting Keycloak port-forward for auth tests")
 		keycloakPFCmd = exec.Command("kubectl", "port-forward",
 			"-n", "keycloak", "svc/keycloak-keycloakx-http",
 			"18090:80")
@@ -118,25 +117,6 @@ var _ = Describe("Service Discovery API", Ordered, func() {
 			}
 			return nil
 		}, 30*time.Second, time.Second).Should(Succeed(), "keycloak should be reachable via port-forward")
-
-		tokenResp, err := http.PostForm(
-			"http://localhost:18090/auth/realms/nebari/protocol/openid-connect/token",
-			url.Values{
-				"client_id":  {"admin-cli"},
-				"username":   {"admin"},
-				"password":   {"nebari-admin"},
-				"grant_type": {"password"},
-			})
-		Expect(err).NotTo(HaveOccurred(), "Should be able to request token from Keycloak nebari realm")
-		defer tokenResp.Body.Close()
-		Expect(tokenResp.StatusCode).To(Equal(http.StatusOK),
-			"Keycloak token request should succeed (realm=nebari, user=admin/nebari-admin)")
-		var tokenData struct {
-			AccessToken string `json:"access_token"`
-		}
-		Expect(json.NewDecoder(tokenResp.Body).Decode(&tokenData)).To(Succeed())
-		navigatorToken = tokenData.AccessToken
-		Expect(navigatorToken).NotTo(BeEmpty(), "JWT token must be non-empty")
 	})
 
 	AfterAll(func() {
@@ -211,7 +191,25 @@ var _ = Describe("Service Discovery API", Ordered, func() {
 		})
 
 		It("should filter services based on visibility", func() {
-			Expect(navigatorToken).NotTo(BeEmpty(), "JWT token must be available from BeforeAll")
+			By("Acquiring a fresh JWT token from Keycloak")
+			tokenResp, err := http.PostForm(
+				"http://localhost:18090/auth/realms/nebari/protocol/openid-connect/token",
+				url.Values{
+					"client_id":  {"admin-cli"},
+					"username":   {"admin"},
+					"password":   {"nebari-admin"},
+					"grant_type": {"password"},
+				})
+			Expect(err).NotTo(HaveOccurred(), "Should be able to request token from Keycloak nebari realm")
+			defer tokenResp.Body.Close()
+			Expect(tokenResp.StatusCode).To(Equal(http.StatusOK),
+				"Keycloak token request must succeed (realm=nebari, user=admin/nebari-admin)")
+			var tokenData struct {
+				AccessToken string `json:"access_token"`
+			}
+			Expect(json.NewDecoder(tokenResp.Body).Decode(&tokenData)).To(Succeed())
+			navigatorToken := tokenData.AccessToken
+			Expect(navigatorToken).NotTo(BeEmpty(), "JWT token must be non-empty")
 
 			priority := 50
 			authApp := &appsv1.NebariApp{
