@@ -169,6 +169,16 @@ func (r *RoutingReconciler) buildHTTPRoute(nebariApp *appsv1.NebariApp, gatewayN
 		sectionName = gatewayv1.SectionName(tlsListenerName)
 	}
 
+	// Build HTTPRoute annotations: start with user-supplied annotations from the
+	// routing spec, then apply operator-managed ones so they always take precedence.
+	httpRouteAnnotations := map[string]string{}
+	if nebariApp.Spec.Routing != nil {
+		for k, v := range nebariApp.Spec.Routing.Annotations {
+			httpRouteAnnotations[k] = v
+		}
+	}
+	httpRouteAnnotations["nebari.dev/tls-enabled"] = fmt.Sprintf("%t", tlsEnabled)
+
 	route := &gatewayv1.HTTPRoute{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      routeName,
@@ -178,9 +188,7 @@ func (r *RoutingReconciler) buildHTTPRoute(nebariApp *appsv1.NebariApp, gatewayN
 				"app.kubernetes.io/instance":   nebariApp.Name,
 				"app.kubernetes.io/managed-by": "nebari-operator",
 			},
-			Annotations: map[string]string{
-				"nebari.dev/tls-enabled": fmt.Sprintf("%t", tlsEnabled),
-			},
+			Annotations: httpRouteAnnotations,
 		},
 		Spec: gatewayv1.HTTPRouteSpec{
 			CommonRouteSpec: gatewayv1.CommonRouteSpec{

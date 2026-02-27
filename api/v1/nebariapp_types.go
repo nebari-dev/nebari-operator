@@ -84,6 +84,14 @@ type RoutingConfig struct {
 	// for the application's hostname and adds a per-app HTTPS listener to the shared Gateway.
 	// +optional
 	TLS *RoutingTLSConfig `json:"tls,omitempty"`
+
+	// Annotations defines additional annotations to merge onto the generated HTTPRoute.
+	// Useful for tools like ArgoCD that track resources via annotations
+	// (e.g. argocd.argoproj.io/tracking-id).
+	// These annotations are merged with any operator-managed annotations; operator
+	// annotations always take precedence to avoid breaking internal behaviour.
+	// +optional
+	Annotations map[string]string `json:"annotations,omitempty"`
 }
 
 // RouteMatch defines a path-based routing rule.
