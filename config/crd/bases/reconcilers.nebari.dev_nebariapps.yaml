@@ -247,6 +247,16 @@ spec:
                 description: Routing configures routing behavior including path-based
                   rules and TLS.
                 properties:
+                  annotations:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      Annotations defines additional annotations to merge onto the generated HTTPRoute.
+                      Useful for tools like ArgoCD that track resources via annotations
+                      (e.g. argocd.argoproj.io/tracking-id).
+                      These annotations are merged with any operator-managed annotations; operator
+                      annotations always take precedence to avoid breaking internal behaviour.
+                    type: object
                   routes:
                     description: |-
                       Routes defines path-based routing rules for the application.
