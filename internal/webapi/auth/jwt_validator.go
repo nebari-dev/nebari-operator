@@ -18,6 +18,16 @@ import (
 
 var log = ctrl.Log.WithName("jwt-validator")
 
+// retryMaxAttempts and retryInitialBackoff control the JWKS fetch retry loop in
+// NewJWTValidator. They are package-level variables so tests can override them
+// without incurring real sleep time.
+var (
+	retryMaxAttempts    = 5
+	retryInitialBackoff = 2 * time.Second
+	// retryDelay is called between attempts; replaced in tests to avoid sleeping.
+	retryDelay = time.Sleep
+)
+
 // Claims represents the JWT claims we care about
 type Claims struct {
 	jwt.RegisteredClaims
@@ -50,7 +60,10 @@ type JWKS struct {
 	Keys []JWK `json:"keys"`
 }
 
-// NewJWTValidator creates a new JWT validator
+// NewJWTValidator creates a new JWT validator.
+// It retries the initial JWKS fetch with exponential backoff so that transient
+// Keycloak unavailability (e.g. slow startup, rolling restarts) does not crash
+// the service. retryMaxAttempts attempts are made before returning an error.
 func NewJWTValidator(keycloakURL, realm string) (*JWTValidator, error) {
 	v := &JWTValidator{
 		keycloakURL: strings.TrimSuffix(keycloakURL, "/"),
@@ -58,8 +71,24 @@ func NewJWTValidator(keycloakURL, realm string) (*JWTValidator, error) {
 		publicKeys:  make(map[string]*rsa.PublicKey),
 	}
 
-	if err := v.fetchPublicKeys(); err != nil {
-		return nil, fmt.Errorf("failed to fetch public keys: %w", err)
+	backoff := retryInitialBackoff
+	var lastErr error
+	for attempt := 1; attempt <= retryMaxAttempts; attempt++ {
+		lastErr = v.fetchPublicKeys()
+		if lastErr == nil {
+			break
+		}
+		log.Info("Failed to fetch Keycloak public keys, retrying",
+			"attempt", attempt, "maxRetries", retryMaxAttempts,
+			"backoff", backoff, "error", lastErr,
+			"hint", "verify KEYCLOAK_URL includes the context path (e.g. /auth for Keycloak X)")
+		if attempt < retryMaxAttempts {
+			retryDelay(backoff)
+			backoff *= 2
+		}
+	}
+	if lastErr != nil {
+		return nil, fmt.Errorf("failed to fetch public keys after %d attempts: %w", retryMaxAttempts, lastErr)
 	}
 
 	log.Info("JWT validator initialized", "keycloakURL", keycloakURL, "realm", realm)

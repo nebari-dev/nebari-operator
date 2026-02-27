@@ -134,6 +134,7 @@ func TestParseRSAPublicKey_InvalidE(t *testing.T) {
 // --- NewJWTValidator ---
 
 func TestNewJWTValidator_InvalidURL_ReturnsError(t *testing.T) {
+	withNoBackoff(t, 1)
 	_, err := NewJWTValidator("http://127.0.0.1:1", "realm")
 	if err == nil {
 		t.Error("expected error connecting to invalid URL")
@@ -141,6 +142,7 @@ func TestNewJWTValidator_InvalidURL_ReturnsError(t *testing.T) {
 }
 
 func TestNewJWTValidator_EmptyKeys_ReturnsError(t *testing.T) {
+	withNoBackoff(t, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{"keys": []interface{}{}})
 	}))
@@ -302,5 +304,134 @@ func TestClaims_JSON_RoundTrip(t *testing.T) {
 	}
 	if len(got.Groups) != 2 {
 		t.Errorf("expected 2 groups, got %v", got.Groups)
+	}
+}
+
+// --- NewJWTValidator retry behaviour ---
+
+// withNoBackoff overrides the retry knobs for the duration of a test so that
+// retry loops complete instantly without sleeping.  It also caps the number of
+// attempts to maxAttempts so tests stay deterministic.
+func withNoBackoff(t *testing.T, maxAttempts int) {
+	t.Helper()
+	origDelay := retryDelay
+	origMax := retryMaxAttempts
+	origBackoff := retryInitialBackoff
+
+	retryDelay = func(time.Duration) {} // no-op
+	retryMaxAttempts = maxAttempts
+	retryInitialBackoff = 0
+
+	t.Cleanup(func() {
+		retryDelay = origDelay
+		retryMaxAttempts = origMax
+		retryInitialBackoff = origBackoff
+	})
+}
+
+func TestNewJWTValidator_404_ReturnsError(t *testing.T) {
+	// Regression: KEYCLOAK_URL missing /auth context path causes HTTP 404.
+	withNoBackoff(t, 1)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	_, err := NewJWTValidator(srv.URL, testRealm)
+	if err == nil {
+		t.Fatal("expected error when server returns 404")
+	}
+}
+
+func TestNewJWTValidator_RetriesOnTransientFailure(t *testing.T) {
+	// First 2 requests fail with 503; the third succeeds — validator should be created.
+	withNoBackoff(t, 5)
+
+	key := generateTestKey(t)
+	calls := 0
+	jwks := map[string]interface{}{
+		"keys": []map[string]interface{}{
+			{
+				"kty": "RSA",
+				"kid": testKID,
+				"use": "sig",
+				"n":   encodeBase64URL(key.N),
+				"e":   base64.RawURLEncoding.EncodeToString(eToBytes(key.E)),
+			},
+		},
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls <= 2 {
+			http.Error(w, "service unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(jwks)
+	}))
+	defer srv.Close()
+
+	v, err := NewJWTValidator(srv.URL, testRealm)
+	if err != nil {
+		t.Fatalf("expected success after retries, got: %v", err)
+	}
+	if v == nil {
+		t.Fatal("expected non-nil validator")
+	}
+	if calls != 3 {
+		t.Errorf("expected 3 calls to JWKS endpoint, got %d", calls)
+	}
+}
+
+func TestNewJWTValidator_ExhaustsRetries_ReturnsError(t *testing.T) {
+	// Server always fails — after maxRetries attempts an error must be returned.
+	const attempts = 3
+	withNoBackoff(t, attempts)
+
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	_, err := NewJWTValidator(srv.URL, testRealm)
+	if err == nil {
+		t.Fatal("expected error when all retries are exhausted")
+	}
+	if calls != attempts {
+		t.Errorf("expected exactly %d attempts, got %d", attempts, calls)
+	}
+}
+
+func TestNewJWTValidator_BackoffDoublesOnEachRetry(t *testing.T) {
+	// Verify that the delay passed to retryDelay doubles on each attempt.
+	withNoBackoff(t, 4)
+
+	const initial = 100 * time.Millisecond
+	retryInitialBackoff = initial
+
+	var delays []time.Duration
+	retryDelay = func(d time.Duration) { delays = append(delays, d) }
+
+	// Server always fails so we exercise all retry gaps.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "fail", http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+
+	_, _ = NewJWTValidator(srv.URL, testRealm)
+
+	// With 4 attempts there are 3 inter-attempt delays.
+	if len(delays) != 3 {
+		t.Fatalf("expected 3 delays, got %d: %v", len(delays), delays)
+	}
+	expected := []time.Duration{initial, initial * 2, initial * 4}
+	for i, d := range delays {
+		if d != expected[i] {
+			t.Errorf("delay[%d]: got %v, want %v", i, d, expected[i])
+		}
 	}
 }

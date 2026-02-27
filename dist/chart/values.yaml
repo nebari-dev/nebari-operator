@@ -135,9 +135,14 @@ webapi:
   ## KEYCLOAK_URL, KEYCLOAK_REALM, PORT, ENABLE_AUTH and HEALTH_INTERVAL are
   ## the recognised flags; add extra entries freely.
   ##
+  ## KEYCLOAK_URL must include the context path used by the Keycloak installation.
+  ## The codecentric/keycloakx Helm chart (default) mounts Keycloak under /auth,
+  ## so the URL must end with /auth. Keycloak 17+ run in Quarkus mode serve at
+  ## the root (no /auth suffix needed). Adjust to match your deployment.
+  ##
   env:
     - name: KEYCLOAK_URL
-      value: "https://keycloak.nebari.example.com"
+      value: "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/auth"
     - name: KEYCLOAK_REALM
       value: "nebari"
     - name: PORT
