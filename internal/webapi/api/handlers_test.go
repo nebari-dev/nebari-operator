@@ -150,17 +150,11 @@ func TestHandleGetServices_AuthDisabled_OnlyPublicVisible(t *testing.T) {
 	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
 		t.Fatal(err)
 	}
-	if len(resp.Services.Public) != 1 || resp.Services.Public[0].Name != "pub" {
-		t.Errorf("expected 1 public service, got %v", resp.Services.Public)
+	if len(resp.Services) != 1 {
+		t.Errorf("expected 1 service (public only), got %d", len(resp.Services))
 	}
-	if len(resp.Services.Authenticated) != 0 {
-		t.Errorf("expected 0 authenticated services, got %v", resp.Services.Authenticated)
-	}
-	if len(resp.Services.Private) != 0 {
-		t.Errorf("expected 0 private services, got %v", resp.Services.Private)
-	}
-	if resp.User != nil {
-		t.Errorf("expected no user info, got %v", resp.User)
+	if len(resp.Services) > 0 && resp.Services[0].ID != "u1" {
+		t.Errorf("expected public service 'u1', got %q", resp.Services[0].ID)
 	}
 }
 
@@ -177,11 +171,8 @@ func TestHandleGetServices_AuthEnabledNoToken_OnlyPublicVisible(t *testing.T) {
 	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
 		t.Fatal(err)
 	}
-	if len(resp.Services.Public) != 1 {
-		t.Errorf("expected 1 public service, got %d", len(resp.Services.Public))
-	}
-	if len(resp.Services.Authenticated) != 0 {
-		t.Errorf("expected 0 authenticated services without token, got %d", len(resp.Services.Authenticated))
+	if len(resp.Services) != 1 {
+		t.Errorf("expected 1 service without token, got %d", len(resp.Services))
 	}
 }
 
@@ -203,12 +194,13 @@ func TestHandleGetServices_DefaultVisibility_TreatedAsAuthenticated(t *testing.T
 	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
 		t.Fatal(err)
 	}
-	if len(resp.Services.Authenticated) != 0 {
-		t.Errorf("expected 0 authenticated services without token, got %d", len(resp.Services.Authenticated))
+	// auth disabled + default visibility → service is not shown to unauthenticated callers
+	if len(resp.Services) != 0 {
+		t.Errorf("expected 0 services without token, got %d", len(resp.Services))
 	}
 }
 
-func TestHandleGetServices_ResponseContainsCategories(t *testing.T) {
+func TestHandleGetServices_ServiceView_CategoryIsArray(t *testing.T) {
 	sc := buildCache(
 		entry{"u1", "a", "public", "Tools", 0},
 		entry{"u2", "b", "public", "Data", 0},
@@ -218,54 +210,81 @@ func TestHandleGetServices_ResponseContainsCategories(t *testing.T) {
 	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
 		t.Fatal(err)
 	}
-	if len(resp.Categories) != 2 {
-		t.Errorf("expected 2 categories, got %v", resp.Categories)
+	if len(resp.Services) != 2 {
+		t.Fatalf("expected 2 services, got %d", len(resp.Services))
+	}
+	for _, svc := range resp.Services {
+		if len(svc.Category) != 1 {
+			t.Errorf("expected category array of length 1, got %v", svc.Category)
+		}
 	}
 }
 
-// --- /api/v1/services/{namespace}/{name} ---
+func TestHandleGetServices_ServiceView_HasRequiredFields(t *testing.T) {
+	sc := buildCache(entry{"uid-1", "grafana", "public", "Monitoring", 0})
+	rr := doGet(t, newTestHandler(sc).Routes(), "/api/v1/services")
+	var resp ServiceResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Services) != 1 {
+		t.Fatalf("expected 1 service, got %d", len(resp.Services))
+	}
+	svc := resp.Services[0]
+	if svc.ID != "uid-1" {
+		t.Errorf("expected id 'uid-1', got %q", svc.ID)
+	}
+	if svc.Status == "" {
+		t.Error("expected non-empty status")
+	}
+	if svc.Pinned {
+		t.Error("expected pinned=false without a pin store")
+	}
+}
 
-func TestHandleGetService_NotFound(t *testing.T) {
-	rr := doGet(t, newTestHandler(cache.NewServiceCache()).Routes(), "/api/v1/services/default/does-not-exist")
+// --- /api/v1/services/{id} ---
+
+func TestHandleGetServiceByUID_NotFound(t *testing.T) {
+	rr := doGet(t, newTestHandler(cache.NewServiceCache()).Routes(), "/api/v1/services/does-not-exist")
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("expected 404, got %d", rr.Code)
 	}
 }
 
-func TestHandleGetService_PublicAccess_NoAuth(t *testing.T) {
+func TestHandleGetServiceByUID_PublicAccess_NoAuth(t *testing.T) {
 	sc := buildCache(entry{"uid-pub", "pub", "public", "", 0})
-	rr := doGet(t, newTestHandler(sc).Routes(), "/api/v1/services/default/pub")
+	rr := doGet(t, newTestHandler(sc).Routes(), "/api/v1/services/uid-pub")
 	if rr.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", rr.Code)
 	}
-	var svc cache.ServiceInfo
+	var svc ServiceView
 	if err := json.NewDecoder(rr.Body).Decode(&svc); err != nil {
 		t.Fatal(err)
 	}
-	if svc.Name != "pub" {
-		t.Errorf("expected name 'pub', got %q", svc.Name)
+	if svc.ID != "uid-pub" {
+		t.Errorf("expected id 'uid-pub', got %q", svc.ID)
 	}
 }
 
-func TestHandleGetService_AuthenticatedService_Forbidden_NoAuth(t *testing.T) {
+func TestHandleGetServiceByUID_AuthenticatedService_Forbidden_NoAuth(t *testing.T) {
 	sc := buildCache(entry{"uid-auth", "auth-svc", "authenticated", "", 0})
-	rr := doGet(t, newTestHandler(sc).Routes(), "/api/v1/services/default/auth-svc")
+	rr := doGet(t, newTestHandler(sc).Routes(), "/api/v1/services/uid-auth")
 	if rr.Code != http.StatusForbidden {
 		t.Errorf("expected 403, got %d", rr.Code)
 	}
 }
 
-func TestHandleGetService_PrivateService_Forbidden_NoAuth(t *testing.T) {
+func TestHandleGetServiceByUID_PrivateService_Forbidden_NoAuth(t *testing.T) {
 	sc := buildCache(entry{"uid-priv", "priv-svc", "private", "", 0})
-	rr := doGet(t, newTestHandler(sc).Routes(), "/api/v1/services/default/priv-svc")
+	rr := doGet(t, newTestHandler(sc).Routes(), "/api/v1/services/uid-priv")
 	if rr.Code != http.StatusForbidden {
 		t.Errorf("expected 403, got %d", rr.Code)
 	}
 }
 
-func TestHandleGetService_MethodNotAllowed(t *testing.T) {
+func TestHandleGetServiceByUID_MethodNotAllowed(t *testing.T) {
 	sc := buildCache(entry{"u1", "pub", "public", "", 0})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/services/default/pub", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/services/u1", nil)
 	rr := httptest.NewRecorder()
 	newTestHandler(sc).Routes().ServeHTTP(rr, req)
 	if rr.Code != http.StatusMethodNotAllowed {
@@ -273,12 +292,25 @@ func TestHandleGetService_MethodNotAllowed(t *testing.T) {
 	}
 }
 
-func TestHandleGetService_MissingNameOrNamespace_BadRequest(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/services/only-one-segment", nil)
+func TestHandleGetServiceByUID_EmptyID_BadRequest(t *testing.T) {
+	// /api/v1/services/ with trailing slash but no ID
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/services/", nil)
 	rr := httptest.NewRecorder()
 	newTestHandler(cache.NewServiceCache()).Routes().ServeHTTP(rr, req)
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", rr.Code)
+	}
+}
+
+// --- /api/v1/services/{id}/request_access ---
+
+func TestHandleRequestAccess_NotImplemented(t *testing.T) {
+	sc := buildCache(entry{"uid-pub", "pub", "public", "", 0})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/services/uid-pub/request_access", nil)
+	rr := httptest.NewRecorder()
+	newTestHandler(sc).Routes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusNotImplemented {
+		t.Errorf("expected 501, got %d", rr.Code)
 	}
 }
 
@@ -300,6 +332,49 @@ func TestCORSHeaders_OptionsReturns200(t *testing.T) {
 	}
 }
 
+// --- /api/v1/caller-identity ---
+
+func TestHandleCallerIdentity_NoToken_Unauthenticated(t *testing.T) {
+	rr := doGet(t, newAuthTestHandler(cache.NewServiceCache()).Routes(), "/api/v1/caller-identity")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	var resp CallerIdentityResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Authenticated {
+		t.Errorf("expected authenticated=false without token, got %v", resp)
+	}
+	if resp.Username != "" {
+		t.Errorf("expected empty username, got %q", resp.Username)
+	}
+}
+
+func TestHandleCallerIdentity_AuthDisabled_Unauthenticated(t *testing.T) {
+	rr := doGet(t, newTestHandler(cache.NewServiceCache()).Routes(), "/api/v1/caller-identity")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	var resp CallerIdentityResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	// auth disabled → no JWT validated → authenticated=false
+	if resp.Authenticated {
+		t.Errorf("expected authenticated=false when auth is disabled, got %v", resp)
+	}
+}
+
+func TestHandleCallerIdentity_MethodNotAllowed(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/caller-identity", nil)
+	rr := httptest.NewRecorder()
+	newTestHandler(cache.NewServiceCache()).Routes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", rr.Code)
+	}
+}
+
 // --- Auth header extraction ---
 
 func TestHandleGetServices_InvalidAuthHeader_TreatedAsUnauthenticated(t *testing.T) {
@@ -314,7 +389,38 @@ func TestHandleGetServices_InvalidAuthHeader_TreatedAsUnauthenticated(t *testing
 	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
 		t.Fatal(err)
 	}
-	if len(resp.Services.Authenticated) != 0 {
-		t.Errorf("expected 0 authenticated services with bad auth header, got %d", len(resp.Services.Authenticated))
+	// only the public service should be returned with a bad auth header
+	if len(resp.Services) != 1 {
+		t.Errorf("expected 1 service (public) with bad auth header, got %d", len(resp.Services))
+	}
+}
+
+// --- /api/v1/notifications ---
+
+func TestHandleGetNotifications_ReturnsEmptyList(t *testing.T) {
+	rr := doGet(t, newTestHandler(cache.NewServiceCache()).Routes(), "/api/v1/notifications")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	var body map[string]interface{}
+	if err := json.NewDecoder(rr.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	notifs, ok := body["notifications"]
+	if !ok {
+		t.Fatal("expected 'notifications' key in response")
+	}
+	list, ok := notifs.([]interface{})
+	if !ok || len(list) != 0 {
+		t.Errorf("expected empty notifications array, got %v", notifs)
+	}
+}
+
+func TestHandleGetNotifications_MethodNotAllowed(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/notifications", nil)
+	rr := httptest.NewRecorder()
+	newTestHandler(cache.NewServiceCache()).Routes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", rr.Code)
 	}
 }
