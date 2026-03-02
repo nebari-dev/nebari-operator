@@ -53,7 +53,7 @@ func main() {
 		"Port to listen on (env: PORT)")
 	// Note: controller-runtime registers --kubeconfig in its own init(); use ctrl.GetConfig() below.
 	flag.StringVar(&keycloakURL, "keycloak-url", os.Getenv("KEYCLOAK_URL"),
-		"Keycloak base URL, e.g. https://keycloak.example.com (env: KEYCLOAK_URL)")
+		"Keycloak base URL for JWK fetching, e.g. http://keycloak-internal:8080/auth (env: KEYCLOAK_URL)")
 	flag.StringVar(&keycloakRealm, "keycloak-realm", envStr("KEYCLOAK_REALM", "main"),
 		"Keycloak realm name (env: KEYCLOAK_REALM)")
 	flag.BoolVar(&enableAuth, "enable-auth", envBool("ENABLE_AUTH", false),
@@ -120,6 +120,13 @@ func main() {
 		if err != nil {
 			setupLog.Error(err, "Failed to create JWT validator")
 			os.Exit(1)
+		}
+		// KEYCLOAK_ISSUER_URL lets operators keep KEYCLOAK_URL pointing at the
+		// internal cluster address (fast, no TLS) while validating the `iss`
+		// claim against the external public URL that Keycloak embeds in tokens.
+		if issuerURL := os.Getenv("KEYCLOAK_ISSUER_URL"); issuerURL != "" {
+			jwtValidator.SetIssuerURL(issuerURL)
+			setupLog.Info("JWT issuer URL overridden", "issuerURL", issuerURL)
 		}
 		setupLog.Info("JWT validation enabled", "keycloakURL", keycloakURL, "realm", keycloakRealm)
 	} else {

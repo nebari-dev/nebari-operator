@@ -40,10 +40,15 @@ type Claims struct {
 // JWTValidator validates JWT tokens from Keycloak
 type JWTValidator struct {
 	keycloakURL string
-	realm       string
-	publicKeys  map[string]*rsa.PublicKey
-	keysMu      sync.RWMutex
-	lastFetch   time.Time
+	// issuerURL is used to validate the `iss` claim. It defaults to keycloakURL
+	// but can be overridden via SetIssuerURL when the external Keycloak URL
+	// (used in token `iss`) differs from the internal cluster URL used for
+	// JWK fetching.
+	issuerURL  string
+	realm      string
+	publicKeys map[string]*rsa.PublicKey
+	keysMu     sync.RWMutex
+	lastFetch  time.Time
 }
 
 // JWK represents a JSON Web Key
@@ -65,8 +70,10 @@ type JWKS struct {
 // Keycloak unavailability (e.g. slow startup, rolling restarts) does not crash
 // the service. retryMaxAttempts attempts are made before returning an error.
 func NewJWTValidator(keycloakURL, realm string) (*JWTValidator, error) {
+	cleanURL := strings.TrimSuffix(keycloakURL, "/")
 	v := &JWTValidator{
-		keycloakURL: strings.TrimSuffix(keycloakURL, "/"),
+		keycloakURL: cleanURL,
+		issuerURL:   cleanURL, // default; override with SetIssuerURL if needed
 		realm:       realm,
 		publicKeys:  make(map[string]*rsa.PublicKey),
 	}
@@ -93,6 +100,23 @@ func NewJWTValidator(keycloakURL, realm string) (*JWTValidator, error) {
 
 	log.Info("JWT validator initialized", "keycloakURL", keycloakURL, "realm", realm)
 	return v, nil
+}
+
+// SetIssuerURL overrides the URL used to validate the token's `iss` claim.
+// Use this when the Keycloak external URL (written into tokens as "iss") differs
+// from the internal cluster URL used for JWK fetching (KEYCLOAK_URL).
+// An empty string is a no-op; the validator keeps using keycloakURL for issuer
+// validation (default behaviour).
+//
+// Example:
+//
+//	v, _ := auth.NewJWTValidator(internalURL, realm)  // JWKs fetched from internal URL
+//	v.SetIssuerURL(externalURL)                        // iss validated against external URL
+func (v *JWTValidator) SetIssuerURL(url string) {
+	if url == "" {
+		return
+	}
+	v.issuerURL = strings.TrimSuffix(url, "/")
 }
 
 // ValidateToken validates a JWT token and returns the claims
@@ -133,7 +157,7 @@ func (v *JWTValidator) ValidateToken(tokenString string) (*Claims, error) {
 		return nil, fmt.Errorf("invalid token")
 	}
 
-	expectedIssuer := fmt.Sprintf("%s/realms/%s", v.keycloakURL, v.realm)
+	expectedIssuer := fmt.Sprintf("%s/realms/%s", v.issuerURL, v.realm)
 	if claims.Issuer != expectedIssuer {
 		return nil, fmt.Errorf("invalid issuer: expected %s, got %s", expectedIssuer, claims.Issuer)
 	}

@@ -143,6 +143,13 @@ webapi:
   env:
     - name: KEYCLOAK_URL
       value: "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/auth"
+    # KEYCLOAK_ISSUER_URL — optional. Set this to the *external* Keycloak URL
+    # (e.g. https://keycloak.example.com/auth) when it differs from KEYCLOAK_URL.
+    # Keycloak embeds this URL in the `iss` claim of every token it issues; if
+    # KEYCLOAK_ISSUER_URL is unset, KEYCLOAK_URL is used for both JWK fetching
+    # and issuer validation.
+    # - name: KEYCLOAK_ISSUER_URL
+    #   value: "https://keycloak.example.com/auth"
     - name: KEYCLOAK_REALM
       value: "nebari"
     - name: PORT
