@@ -119,7 +119,7 @@ render-webapi: ## Render webapi Helm templates to deploy/webapi/manifest.yaml fo
 			--namespace nebari-system \
 			--set webapi.image.repository=$$_nav_repo \
 			--set webapi.image.tag=$$_nav_tag \
-			--set webapi.image.pullPolicy=IfNotPresent \
+			--set webapi.image.pullPolicy=Always \
 			--set-json 'webapi.env=[{"name":"ENABLE_AUTH","value":"true"},{"name":"KEYCLOAK_URL","value":"http://keycloak-keycloakx-http.keycloak.svc.cluster.local/auth"},{"name":"KEYCLOAK_REALM","value":"nebari"}]' \
 			--show-only templates/webapi/deployment.yaml \
 			--show-only templates/webapi/service.yaml \
