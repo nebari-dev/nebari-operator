@@ -288,10 +288,9 @@ var _ = Describe("Service Discovery API", Ordered, func() {
 			Expect(resp.StatusCode).To(Equal(http.StatusOK))
 			var unauthResult ServiceListResponse
 			Expect(json.NewDecoder(resp.Body).Decode(&unauthResult)).To(Succeed())
-			Expect(unauthResult.Services.Authenticated).To(BeEmpty(),
+			unauthNames := serviceNames(unauthResult)
+			Expect(unauthNames).NotTo(ContainElement("test-auth-visibility"),
 				"Authenticated services must not appear without a token")
-			Expect(unauthResult.User).To(BeNil(),
-				"User field must be absent for unauthenticated request")
 
 			By("Calling /api/v1/services with a valid JWT — authenticated services should appear")
 			req, err := http.NewRequest(http.MethodGet, "http://localhost:18081/api/v1/services", nil)
@@ -303,24 +302,9 @@ var _ = Describe("Service Discovery API", Ordered, func() {
 			Expect(authResp.StatusCode).To(Equal(http.StatusOK))
 			var authResult ServiceListResponse
 			Expect(json.NewDecoder(authResp.Body).Decode(&authResult)).To(Succeed())
-			Expect(authResult.User).NotTo(BeNil(), "User field must be present for authenticated request")
-			Expect(authResult.User.Authenticated).To(BeTrue())
-			// Note: admin-cli in Keycloak is a lightweight-token client that omits
-			// preferred_username from the access token by default. The important
-			// thing is that User.Authenticated is true, proving JWT validation worked.
-			// Username is asserted non-empty only when the client has profile mappers.
-			Expect(authResult.Services.Authenticated).NotTo(BeEmpty(),
-				"Authenticated services must appear for a logged-in user")
-			authNames := make([]string, 0, len(authResult.Services.Authenticated))
-			for _, s := range authResult.Services.Authenticated {
-				if m, ok := s.(map[string]interface{}); ok {
-					if n, ok := m["name"].(string); ok {
-						authNames = append(authNames, n)
-					}
-				}
-			}
+			authNames := serviceNames(authResult)
 			Expect(authNames).To(ContainElement("test-auth-visibility"),
-				"The authenticated-visibility NebariApp must appear in authenticated services list")
+				"The authenticated-visibility NebariApp must appear when logged in")
 		})
 	})
 
@@ -382,18 +366,24 @@ func makeAuthenticatedRequest(endpoint, token string) (*http.Response, error) {
 	return client.Do(req)
 }
 
-// ServiceListResponse matches the API response format
+// ServiceListResponse matches the flat API response format for GET /api/v1/services
 type ServiceListResponse struct {
-	Services struct {
-		Public        []interface{} `json:"public"`
-		Authenticated []interface{} `json:"authenticated"`
-		Private       []interface{} `json:"private"`
-	} `json:"services"`
-	Categories []string         `json:"categories"`
-	User       *ServiceListUser `json:"user,omitempty"`
+	Services []map[string]interface{} `json:"services"`
 }
 
-// ServiceListUser mirrors the UserInfo returned by the webapi API
+// serviceNames extracts the "name" field from each service in the response.
+func serviceNames(r ServiceListResponse) []string {
+	names := make([]string, 0, len(r.Services))
+	for _, s := range r.Services {
+		if n, ok := s["name"].(string); ok {
+			names = append(names, n)
+		}
+	}
+	return names
+}
+
+// ServiceListUser is kept for backward-compat references in older test helpers.
+// Identity is now returned by GET /api/v1/caller-identity.
 type ServiceListUser struct {
 	Authenticated bool     `json:"authenticated"`
 	Username      string   `json:"username,omitempty"`
