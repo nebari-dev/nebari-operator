@@ -17,10 +17,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
+	"github.com/nebari-dev/nebari-operator/internal/webapi/accessrequests"
 	"github.com/nebari-dev/nebari-operator/internal/webapi/api"
 	"github.com/nebari-dev/nebari-operator/internal/webapi/auth"
 	"github.com/nebari-dev/nebari-operator/internal/webapi/cache"
 	"github.com/nebari-dev/nebari-operator/internal/webapi/health"
+	webkeycloak "github.com/nebari-dev/nebari-operator/internal/webapi/keycloak"
+	"github.com/nebari-dev/nebari-operator/internal/webapi/notifications"
 	"github.com/nebari-dev/nebari-operator/internal/webapi/pins"
 	"github.com/nebari-dev/nebari-operator/internal/webapi/watcher"
 	wshub "github.com/nebari-dev/nebari-operator/internal/webapi/websocket"
@@ -38,12 +41,15 @@ func init() {
 
 func main() {
 	var (
-		port           int
-		keycloakURL    string
-		keycloakRealm  string
-		enableAuth     bool
-		healthInterval int
-		pinsDBPath     string
+		port                 int
+		keycloakURL          string
+		keycloakRealm        string
+		enableAuth           bool
+		healthInterval       int
+		pinsDBPath           string
+		accessRequestsDBPath string
+		adminGroup           string
+		notificationsDBPath  string
 	)
 
 	// Flags fall back to environment variables so the binary works naturally when
@@ -62,6 +68,12 @@ func main() {
 		"Health check interval in seconds (env: HEALTH_INTERVAL)")
 	flag.StringVar(&pinsDBPath, "pins-db", envStr("PINS_DB_PATH", "/data/pins.db"),
 		"Path to the bbolt database file for user pin storage (env: PINS_DB_PATH)")
+	flag.StringVar(&accessRequestsDBPath, "access-requests-db", envStr("ACCESS_REQUESTS_DB_PATH", "/data/access_requests.db"),
+		"Path to the bbolt database file for access request storage (env: ACCESS_REQUESTS_DB_PATH)")
+	flag.StringVar(&adminGroup, "admin-group", envStr("ADMIN_GROUP", "admin"),
+		"Keycloak group whose members may access admin endpoints (env: ADMIN_GROUP)")
+	flag.StringVar(&notificationsDBPath, "notifications-db", envStr("NOTIFICATIONS_DB_PATH", "/data/notifications.db"),
+		"Path to the bbolt database file for notifications (env: NOTIFICATIONS_DB_PATH)")
 
 	opts := zap.Options{
 		Development: true,
@@ -151,7 +163,55 @@ func main() {
 		setupLog.Info("PINS_DB_PATH is empty — pin endpoints disabled")
 	}
 
-	handler := api.NewHandler(serviceCache, jwtValidator, enableAuth, hub, pinStore)
+	// Open the access request store. A nil store returns 501 on the request-access endpoints.
+	var accessRequestStore *accessrequests.Store
+	if accessRequestsDBPath != "" {
+		ars, err := accessrequests.NewStore(accessRequestsDBPath)
+		if err != nil {
+			setupLog.Error(err, "Failed to open access request store", "path", accessRequestsDBPath)
+			os.Exit(1)
+		}
+		accessRequestStore = ars
+		setupLog.Info("Access request store opened", "path", accessRequestsDBPath)
+	} else {
+		setupLog.Info("ACCESS_REQUESTS_DB_PATH is empty — access request endpoints disabled")
+	}
+
+	// Open the notification store. A nil store returns an empty list on GET and 501 on sub-routes.
+	var notificationStore *notifications.Store
+	if notificationsDBPath != "" {
+		ns, err := notifications.NewStore(notificationsDBPath)
+		if err != nil {
+			setupLog.Error(err, "Failed to open notification store", "path", notificationsDBPath)
+			os.Exit(1)
+		}
+		notificationStore = ns
+		setupLog.Info("Notification store opened", "path", notificationsDBPath)
+	} else {
+		setupLog.Info("NOTIFICATIONS_DB_PATH is empty — notifications endpoints return empty list")
+	}
+
+	// Build Keycloak admin client from the same env vars the operator uses.
+	// This is non-fatal: when creds are absent the approve endpoint still updates
+	// the store record; it just skips the Keycloak group-membership step and logs
+	// a warning.
+	var keycloakAdminClient *webkeycloak.Client
+	if kc, err := webkeycloak.NewFromEnv(); err != nil {
+		setupLog.Info("Keycloak admin client not configured — group membership will not be updated on approval",
+			"hint", "set KEYCLOAK_ADMIN_USERNAME and KEYCLOAK_ADMIN_PASSWORD")
+	} else {
+		keycloakAdminClient = kc
+		setupLog.Info("Keycloak admin client configured",
+			"url", os.Getenv("KEYCLOAK_URL"),
+			"realm", os.Getenv("KEYCLOAK_REALM"))
+	}
+
+	handler := api.NewHandler(serviceCache, jwtValidator, enableAuth, hub, pinStore,
+		api.WithAccessRequestStore(accessRequestStore),
+		api.WithAdminGroup(adminGroup),
+		api.WithNotificationStore(notificationStore),
+		api.WithKeycloakAdminClient(keycloakAdminClient),
+	)
 
 	mux := handler.Routes()
 
@@ -191,6 +251,16 @@ func main() {
 	if pinStore != nil {
 		if err := pinStore.Close(); err != nil {
 			setupLog.Error(err, "Failed to close pin store")
+		}
+	}
+	if accessRequestStore != nil {
+		if err := accessRequestStore.Close(); err != nil {
+			setupLog.Error(err, "Failed to close access request store")
+		}
+	}
+	if notificationStore != nil {
+		if err := notificationStore.Close(); err != nil {
+			setupLog.Error(err, "Failed to close notification store")
 		}
 	}
 
