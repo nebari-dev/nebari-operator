@@ -37,4 +37,38 @@ subjects:
     - kind: ServiceAccount
       name: {{ include "nebari-operator.webapiName" . }}
       namespace: {{ .Release.Namespace }}
+---
+# Role + RoleBinding in the Keycloak namespace so the webapi service account
+# can read the admin Secret directly (cross-namespace, same as the operator).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+    labels:
+        app.kubernetes.io/managed-by: {{ .Release.Service }}
+        app.kubernetes.io/name: {{ include "nebari-operator.name" . }}
+        app.kubernetes.io/component: webapi
+    name: {{ include "nebari-operator.webapiName" . }}-keycloak-secret-reader
+    namespace: {{ .Values.webapi.keycloakNamespace | default "keycloak" }}
+rules:
+    - apiGroups: [""]
+      resources: ["secrets"]
+      verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+    labels:
+        app.kubernetes.io/managed-by: {{ .Release.Service }}
+        app.kubernetes.io/name: {{ include "nebari-operator.name" . }}
+        app.kubernetes.io/component: webapi
+    name: {{ include "nebari-operator.webapiName" . }}-keycloak-secret-reader
+    namespace: {{ .Values.webapi.keycloakNamespace | default "keycloak" }}
+roleRef:
+    apiGroup: rbac.authorization.k8s.io
+    kind: Role
+    name: {{ include "nebari-operator.webapiName" . }}-keycloak-secret-reader
+subjects:
+    - kind: ServiceAccount
+      name: {{ include "nebari-operator.webapiName" . }}
+      namespace: {{ .Release.Namespace }}
 {{- end }}

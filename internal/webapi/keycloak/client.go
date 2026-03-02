@@ -25,7 +25,10 @@ import (
 	"strings"
 
 	"github.com/Nerzal/gocloak/v13"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 var log = ctrl.Log.WithName("keycloak-admin")
@@ -88,6 +91,69 @@ func NewFromEnv() (*Client, error) {
 		return nil, err
 	}
 	return New(cfg), nil
+}
+
+// NewFromEnvWithK8sClient is like NewFromEnv but also supports cross-namespace
+// secret lookup via KEYCLOAK_ADMIN_SECRET_NAME / KEYCLOAK_ADMIN_SECRET_NAMESPACE,
+// mirroring the operator's LoadKeycloakCredentials pattern.
+//
+// Precedence for credentials:
+//  1. Kubernetes Secret (KEYCLOAK_ADMIN_SECRET_NAME + KEYCLOAK_ADMIN_SECRET_NAMESPACE)
+//  2. Direct env vars   (KEYCLOAK_ADMIN_USERNAME  + KEYCLOAK_ADMIN_PASSWORD)
+//
+// Secret keys accepted (in priority order): "username" or "admin-username",
+// "password" or "admin-password" — identical to the operator's convention.
+// Returns nil + error only when no credentials could be resolved.
+func NewFromEnvWithK8sClient(ctx context.Context, k8sClient client.Client) (*Client, error) {
+	url := os.Getenv("KEYCLOAK_URL")
+	if url == "" {
+		url = "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/auth"
+	}
+	realm := os.Getenv("KEYCLOAK_REALM")
+	if realm == "" {
+		realm = "nebari"
+	}
+
+	user := os.Getenv("KEYCLOAK_ADMIN_USERNAME")
+	pass := os.Getenv("KEYCLOAK_ADMIN_PASSWORD")
+
+	// Try the Kubernetes Secret first (supports cross-namespace access because
+	// the webapi service account holds a RoleBinding in the keycloak namespace).
+	secretName := os.Getenv("KEYCLOAK_ADMIN_SECRET_NAME")
+	secretNS := os.Getenv("KEYCLOAK_ADMIN_SECRET_NAMESPACE")
+	if secretNS == "" {
+		secretNS = "keycloak"
+	}
+
+	if secretName != "" && k8sClient != nil {
+		secret := &corev1.Secret{}
+		if err := k8sClient.Get(ctx, types.NamespacedName{Name: secretName, Namespace: secretNS}, secret); err == nil {
+			if u, ok := secret.Data["username"]; ok {
+				user = string(u)
+			} else if u, ok := secret.Data["admin-username"]; ok {
+				user = string(u)
+			}
+			if p, ok := secret.Data["password"]; ok {
+				pass = string(p)
+			} else if p, ok := secret.Data["admin-password"]; ok {
+				pass = string(p)
+			}
+			log.Info("Loaded Keycloak admin credentials from Kubernetes secret",
+				"secret", secretName, "namespace", secretNS)
+		} else {
+			log.Error(err, "Failed to read Keycloak admin secret; falling back to env vars",
+				"secret", secretName, "namespace", secretNS)
+		}
+	}
+
+	if user == "" || pass == "" {
+		return nil, errors.New(
+			"Keycloak admin credentials not resolved: set KEYCLOAK_ADMIN_SECRET_NAME " +
+				"(pointing to a secret with 'username'/'password' keys) " +
+				"or KEYCLOAK_ADMIN_USERNAME + KEYCLOAK_ADMIN_PASSWORD",
+		)
+	}
+	return New(Config{URL: url, Realm: realm, AdminUsername: user, AdminPassword: pass}), nil
 }
 
 // authenticate opens a gocloak client and obtains a short-lived admin token.

@@ -36,14 +36,35 @@ spec:
                         name: http
                         protocol: TCP
                   env:
+                    # JWT validation
+                    - name: ENABLE_AUTH
+                      value: "true"
                     - name: KEYCLOAK_URL
+                      value: https://keycloak.nebari.example.com
+                    - name: KEYCLOAK_ISSUER_URL
                       value: https://keycloak.nebari.example.com
                     - name: KEYCLOAK_REALM
                       value: nebari
+                    # Keycloak admin credentials — same Secret + namespace as the operator.
+                    # The webapi service account holds a RoleBinding in the keycloak
+                    # namespace (see rbac.yaml) so it can read this secret directly
+                    # without copying or syncing it into nebari-system.
+                    - name: KEYCLOAK_ADMIN_SECRET_NAME
+                      value: nebari-realm-admin-credentials
+                    - name: KEYCLOAK_ADMIN_SECRET_NAMESPACE
+                      value: keycloak
+                    # Admin access-control
+                    - name: ADMIN_GROUP
+                      value: admin
+                    # Persistent stores (bbolt)
+                    - name: ACCESS_REQUESTS_DB_PATH
+                      value: /data/access_requests.db
+                    - name: NOTIFICATIONS_DB_PATH
+                      value: /data/notifications.db
+                    - name: PINS_DB_PATH
+                      value: /data/pins.db
                     - name: PORT
                       value: "8080"
-                    - name: ENABLE_AUTH
-                      value: "false"
                     - name: HEALTH_INTERVAL
                       value: "30"
                   livenessProbe:
@@ -156,6 +177,42 @@ roleRef:
     apiGroup: rbac.authorization.k8s.io
     kind: ClusterRole
     name: webapi-reader
+subjects:
+    - kind: ServiceAccount
+      name: webapi
+      namespace: nebari-system
+---
+# Source: nebari-operator/templates/webapi/rbac.yaml
+# Role in the keycloak namespace so the webapi service account can read the
+# admin Secret there directly — no ExternalSecret sync or copy job needed.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+    labels:
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: nebari-operator
+        app.kubernetes.io/component: webapi
+    name: webapi-keycloak-secret-reader
+    namespace: keycloak
+rules:
+    - apiGroups: [""]
+      resources: ["secrets"]
+      verbs: ["get"]
+---
+# Source: nebari-operator/templates/webapi/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+    labels:
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: nebari-operator
+        app.kubernetes.io/component: webapi
+    name: webapi-keycloak-secret-reader
+    namespace: keycloak
+roleRef:
+    apiGroup: rbac.authorization.k8s.io
+    kind: Role
+    name: webapi-keycloak-secret-reader
 subjects:
     - kind: ServiceAccount
       name: webapi

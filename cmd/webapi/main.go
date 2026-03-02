@@ -27,6 +27,7 @@ import (
 	"github.com/nebari-dev/nebari-operator/internal/webapi/pins"
 	"github.com/nebari-dev/nebari-operator/internal/webapi/watcher"
 	wshub "github.com/nebari-dev/nebari-operator/internal/webapi/websocket"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 var (
@@ -92,6 +93,13 @@ func main() {
 	config, err := ctrl.GetConfig()
 	if err != nil {
 		setupLog.Error(err, "Failed to get kubeconfig")
+		os.Exit(1)
+	}
+
+	// Build a k8s client for cross-namespace secret reads (Keycloak admin creds).
+	k8sClient, err := client.New(config, client.Options{Scheme: scheme})
+	if err != nil {
+		setupLog.Error(err, "Failed to create Kubernetes client")
 		os.Exit(1)
 	}
 
@@ -192,13 +200,15 @@ func main() {
 	}
 
 	// Build Keycloak admin client from the same env vars the operator uses.
-	// This is non-fatal: when creds are absent the approve endpoint still updates
-	// the store record; it just skips the Keycloak group-membership step and logs
-	// a warning.
+	// Supports cross-namespace secret lookup via KEYCLOAK_ADMIN_SECRET_NAME +
+	// KEYCLOAK_ADMIN_SECRET_NAMESPACE (identical to the operator); falls back to
+	// KEYCLOAK_ADMIN_USERNAME / KEYCLOAK_ADMIN_PASSWORD if no secret is named.
+	// Non-fatal: when creds are absent the approve endpoint still updates the
+	// store record; it just skips the Keycloak group-membership step and warns.
 	var keycloakAdminClient *webkeycloak.Client
-	if kc, err := webkeycloak.NewFromEnv(); err != nil {
+	if kc, err := webkeycloak.NewFromEnvWithK8sClient(ctx, k8sClient); err != nil {
 		setupLog.Info("Keycloak admin client not configured — group membership will not be updated on approval",
-			"hint", "set KEYCLOAK_ADMIN_USERNAME and KEYCLOAK_ADMIN_PASSWORD")
+			"hint", "set KEYCLOAK_ADMIN_SECRET_NAME or KEYCLOAK_ADMIN_USERNAME/PASSWORD")
 	} else {
 		keycloakAdminClient = kc
 		setupLog.Info("Keycloak admin client configured",

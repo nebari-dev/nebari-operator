@@ -120,7 +120,7 @@ render-webapi: ## Render webapi Helm templates to deploy/webapi/manifest.yaml fo
 			--set webapi.image.repository=$$_nav_repo \
 			--set webapi.image.tag=$$_nav_tag \
 			--set webapi.image.pullPolicy=Always \
-			--set-json 'webapi.env=[{"name":"ENABLE_AUTH","value":"true"},{"name":"KEYCLOAK_URL","value":"http://keycloak-keycloakx-http.keycloak.svc.cluster.local/auth"},{"name":"KEYCLOAK_REALM","value":"nebari"}]' \
+			--set-json 'webapi.env=[{"name":"ENABLE_AUTH","value":"true"},{"name":"KEYCLOAK_URL","value":"http://keycloak-keycloakx-http.keycloak.svc.cluster.local/auth"},{"name":"KEYCLOAK_REALM","value":"nebari"},{"name":"KEYCLOAK_ADMIN_SECRET_NAME","value":"nebari-realm-admin-credentials"},{"name":"KEYCLOAK_ADMIN_SECRET_NAMESPACE","value":"keycloak"},{"name":"ADMIN_GROUP","value":"admin"},{"name":"ACCESS_REQUESTS_DB_PATH","value":"/data/access_requests.db"},{"name":"NOTIFICATIONS_DB_PATH","value":"/data/notifications.db"},{"name":"PINS_DB_PATH","value":"/data/pins.db"}]' \
 			--show-only templates/webapi/deployment.yaml \
 			--show-only templates/webapi/service.yaml \
 			--show-only templates/webapi/serviceaccount.yaml \
