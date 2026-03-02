@@ -64,6 +64,7 @@ CLAUDE.md
 # Local dev artefacts
 diff.txt
 landingpage
+/webapi
 bin/service-discovery
 *-coverage.out
 *-coverage.html
