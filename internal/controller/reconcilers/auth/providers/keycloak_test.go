@@ -447,20 +447,8 @@ func TestKeycloakProvider_SyncGroups_Deduplication(t *testing.T) {
 		},
 	}
 
-	// We can't call syncGroups without a real Keycloak, but we can verify the
-	// deduplication logic by checking that the merged map has 3 entries.
-	// The syncGroups method builds a groupMembers map; let's verify the logic inline:
-	groupMembers := make(map[string][]string)
-	for _, g := range nebariApp.Spec.Auth.Groups {
-		if _, ok := groupMembers[g]; !ok {
-			groupMembers[g] = nil
-		}
-	}
-	if nebariApp.Spec.Auth.KeycloakConfig != nil {
-		for _, g := range nebariApp.Spec.Auth.KeycloakConfig.Groups {
-			groupMembers[g.Name] = g.Members
-		}
-	}
+	// Use the exported MergeGroupMembers helper to test the deduplication logic
+	groupMembers := MergeGroupMembers(nebariApp.Spec.Auth.Groups, nebariApp.Spec.Auth.KeycloakConfig)
 
 	if len(groupMembers) != 3 {
 		t.Errorf("expected 3 deduplicated groups, got %d", len(groupMembers))

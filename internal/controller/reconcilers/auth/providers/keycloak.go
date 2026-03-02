@@ -528,23 +528,7 @@ func (p *KeycloakProvider) syncGroups(ctx context.Context, kcClient *gocloak.GoC
 		return nil
 	}
 
-	// Build deduplicated map of group name -> members
-	groupMembers := make(map[string][]string)
-
-	// Collect from spec.auth.groups (no members, just ensure groups exist)
-	for _, g := range nebariApp.Spec.Auth.Groups {
-		if _, ok := groupMembers[g]; !ok {
-			groupMembers[g] = nil
-		}
-	}
-
-	// Collect from keycloakConfig.groups (with optional members)
-	if nebariApp.Spec.Auth.KeycloakConfig != nil {
-		for _, g := range nebariApp.Spec.Auth.KeycloakConfig.Groups {
-			groupMembers[g.Name] = g.Members
-		}
-	}
-
+	groupMembers := MergeGroupMembers(nebariApp.Spec.Auth.Groups, nebariApp.Spec.Auth.KeycloakConfig)
 	if len(groupMembers) == 0 {
 		return nil
 	}
@@ -570,6 +554,31 @@ func (p *KeycloakProvider) syncGroups(ctx context.Context, kcClient *gocloak.GoC
 	}
 
 	return nil
+}
+
+// MergeGroupMembers builds a deduplicated map of group name -> members from
+// spec.auth.groups and keycloakConfig.groups. When the same group name appears
+// in both, keycloakConfig.groups takes precedence.
+func MergeGroupMembers(groups []string, keycloakConfig *appsv1.KeycloakClientConfig) map[string][]string {
+	groupMembers := make(map[string][]string)
+
+	// Collect from spec.auth.groups (no members, just ensure groups exist)
+	for _, g := range groups {
+		if _, ok := groupMembers[g]; !ok {
+			groupMembers[g] = nil
+		}
+	}
+
+	// Collect from keycloakConfig.groups (with optional members).
+	// Note: keycloakConfig.groups takes precedence - if the same group name appears
+	// in both spec.auth.groups and keycloakConfig.groups, the keycloakConfig entry wins.
+	if keycloakConfig != nil {
+		for _, g := range keycloakConfig.Groups {
+			groupMembers[g.Name] = g.Members
+		}
+	}
+
+	return groupMembers
 }
 
 // ensureGroup checks if a group exists in the realm and creates it if missing.
@@ -606,12 +615,17 @@ func (p *KeycloakProvider) ensureGroup(ctx context.Context, kcClient *gocloak.Go
 }
 
 // syncGroupMembers ensures the specified users are members of the given group.
+// This function is additive-only: it adds missing users to the group but does not
+// remove users who are in Keycloak but not in the members list. Manual removal
+// in Keycloak is required if full membership sync is desired.
 // Users that don't exist in Keycloak are logged as warnings but don't cause errors.
 func (p *KeycloakProvider) syncGroupMembers(ctx context.Context, kcClient *gocloak.GoCloak, token *gocloak.JWT, realm, groupID, groupName string, members []string) error {
 	logger := log.FromContext(ctx)
 
-	// Get current group members
-	currentMembers, err := kcClient.GetGroupMembers(ctx, token.AccessToken, realm, groupID, gocloak.GetGroupsParams{})
+	// Get current group members with explicit max to avoid truncation from Keycloak's default page size
+	currentMembers, err := kcClient.GetGroupMembers(ctx, token.AccessToken, realm, groupID, gocloak.GetGroupsParams{
+		Max: gocloak.IntP(1000),
+	})
 	if err != nil {
 		return fmt.Errorf("failed to get group members: %w", err)
 	}
@@ -639,7 +653,7 @@ func (p *KeycloakProvider) syncGroupMembers(ctx context.Context, kcClient *goclo
 		}
 
 		if len(users) == 0 {
-			logger.Info("WARNING: User not found in Keycloak, skipping group assignment",
+			logger.Info("User not found in Keycloak, skipping group assignment",
 				"username", username, "group", groupName)
 			continue
 		}
