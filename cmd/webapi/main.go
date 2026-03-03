@@ -16,7 +16,6 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
 	"github.com/nebari-dev/nebari-operator/internal/webapi/accessrequests"
 	"github.com/nebari-dev/nebari-operator/internal/webapi/api"
 	"github.com/nebari-dev/nebari-operator/internal/webapi/auth"
@@ -37,7 +36,6 @@ var (
 
 func init() {
 	_ = clientgoscheme.AddToScheme(scheme)
-	_ = appsv1.AddToScheme(scheme)
 }
 
 func main() {

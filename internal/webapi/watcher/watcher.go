@@ -5,16 +5,27 @@ import (
 	"fmt"
 	"time"
 
-	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
 	sdapp "github.com/nebari-dev/nebari-operator/internal/webapi/app"
 	landingcache "github.com/nebari-dev/nebari-operator/internal/webapi/cache"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	ctrl "sigs.k8s.io/controller-runtime"
 	cachepkg "sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+// nebariAppGVK is the GroupVersionKind for the NebariApp CRD.
+// Using the GVK directly (instead of a registered scheme type) means this
+// package has zero dependency on the nebari-operator/api module, making the
+// webapi binary fully self-contained and movable to its own repository.
+var nebariAppGVK = schema.GroupVersionKind{
+	Group:   "reconcilers.nebari.dev",
+	Version: "v1",
+	Kind:    "NebariApp",
+}
 
 var log = ctrl.Log.WithName("watcher")
 
@@ -95,22 +106,28 @@ func (w *NebariAppWatcher) Start(ctx context.Context) error {
 }
 
 func (w *NebariAppWatcher) syncInitial(ctx context.Context) error {
-	nebariAppList := &appsv1.NebariAppList{}
-	if err := w.client.List(ctx, nebariAppList); err != nil {
+	list := &unstructured.UnstructuredList{}
+	list.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   nebariAppGVK.Group,
+		Version: nebariAppGVK.Version,
+		Kind:    nebariAppGVK.Kind + "List",
+	})
+	if err := w.client.List(ctx, list); err != nil {
 		return fmt.Errorf("failed to list NebariApps: %w", err)
 	}
 
-	log.Info("Found NebariApp resources", "count", len(nebariAppList.Items))
+	log.Info("Found NebariApp resources", "count", len(list.Items))
 
-	for i := range nebariAppList.Items {
-		nebariApp := &nebariAppList.Items[i]
-		if nebariApp.Spec.LandingPage != nil && nebariApp.Spec.LandingPage.Enabled {
+	for i := range list.Items {
+		u := &list.Items[i]
+		if lpEnabled(u) {
+			displayName, _, _ := unstructured.NestedString(u.Object, "spec", "landingPage", "displayName")
 			log.Info("Adding service to cache",
-				"name", nebariApp.Name,
-				"namespace", nebariApp.Namespace,
-				"displayName", nebariApp.Spec.LandingPage.DisplayName,
+				"name", u.GetName(),
+				"namespace", u.GetNamespace(),
+				"displayName", displayName,
 			)
-			w.cache.Add(toApp(nebariApp))
+			w.cache.Add(toApp(u))
 		}
 	}
 
@@ -118,7 +135,7 @@ func (w *NebariAppWatcher) syncInitial(ctx context.Context) error {
 }
 
 func (w *NebariAppWatcher) watch(ctx context.Context) error {
-	informer, err := w.kubeCache.GetInformer(ctx, &appsv1.NebariApp{})
+	informer, err := w.kubeCache.GetInformerForKind(ctx, nebariAppGVK)
 	if err != nil {
 		return fmt.Errorf("failed to get informer: %w", err)
 	}
@@ -136,49 +153,66 @@ func (w *NebariAppWatcher) watch(ctx context.Context) error {
 	return nil
 }
 
-func (w *NebariAppWatcher) onAdd(obj interface{}) {
-	nebariApp, ok := obj.(*appsv1.NebariApp)
+// asUnstructured casts obj to *unstructured.Unstructured, handling tombstones.
+func asUnstructured(obj interface{}) (*unstructured.Unstructured, bool) {
+	u, ok := obj.(*unstructured.Unstructured)
+	if ok {
+		return u, true
+	}
+	// The informer may deliver a DeletedFinalStateUnknown tombstone on delete.
+	tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
 	if !ok {
-		log.Error(nil, "Failed to cast object to NebariApp", "type", fmt.Sprintf("%T", obj))
+		return nil, false
+	}
+	u, ok = tombstone.Obj.(*unstructured.Unstructured)
+	return u, ok
+}
+
+func (w *NebariAppWatcher) onAdd(obj interface{}) {
+	u, ok := asUnstructured(obj)
+	if !ok {
+		log.Error(nil, "Failed to cast object to Unstructured", "type", fmt.Sprintf("%T", obj))
 		return
 	}
 
-	if nebariApp.Spec.LandingPage != nil && nebariApp.Spec.LandingPage.Enabled {
+	if lpEnabled(u) {
+		displayName, _, _ := unstructured.NestedString(u.Object, "spec", "landingPage", "displayName")
 		log.Info("Service added",
-			"name", nebariApp.Name,
-			"namespace", nebariApp.Namespace,
-			"displayName", nebariApp.Spec.LandingPage.DisplayName,
+			"name", u.GetName(),
+			"namespace", u.GetNamespace(),
+			"displayName", displayName,
 		)
-		w.cache.Add(toApp(nebariApp))
+		w.cache.Add(toApp(u))
 		if w.publisher != nil {
-			w.publisher.Publish("added", w.cache.Get(string(nebariApp.UID)))
+			w.publisher.Publish("added", w.cache.Get(string(u.GetUID())))
 		}
 	}
 }
 
-func (w *NebariAppWatcher) onUpdate(oldObj, newObj interface{}) {
-	nebariApp, ok := newObj.(*appsv1.NebariApp)
+func (w *NebariAppWatcher) onUpdate(_, newObj interface{}) {
+	u, ok := asUnstructured(newObj)
 	if !ok {
-		log.Error(nil, "Failed to cast object to NebariApp", "type", fmt.Sprintf("%T", newObj))
+		log.Error(nil, "Failed to cast object to Unstructured", "type", fmt.Sprintf("%T", newObj))
 		return
 	}
 
-	uid := string(nebariApp.UID)
+	uid := string(u.GetUID())
 
-	if nebariApp.Spec.LandingPage != nil && nebariApp.Spec.LandingPage.Enabled {
+	if lpEnabled(u) {
+		displayName, _, _ := unstructured.NestedString(u.Object, "spec", "landingPage", "displayName")
 		log.Info("Service updated",
-			"name", nebariApp.Name,
-			"namespace", nebariApp.Namespace,
-			"displayName", nebariApp.Spec.LandingPage.DisplayName,
+			"name", u.GetName(),
+			"namespace", u.GetNamespace(),
+			"displayName", displayName,
 		)
-		w.cache.Add(toApp(nebariApp))
+		w.cache.Add(toApp(u))
 		if w.publisher != nil {
 			w.publisher.Publish("modified", w.cache.Get(uid))
 		}
 	} else {
 		log.Info("Service removed (landing page disabled)",
-			"name", nebariApp.Name,
-			"namespace", nebariApp.Namespace,
+			"name", u.GetName(),
+			"namespace", u.GetNamespace(),
 		)
 		svc := w.cache.Get(uid)
 		w.cache.Remove(uid)
@@ -189,16 +223,16 @@ func (w *NebariAppWatcher) onUpdate(oldObj, newObj interface{}) {
 }
 
 func (w *NebariAppWatcher) onDelete(obj interface{}) {
-	nebariApp, ok := obj.(*appsv1.NebariApp)
+	u, ok := asUnstructured(obj)
 	if !ok {
-		log.Error(nil, "Failed to cast object to NebariApp", "type", fmt.Sprintf("%T", obj))
+		log.Error(nil, "Failed to cast object to Unstructured", "type", fmt.Sprintf("%T", obj))
 		return
 	}
 
-	uid := string(nebariApp.UID)
+	uid := string(u.GetUID())
 	log.Info("Service deleted",
-		"name", nebariApp.Name,
-		"namespace", nebariApp.Namespace,
+		"name", u.GetName(),
+		"namespace", u.GetNamespace(),
 	)
 	svc := w.cache.Get(uid)
 	w.cache.Remove(uid)
@@ -219,64 +253,83 @@ func (w *NebariAppWatcher) WaitForCacheSync(ctx context.Context) bool {
 	}
 }
 
-// toApp converts a NebariApp CR to the internal sdapp.App domain model.
-// It prefers the controller-computed status.serviceDiscovery block (which has
-// pre-resolved the URL and validated the configuration) and falls back to
-// deriving fields from spec for backwards compatibility when the status has
-// not yet been written.
-func toApp(n *appsv1.NebariApp) *sdapp.App {
+// lpEnabled reports whether the NebariApp has landingPage.enabled == true.
+func lpEnabled(u *unstructured.Unstructured) bool {
+	enabled, _, _ := unstructured.NestedBool(u.Object, "spec", "landingPage", "enabled")
+	return enabled
+}
+
+// toApp converts an unstructured NebariApp object to the internal sdapp.App
+// domain model. It mirrors the field access that the typed version performed,
+// using the JSON field names from the CRD schema.
+//
+// Field priority: status.serviceDiscovery (controller-computed, authoritative)
+// overrides spec.landingPage (user-provided) for display fields, exactly as the
+// typed version did.
+func toApp(u *unstructured.Unstructured) *sdapp.App {
+	hostname, _, _ := unstructured.NestedString(u.Object, "spec", "hostname")
 	a := &sdapp.App{
-		UID:        string(n.UID),
-		Name:       n.Name,
-		Namespace:  n.Namespace,
-		Hostname:   n.Spec.Hostname,
-		TLSEnabled: tlsEnabled(n),
-	}
-	if n.Spec.LandingPage == nil || !n.Spec.LandingPage.Enabled {
-		return a // LandingPage nil → cache.Add will remove it
+		UID:        string(u.GetUID()),
+		Name:       u.GetName(),
+		Namespace:  u.GetNamespace(),
+		Hostname:   hostname,
+		TLSEnabled: tlsEnabled(u),
 	}
 
-	lp := n.Spec.LandingPage
-	page := &sdapp.LandingPage{
-		Enabled:        lp.Enabled,
-		DisplayName:    lp.DisplayName,
-		Description:    lp.Description,
-		Icon:           lp.Icon,
-		Category:       lp.Category,
-		Priority:       100,
-		Visibility:     lp.Visibility,
-		RequiredGroups: lp.RequiredGroups,
-		ExternalURL:    lp.ExternalUrl,
+	if !lpEnabled(u) {
+		return a
 	}
-	if lp.Priority != nil {
-		page.Priority = *lp.Priority
+
+	displayName, _, _ := unstructured.NestedString(u.Object, "spec", "landingPage", "displayName")
+	description, _, _ := unstructured.NestedString(u.Object, "spec", "landingPage", "description")
+	icon, _, _ := unstructured.NestedString(u.Object, "spec", "landingPage", "icon")
+	category, _, _ := unstructured.NestedString(u.Object, "spec", "landingPage", "category")
+	visibility, _, _ := unstructured.NestedString(u.Object, "spec", "landingPage", "visibility")
+	externalURL, _, _ := unstructured.NestedString(u.Object, "spec", "landingPage", "externalUrl")
+	requiredGroups, _, _ := unstructured.NestedStringSlice(u.Object, "spec", "landingPage", "requiredGroups")
+
+	priority := 100
+	if p, found, _ := unstructured.NestedInt64(u.Object, "spec", "landingPage", "priority"); found {
+		priority = int(p)
+	}
+
+	page := &sdapp.LandingPage{
+		Enabled:        true,
+		DisplayName:    displayName,
+		Description:    description,
+		Icon:           icon,
+		Category:       category,
+		Priority:       priority,
+		Visibility:     visibility,
+		RequiredGroups: requiredGroups,
+		ExternalURL:    externalURL,
 	}
 
 	// Prefer status.serviceDiscovery when the controller has written it.
-	if sd := n.Status.ServiceDiscovery; sd != nil && sd.Enabled {
-		if sd.DisplayName != "" {
-			page.DisplayName = sd.DisplayName
+	if sdEnabled, _, _ := unstructured.NestedBool(u.Object, "status", "serviceDiscovery", "enabled"); sdEnabled {
+		if v, _, _ := unstructured.NestedString(u.Object, "status", "serviceDiscovery", "displayName"); v != "" {
+			page.DisplayName = v
 		}
-		if sd.Description != "" {
-			page.Description = sd.Description
+		if v, _, _ := unstructured.NestedString(u.Object, "status", "serviceDiscovery", "description"); v != "" {
+			page.Description = v
 		}
-		if sd.URL != "" {
-			page.ExternalURL = sd.URL // treat pre-resolved URL as ExternalURL
+		if v, _, _ := unstructured.NestedString(u.Object, "status", "serviceDiscovery", "url"); v != "" {
+			page.ExternalURL = v
 		}
-		if sd.Icon != "" {
-			page.Icon = sd.Icon
+		if v, _, _ := unstructured.NestedString(u.Object, "status", "serviceDiscovery", "icon"); v != "" {
+			page.Icon = v
 		}
-		if sd.Category != "" {
-			page.Category = sd.Category
+		if v, _, _ := unstructured.NestedString(u.Object, "status", "serviceDiscovery", "category"); v != "" {
+			page.Category = v
 		}
-		if sd.Priority != 0 {
-			page.Priority = sd.Priority
+		if v, found, _ := unstructured.NestedInt64(u.Object, "status", "serviceDiscovery", "priority"); found && v != 0 {
+			page.Priority = int(v)
 		}
-		if sd.Visibility != "" {
-			page.Visibility = sd.Visibility
+		if v, _, _ := unstructured.NestedString(u.Object, "status", "serviceDiscovery", "visibility"); v != "" {
+			page.Visibility = v
 		}
-		if sd.RequiredGroups != nil {
-			page.RequiredGroups = sd.RequiredGroups
+		if v, found, _ := unstructured.NestedStringSlice(u.Object, "status", "serviceDiscovery", "requiredGroups"); found {
+			page.RequiredGroups = v
 		}
 	}
 
@@ -284,13 +337,12 @@ func toApp(n *appsv1.NebariApp) *sdapp.App {
 	return a
 }
 
-// tlsEnabled reports whether TLS termination is active for n.
-func tlsEnabled(n *appsv1.NebariApp) bool {
-	if n.Spec.Routing == nil || n.Spec.Routing.TLS == nil {
+// tlsEnabled reports whether TLS termination is active.
+// Defaults to true when spec.routing or spec.routing.tls is absent.
+func tlsEnabled(u *unstructured.Unstructured) bool {
+	enabled, found, _ := unstructured.NestedBool(u.Object, "spec", "routing", "tls", "enabled")
+	if !found {
 		return true // default: TLS on
 	}
-	if n.Spec.Routing.TLS.Enabled == nil {
-		return true
-	}
-	return *n.Spec.Routing.TLS.Enabled
+	return enabled
 }
