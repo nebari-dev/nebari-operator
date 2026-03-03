@@ -74,19 +74,6 @@ test-unit: ## Run controller unit tests with coverage.
 	@echo "\nCoverage Summary:"
 	@go tool cover -func=unit-coverage.out | tail -1
 
-.PHONY: test-svc-api
-test-svc-api: ## Run service-discovery-api unit tests (cache, api handlers, auth).
-	@echo "Running service-discovery-api unit tests..."
-	@go test ./internal/servicediscovery/api/... ./internal/servicediscovery/auth/... ./internal/servicediscovery/cache/... -v -coverprofile=svc-api-coverage.out
-	@echo "\nCoverage Summary:"
-	@go tool cover -func=svc-api-coverage.out | tail -1
-
-.PHONY: test-svc-api-html
-test-svc-api-html: test-svc-api ## Generate HTML coverage report for service-discovery-api tests.
-	@go tool cover -html=svc-api-coverage.out -o svc-api-coverage.html
-	@echo "Coverage report generated: svc-api-coverage.html"
-	@xdg-open svc-api-coverage.html 2>/dev/null || echo "Open svc-api-coverage.html in your browser"
-
 .PHONY: test-unit-html
 test-unit-html: test-unit ## Generate HTML coverage report for unit tests.
 	@go tool cover -html=unit-coverage.out -o unit-coverage.html
@@ -95,53 +82,11 @@ test-unit-html: test-unit ## Generate HTML coverage report for unit tests.
 
 .PHONY: test-e2e
 test-e2e: manifests generate fmt vet ## Run all e2e tests.
-	USE_EXISTING_CLUSTER=$(USE_EXISTING_CLUSTER) IMG=$(IMG) WEBAPI_IMG=$(WEBAPI_DEV_IMG) go test ./test/e2e -v -ginkgo.v -tags=e2e -timeout=30m
+	USE_EXISTING_CLUSTER=$(USE_EXISTING_CLUSTER) IMG=$(IMG) go test ./test/e2e -v -ginkgo.v -tags=e2e -timeout=30m
 
 .PHONY: test-e2e-operator
 test-e2e-operator: manifests generate fmt vet ## Run operator e2e tests (excludes webapi tests).
 	USE_EXISTING_CLUSTER=$(USE_EXISTING_CLUSTER) go test ./test/e2e -v -ginkgo.v -tags=e2e -timeout=30m -ginkgo.skip="Service Discovery API"
-
-.PHONY: render-webapi
-render-webapi: ## Render webapi Helm templates to deploy/webapi/manifest.yaml for local dev and E2E testing.
-	@command -v helm >/dev/null 2>&1 || { echo "helm is required. See https://helm.sh/docs/intro/install/"; exit 1; }
-	@if [ ! -d "dist/chart" ]; then \
-		echo "dist/chart/ not found — running make helm-chart first..."; \
-		$(MAKE) helm-chart; \
-	fi
-	@mkdir -p deploy/webapi
-	@if [ -n "$(WEBAPI_IMG)" ]; then \
-		_nav_repo=$$(echo "$(WEBAPI_IMG)" | cut -d: -f1); \
-		_nav_tag=$$(echo "$(WEBAPI_IMG)" | cut -d: -f2-); \
-		echo "Rendering with custom webapi image: $(WEBAPI_IMG) (auth enabled — Keycloak nebari realm)"; \
-		helm template nebari-operator dist/chart \
-			--set webapi.enable=true \
-			--set webapi.nameOverride=webapi \
-			--namespace nebari-system \
-			--set webapi.image.repository=$$_nav_repo \
-			--set webapi.image.tag=$$_nav_tag \
-			--set webapi.image.pullPolicy=Always \
-			--set-json 'webapi.env=[{"name":"ENABLE_AUTH","value":"true"},{"name":"KEYCLOAK_URL","value":"http://keycloak-keycloakx-http.keycloak.svc.cluster.local/auth"},{"name":"KEYCLOAK_REALM","value":"nebari"},{"name":"KEYCLOAK_ADMIN_SECRET_NAME","value":"nebari-realm-admin-credentials"},{"name":"KEYCLOAK_ADMIN_SECRET_NAMESPACE","value":"keycloak"},{"name":"ADMIN_GROUP","value":"admin"},{"name":"ACCESS_REQUESTS_DB_PATH","value":"/data/access_requests.db"},{"name":"NOTIFICATIONS_DB_PATH","value":"/data/notifications.db"},{"name":"PINS_DB_PATH","value":"/data/pins.db"}]' \
-			--show-only templates/webapi/deployment.yaml \
-			--show-only templates/webapi/service.yaml \
-			--show-only templates/webapi/serviceaccount.yaml \
-			--show-only templates/webapi/rbac.yaml \
-			> deploy/webapi/manifest.yaml; \
-	else \
-		helm template nebari-operator dist/chart \
-			--set webapi.enable=true \
-			--set webapi.nameOverride=webapi \
-			--namespace nebari-system \
-			--show-only templates/webapi/deployment.yaml \
-			--show-only templates/webapi/service.yaml \
-			--show-only templates/webapi/serviceaccount.yaml \
-			--show-only templates/webapi/rbac.yaml \
-			> deploy/webapi/manifest.yaml; \
-	fi
-	@echo "✅ WebAPI manifest rendered to deploy/webapi/manifest.yaml"
-
-.PHONY: test-e2e-webapi
-test-e2e-webapi: render-webapi ## Run webapi e2e tests only (renders manifests first).
-	USE_EXISTING_CLUSTER=$(USE_EXISTING_CLUSTER) go test ./test/e2e -v -ginkgo.v -tags=e2e -timeout=15m -ginkgo.focus="Service Discovery API"
 
 .PHONY: test-e2e-parallel
 test-e2e-parallel: manifests generate fmt vet ## Run e2e tests in parallel (faster).
@@ -200,67 +145,6 @@ docker-buildx: ## Build and push docker image for the manager for cross-platform
 	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --tag ${IMG} -f Dockerfile.cross .
 	- $(CONTAINER_TOOL) buildx rm nebari-operator-builder
 	rm Dockerfile.cross
-
-##@ WebAPI
-
-WEBAPI_IMG ?= quay.io/nebari/nebari-webapi:latest
-
-.PHONY: build-webapi
-build-webapi: ## Build webapi binary
-	go build -o bin/webapi ./cmd/webapi
-
-.PHONY: docker-build-webapi
-docker-build-webapi: ## Build docker image for webapi
-	$(CONTAINER_TOOL) build -f Dockerfile.webapi -t ${WEBAPI_IMG} .
-
-.PHONY: docker-push-webapi
-docker-push-webapi: ## Push docker image for webapi
-	$(CONTAINER_TOOL) push ${WEBAPI_IMG}
-
-.PHONY: deploy-webapi
-deploy-webapi: render-webapi ## Render and deploy webapi to cluster.
-	kubectl apply -f deploy/webapi/manifest.yaml
-
-.PHONY: undeploy-webapi
-undeploy-webapi: ## Remove webapi from cluster.
-	@if [ -f "deploy/webapi/manifest.yaml" ]; then \
-		kubectl delete -f deploy/webapi/manifest.yaml --ignore-not-found; \
-	else \
-		echo "deploy/webapi/manifest.yaml not found — run make render-webapi first"; \
-	fi
-
-# WEBAPI_DEV_IMG is the local image tag used for dev/testing
-WEBAPI_DEV_IMG ?= webapi:dev
-# Kind cluster to load the dev image into
-KIND_CLUSTER ?= nebari-operator-dev
-
-.PHONY: dev-webapi
-dev-webapi: ## Build webapi, load into Kind, and deploy for local testing.
-	@echo "Building webapi image $(WEBAPI_DEV_IMG)..."
-	$(CONTAINER_TOOL) build -f Dockerfile.webapi -t $(WEBAPI_DEV_IMG) .
-	@echo "Loading image into Kind cluster '$(KIND_CLUSTER)'..."
-	kind load docker-image $(WEBAPI_DEV_IMG) --name $(KIND_CLUSTER)
-	@echo "Rendering webapi manifests (no auth for local dev)..."
-	$(MAKE) render-webapi WEBAPI_IMG=
-	@echo "Deploying webapi..."
-	kubectl create namespace nebari-system --dry-run=client -o yaml | kubectl apply -f -
-	kubectl apply -f deploy/webapi/manifest.yaml
-	kubectl set image deployment/webapi api=$(WEBAPI_DEV_IMG) -n nebari-system
-	kubectl patch deployment webapi -n nebari-system --type=json \
-		-p='[{"op":"replace","path":"/spec/template/spec/containers/0/imagePullPolicy","value":"Never"}]'
-	kubectl rollout status deployment/webapi -n nebari-system --timeout=60s
-	@echo ""
-	@echo "✅ WebAPI deployed. Port-forward with:"
-	@echo "  kubectl port-forward -n nebari-system svc/webapi 8080:8080"
-	@echo ""
-	@echo "Then test the API:"
-	@echo "  curl http://localhost:8080/api/v1/health"
-	@echo "  curl http://localhost:8080/api/v1/services"
-	@echo "  curl http://localhost:8080/api/v1/categories"
-
-.PHONY: webapi-pf
-webapi-pf: ## Port-forward the webapi to localhost:8080
-	kubectl port-forward -n nebari-system svc/webapi 8080:8080
 
 ##@ Installer
 
