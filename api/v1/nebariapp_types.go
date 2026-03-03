@@ -179,6 +179,14 @@ type AuthConfig struct {
 	// Example: https://accounts.google.com, https://login.microsoftonline.com/<tenant>/v2.0
 	// +optional
 	IssuerURL string `json:"issuerURL,omitempty"`
+
+	// PublicPaths specifies paths that should bypass OIDC authentication.
+	// When specified, these paths will be routed via a separate HTTPRoute
+	// that is not protected by the SecurityPolicy.
+	// Paths should start with "/" and use PathPrefix matching.
+	// Example: ["/api/v1/health", "/api/v1/version"]
+	// +optional
+	PublicPaths []string `json:"publicPaths,omitempty"`
 }
 
 // NebariAppStatus defines the observed state of NebariApp.

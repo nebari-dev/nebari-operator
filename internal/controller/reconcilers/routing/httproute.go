@@ -264,6 +264,162 @@ func (r *RoutingReconciler) buildBackendRefs(nebariApp *appsv1.NebariApp) []gate
 	}
 }
 
+// ReconcilePublicRoute creates or updates the public (unauthenticated) HTTPRoute for a NebariApp.
+// This route handles paths listed in auth.publicPaths that should bypass OIDC authentication.
+func (r *RoutingReconciler) ReconcilePublicRoute(ctx context.Context, nebariApp *appsv1.NebariApp, tlsListenerName string) error {
+	logger := log.FromContext(ctx)
+
+	// Only create public route if there are public paths configured
+	if nebariApp.Spec.Auth == nil || len(nebariApp.Spec.Auth.PublicPaths) == 0 {
+		// No public paths - clean up any existing public route
+		return r.CleanupPublicHTTPRoute(ctx, nebariApp)
+	}
+
+	gatewayName := naming.GatewayName(nebariApp)
+	logger.Info("Reconciling public route", "gateway", gatewayName, "hostname", nebariApp.Spec.Hostname,
+		"publicPaths", nebariApp.Spec.Auth.PublicPaths)
+
+	desiredRoute := r.buildPublicHTTPRoute(nebariApp, gatewayName, tlsListenerName)
+
+	existingRoute := &gatewayv1.HTTPRoute{}
+	routeKey := client.ObjectKey{
+		Name:      desiredRoute.Name,
+		Namespace: desiredRoute.Namespace,
+	}
+
+	err := r.Client.Get(ctx, routeKey, existingRoute)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			if err := r.Client.Create(ctx, desiredRoute); err != nil {
+				logger.Error(err, "Failed to create public HTTPRoute")
+				return err
+			}
+			logger.Info("Created public HTTPRoute", "name", desiredRoute.Name)
+			r.Recorder.Event(nebariApp, corev1.EventTypeNormal, appsv1.EventReasonHTTPRouteCreated,
+				fmt.Sprintf("Created public HTTPRoute %s", desiredRoute.Name))
+			return nil
+		}
+		return err
+	}
+
+	// Update existing public HTTPRoute
+	existingRoute.Spec = desiredRoute.Spec
+	if err := r.Client.Update(ctx, existingRoute); err != nil {
+		if errors.IsConflict(err) {
+			logger.V(1).Info("Public HTTPRoute update conflict, will retry", "name", existingRoute.Name)
+			return nil
+		}
+		logger.Error(err, "Failed to update public HTTPRoute")
+		return err
+	}
+
+	logger.Info("Updated public HTTPRoute", "name", existingRoute.Name)
+	r.Recorder.Event(nebariApp, corev1.EventTypeNormal, appsv1.EventReasonHTTPRouteUpdated,
+		fmt.Sprintf("Updated public HTTPRoute %s", existingRoute.Name))
+
+	return nil
+}
+
+// CleanupPublicHTTPRoute removes the public HTTPRoute for a NebariApp
+func (r *RoutingReconciler) CleanupPublicHTTPRoute(ctx context.Context, nebariApp *appsv1.NebariApp) error {
+	logger := log.FromContext(ctx)
+
+	routeName := naming.PublicHTTPRouteName(nebariApp)
+	route := &gatewayv1.HTTPRoute{}
+	routeKey := client.ObjectKey{
+		Name:      routeName,
+		Namespace: nebariApp.Namespace,
+	}
+
+	if err := r.Client.Get(ctx, routeKey, route); err != nil {
+		if errors.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+
+	if err := r.Client.Delete(ctx, route); err != nil {
+		logger.Error(err, "Failed to delete public HTTPRoute")
+		return err
+	}
+
+	logger.Info("Deleted public HTTPRoute", "name", routeName)
+	r.Recorder.Event(nebariApp, corev1.EventTypeNormal, appsv1.EventReasonHTTPRouteDeleted,
+		fmt.Sprintf("Deleted public HTTPRoute %s", routeName))
+
+	return nil
+}
+
+// buildPublicHTTPRoute generates an HTTPRoute for paths that bypass OIDC authentication.
+// This route is separate from the main route so the SecurityPolicy only targets the main route.
+func (r *RoutingReconciler) buildPublicHTTPRoute(nebariApp *appsv1.NebariApp, gatewayName string, tlsListenerName string) *gatewayv1.HTTPRoute {
+	routeName := naming.PublicHTTPRouteName(nebariApp)
+	namespace := gatewayv1.Namespace(constants.GatewayNamespace)
+
+	sectionName := gatewayv1.SectionName("https")
+	tlsEnabled := true
+	if nebariApp.Spec.Routing != nil && nebariApp.Spec.Routing.TLS != nil && nebariApp.Spec.Routing.TLS.Enabled != nil && !*nebariApp.Spec.Routing.TLS.Enabled {
+		sectionName = gatewayv1.SectionName("http")
+		tlsEnabled = false
+	}
+	if tlsListenerName != "" && tlsEnabled {
+		sectionName = gatewayv1.SectionName(tlsListenerName)
+	}
+
+	// Build matches for each public path
+	matches := make([]gatewayv1.HTTPRouteMatch, 0, len(nebariApp.Spec.Auth.PublicPaths))
+	for _, path := range nebariApp.Spec.Auth.PublicPaths {
+		pathType := gatewayv1.PathMatchPathPrefix
+		pathValue := path
+		matches = append(matches, gatewayv1.HTTPRouteMatch{
+			Path: &gatewayv1.HTTPPathMatch{
+				Type:  &pathType,
+				Value: &pathValue,
+			},
+		})
+	}
+
+	route := &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      routeName,
+			Namespace: nebariApp.Namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/name":       "nebariapp",
+				"app.kubernetes.io/instance":   nebariApp.Name,
+				"app.kubernetes.io/managed-by": "nebari-operator",
+				"nebari.dev/route-type":        "public",
+			},
+			Annotations: map[string]string{
+				"nebari.dev/tls-enabled": fmt.Sprintf("%t", tlsEnabled),
+			},
+		},
+		Spec: gatewayv1.HTTPRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{
+				ParentRefs: []gatewayv1.ParentReference{
+					{
+						Name:        gatewayv1.ObjectName(gatewayName),
+						Namespace:   &namespace,
+						SectionName: &sectionName,
+					},
+				},
+			},
+			Hostnames: []gatewayv1.Hostname{
+				gatewayv1.Hostname(nebariApp.Spec.Hostname),
+			},
+			Rules: []gatewayv1.HTTPRouteRule{
+				{
+					Matches:     matches,
+					BackendRefs: r.buildBackendRefs(nebariApp),
+				},
+			},
+		},
+	}
+
+	_ = controllerutil.SetControllerReference(nebariApp, route, r.Scheme)
+
+	return route
+}
+
 // validateGateway checks if the specified gateway exists
 func (r *RoutingReconciler) validateGateway(ctx context.Context, gatewayName string) error {
 	gateway := &gatewayv1.Gateway{}
