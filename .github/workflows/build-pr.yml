@@ -290,7 +290,7 @@ jobs:
   build-multiarch:
     name: Build & Push (${{ matrix.platform }})
     runs-on: ${{ matrix.runner }}
-    needs: [test-e2e, test-chart, test]
+    needs: [test-chart, test, test-e2e]
     strategy:
       matrix:
         include:
