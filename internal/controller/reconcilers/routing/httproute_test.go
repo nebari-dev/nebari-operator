@@ -517,6 +517,273 @@ func TestCleanupHTTPRoute(t *testing.T) {
 	}
 }
 
+func TestBuildPublicHTTPRoute(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = appsv1.AddToScheme(scheme)
+	_ = gatewayv1.Install(scheme)
+
+	reconciler := &RoutingReconciler{
+		Scheme:   scheme,
+		Recorder: record.NewFakeRecorder(10),
+	}
+
+	tests := []struct {
+		name                 string
+		nebariApp            *appsv1.NebariApp
+		gatewayName          string
+		expectedName         string
+		expectedMatchesCount int
+		expectedPaths        []string
+	}{
+		{
+			name: "Public route with multiple paths",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app",
+					Namespace: "default",
+				},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "test.nebari.local",
+					Service: appsv1.ServiceReference{
+						Name: "test-service",
+						Port: 8080,
+					},
+					Auth: &appsv1.AuthConfig{
+						Enabled: true,
+						PublicPaths: []string{
+							"/api/v1/health",
+							"/api/v1/version",
+							"/api/v1/auth/login",
+						},
+					},
+				},
+			},
+			gatewayName:          constants.PublicGatewayName,
+			expectedName:         "test-app-public-route",
+			expectedMatchesCount: 3,
+			expectedPaths:        []string{"/api/v1/health", "/api/v1/version", "/api/v1/auth/login"},
+		},
+		{
+			name: "Public route with single path",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "my-app",
+					Namespace: "staging",
+				},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "my-app.nebari.local",
+					Service: appsv1.ServiceReference{
+						Name: "my-service",
+						Port: 9090,
+					},
+					Auth: &appsv1.AuthConfig{
+						Enabled:     true,
+						PublicPaths: []string{"/health"},
+					},
+				},
+			},
+			gatewayName:          constants.PublicGatewayName,
+			expectedName:         "my-app-public-route",
+			expectedMatchesCount: 1,
+			expectedPaths:        []string{"/health"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			route := reconciler.buildPublicHTTPRoute(tt.nebariApp, tt.gatewayName, "")
+
+			if route.Name != tt.expectedName {
+				t.Errorf("expected name=%s, got name=%s", tt.expectedName, route.Name)
+			}
+			if route.Namespace != tt.nebariApp.Namespace {
+				t.Errorf("expected namespace=%s, got namespace=%s", tt.nebariApp.Namespace, route.Namespace)
+			}
+			if route.Labels["nebari.dev/route-type"] != "public" {
+				t.Error("expected label nebari.dev/route-type=public")
+			}
+			if len(route.Spec.Hostnames) != 1 || string(route.Spec.Hostnames[0]) != tt.nebariApp.Spec.Hostname {
+				t.Errorf("expected hostname=%s, got hostnames=%v", tt.nebariApp.Spec.Hostname, route.Spec.Hostnames)
+			}
+			if len(route.Spec.Rules) != 1 {
+				t.Fatalf("expected 1 rule, got %d", len(route.Spec.Rules))
+			}
+			rule := route.Spec.Rules[0]
+			if len(rule.Matches) != tt.expectedMatchesCount {
+				t.Errorf("expected %d matches, got %d", tt.expectedMatchesCount, len(rule.Matches))
+			}
+			for i, match := range rule.Matches {
+				if match.Path == nil {
+					t.Errorf("match %d: path is nil", i)
+					continue
+				}
+				if *match.Path.Type != gatewayv1.PathMatchPathPrefix {
+					t.Errorf("match %d: expected PathPrefix, got %s", i, *match.Path.Type)
+				}
+				if i < len(tt.expectedPaths) && *match.Path.Value != tt.expectedPaths[i] {
+					t.Errorf("match %d: expected path=%s, got=%s", i, tt.expectedPaths[i], *match.Path.Value)
+				}
+			}
+			if len(rule.BackendRefs) != 1 {
+				t.Errorf("expected 1 backend ref, got %d", len(rule.BackendRefs))
+			} else if string(rule.BackendRefs[0].Name) != tt.nebariApp.Spec.Service.Name {
+				t.Errorf("expected backend name=%s, got=%s", tt.nebariApp.Spec.Service.Name, rule.BackendRefs[0].Name)
+			}
+		})
+	}
+}
+
+func TestReconcilePublicRoute(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = appsv1.AddToScheme(scheme)
+	_ = gatewayv1.Install(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	tests := []struct {
+		name        string
+		gateway     *gatewayv1.Gateway
+		nebariApp   *appsv1.NebariApp
+		expectError bool
+	}{
+		{
+			name: "Create public route with public paths",
+			gateway: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      constants.PublicGatewayName,
+					Namespace: constants.GatewayNamespace,
+				},
+			},
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app",
+					Namespace: "default",
+				},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "test.nebari.local",
+					Service: appsv1.ServiceReference{
+						Name: "test-service",
+						Port: 8080,
+					},
+					Auth: &appsv1.AuthConfig{
+						Enabled:     true,
+						PublicPaths: []string{"/health", "/version"},
+					},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "No public paths - cleanup",
+			gateway: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      constants.PublicGatewayName,
+					Namespace: constants.GatewayNamespace,
+				},
+			},
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app",
+					Namespace: "default",
+				},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "test.nebari.local",
+					Service: appsv1.ServiceReference{
+						Name: "test-service",
+						Port: 8080,
+					},
+					Auth: &appsv1.AuthConfig{
+						Enabled: true,
+					},
+				},
+			},
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			builder := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(tt.nebariApp)
+			if tt.gateway != nil {
+				builder = builder.WithObjects(tt.gateway)
+			}
+			client := builder.Build()
+			reconciler := &RoutingReconciler{
+				Client:   client,
+				Scheme:   scheme,
+				Recorder: record.NewFakeRecorder(10),
+			}
+			err := reconciler.ReconcilePublicRoute(context.Background(), tt.nebariApp, "")
+			if (err != nil) != tt.expectError {
+				t.Errorf("expected error=%v, got error=%v", tt.expectError, err)
+			}
+		})
+	}
+}
+
+func TestCleanupPublicHTTPRoute(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = appsv1.AddToScheme(scheme)
+	_ = gatewayv1.Install(scheme)
+
+	tests := []struct {
+		name          string
+		existingRoute *gatewayv1.HTTPRoute
+		nebariApp     *appsv1.NebariApp
+		expectError   bool
+	}{
+		{
+			name: "Delete existing public HTTPRoute",
+			existingRoute: &gatewayv1.HTTPRoute{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app-public-route",
+					Namespace: "default",
+				},
+			},
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app",
+					Namespace: "default",
+				},
+			},
+			expectError: false,
+		},
+		{
+			name:          "Public HTTPRoute already deleted",
+			existingRoute: nil,
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app",
+					Namespace: "default",
+				},
+			},
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			builder := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(tt.nebariApp)
+			if tt.existingRoute != nil {
+				builder = builder.WithObjects(tt.existingRoute)
+			}
+			client := builder.Build()
+			reconciler := &RoutingReconciler{
+				Client:   client,
+				Scheme:   scheme,
+				Recorder: record.NewFakeRecorder(10),
+			}
+			err := reconciler.CleanupPublicHTTPRoute(context.Background(), tt.nebariApp)
+			if (err != nil) != tt.expectError {
+				t.Errorf("expected error=%v, got error=%v", tt.expectError, err)
+			}
+		})
+	}
+}
+
 func TestBuildHTTPRouteWithTLSListener(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = gatewayv1.Install(scheme)
