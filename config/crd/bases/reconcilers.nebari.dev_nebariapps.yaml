@@ -506,8 +506,8 @@ spec:
                 description: |-
                   ServiceDiscovery is the computed service discovery descriptor.
                   The controller populates this after reconciling spec.landingPage so the
-                  service-discovery-api can consume a pre-validated, URL-resolved view
-                  without re-deriving it from spec.
+                  webapi watcher can consume a pre-validated, URL-resolved view via
+                  status.serviceDiscovery.* without re-deriving it from spec.
                 properties:
                   category:
                     description: Category groups related services on the landing page.

@@ -92,6 +92,8 @@ jobs:
     name: E2E Tests
     runs-on: ubuntu-latest
     needs: lint
+    env:
+      CLUSTER_NAME: test-cluster
     steps:
       - name: Clone the code
         uses: actions/checkout@v4
@@ -127,20 +129,18 @@ jobs:
       - name: Install MetalLB
         run: |
           kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.14.8/config/manifests/metallb-native.yaml
-
           kubectl wait --namespace metallb-system \
             --for=condition=available deployment/controller \
             --timeout=90s
-
           kubectl wait --namespace metallb-system \
             --for=jsonpath='{.status.numberReady}'=1 \
             daemonset/speaker \
             --timeout=90s
 
-          # Configure MetalLB IP address pool
+      - name: Configure MetalLB IP pool
+        run: |
           KIND_NET_CIDR=$(docker network inspect kind -f '{{range .IPAM.Config}}{{.Subnet}}{{"\n"}}{{end}}' | grep '\.' | head -n1)
-          BASE_IP=$(echo ${KIND_NET_CIDR} | awk -F. '{print $1"."$2}')
-
+          BASE_IP=$(echo "${KIND_NET_CIDR}" | awk -F. '{print $1"."$2}')
           kubectl apply -f - <<EOF
           apiVersion: metallb.io/v1beta1
           kind: IPAddressPool
@@ -149,7 +149,7 @@ jobs:
             namespace: metallb-system
           spec:
             addresses:
-            - ${BASE_IP}.255.200-${BASE_IP}.255.250
+              - ${BASE_IP}.255.200-${BASE_IP}.255.250
           ---
           apiVersion: metallb.io/v1beta1
           kind: L2Advertisement
@@ -158,30 +158,17 @@ jobs:
             namespace: metallb-system
           spec:
             ipAddressPools:
-            - kind-pool
+              - kind-pool
           EOF
 
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+
       - name: Install foundational services
-        env:
-          CLUSTER_NAME: test-cluster
-        run: |
-          cd dev
-          make services-install
-          cd ..
+        run: dev/scripts/services/install.sh
 
-      - name: Install/Setup Keycloak
-        env:
-          CLUSTER_NAME: test-cluster
-        run: |
-          cd dev
-          # Keycloak is now installed as part of services-install
-          # Just run realm setup
-          ./scripts/services/keycloak/setup.sh
-          cd ..
-
-      - name: Install Helm
-        run: |
-          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+      - name: Setup Keycloak realm
+        run: dev/scripts/services/keycloak/setup.sh
 
       - name: Run operator E2E tests
         env:
@@ -207,9 +194,8 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Install Helm
-        run: |
-          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
 
       - name: Install kubebuilder
         run: |

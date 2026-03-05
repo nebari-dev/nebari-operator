@@ -40,7 +40,7 @@ import (
 var (
 	// Optional Environment Variables:
 	// - USE_EXISTING_CLUSTER=true: Use existing cluster instead of creating new Kind cluster
-	// - SETUP_INFRASTRUCTURE=true: Run dev/install-services.sh to setup infrastructure
+	// - SETUP_INFRASTRUCTURE=true: Run dev/scripts/services/install.sh and keycloak/setup.sh
 	// - SKIP_SETUP=true: Skip all setup (cluster and infrastructure), assume everything exists
 	// - SKIP_DOCKER_BUILD=true: Skip docker build, assume image is already built and loaded
 	useExistingCluster  = os.Getenv("USE_EXISTING_CLUSTER") == "true"
@@ -106,6 +106,11 @@ var _ = BeforeSuite(func() {
 			cmd := exec.Command("make", "-C", "dev", "services-install")
 			_, err := utils.Run(cmd)
 			ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to install foundational services")
+
+			By("configuring Keycloak realm via dev scripts")
+			cmd = exec.Command("dev/scripts/services/keycloak/setup.sh")
+			_, err = utils.Run(cmd)
+			ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to configure Keycloak realm")
 		} else {
 			_, _ = fmt.Fprintf(GinkgoWriter, "Skipping infrastructure setup, assuming services are already installed\n")
 		}

@@ -37,7 +37,7 @@ make test-e2e
 ## Environment Variables
 
 - `USE_EXISTING_CLUSTER=true`: Use existing cluster, don't create/delete Kind cluster
-- `SETUP_INFRASTRUCTURE=true`: Run `dev/install-services.sh` to setup Envoy Gateway, cert-manager, etc.
+- `SETUP_INFRASTRUCTURE=true`: Run `dev/scripts/services/install.sh` to setup Envoy Gateway, cert-manager, etc.
 - `SKIP_SETUP=true`: Skip all setup, assume cluster and infrastructure exist
 
 ## Test Structure

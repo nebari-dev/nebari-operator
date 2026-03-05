@@ -214,7 +214,6 @@ func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// Update observed generation
 	nebariApp.Status.ObservedGeneration = nebariApp.Generation
 
-
 	// Populate the service discovery status so the webapi watcher can read
 	// a pre-validated, URL-resolved view via status.serviceDiscovery.*
 	// without re-deriving it from spec.

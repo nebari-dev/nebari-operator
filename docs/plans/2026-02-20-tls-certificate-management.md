@@ -1416,13 +1416,13 @@ git commit -m "feat: update routing reconciler to accept TLS listener name overr
 ### Task 8: Update dev setup and E2E tests
 
 **Files:**
-- Modify: `dev/install-services.sh` (add ClusterIssuer env var to operator deployment)
+- Modify: `dev/scripts/services/install.sh` (add ClusterIssuer env var to operator deployment)
 - Create: `test/e2e/tls_test.go`
 - Modify: `test/e2e/testdata/` (add TLS test data if needed)
 
 **Step 1: Add TLS_CLUSTER_ISSUER_NAME to dev operator deployment**
 
-In `dev/install-services.sh`, find where the operator deployment environment variables are configured and add:
+In `dev/scripts/services/install.sh`, find where the operator deployment environment variables are configured and add:
 ```bash
 TLS_CLUSTER_ISSUER_NAME=nebari-ca-issuer
 ```

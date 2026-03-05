@@ -41,9 +41,6 @@ dist/
 !dist/chart/
 !dist/chart/**
 
-# Generated deployment manifests (rendered from config/chart-extensions/ via `make render-navigator`)
-# Run `make render-navigator` to regenerate for local dev and E2E testing.
-deploy/navigator/
 Dockerfile.cross
 
 # MacOS files
@@ -65,6 +62,5 @@ CLAUDE.md
 diff.txt
 landingpage
 /webapi
-bin/service-discovery
 *-coverage.out
 *-coverage.html
