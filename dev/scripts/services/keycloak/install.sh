@@ -79,8 +79,6 @@ extraEnv: |
     value: "admin"
   - name: KC_BOOTSTRAP_ADMIN_PASSWORD
     value: "admin"
-  - name: KC_HTTP_RELATIVE_PATH
-    value: "/auth"
   - name: JAVA_OPTS_APPEND
     value: "-Xms512m -Xmx1536m"
 
