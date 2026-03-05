@@ -214,8 +214,10 @@ func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// Update observed generation
 	nebariApp.Status.ObservedGeneration = nebariApp.Generation
 
-	// Populate the service discovery status so the service-discovery-api can read
-	// a pre-validated, URL-resolved view without re-deriving it from spec.
+
+	// Populate the service discovery status so the webapi watcher can read
+	// a pre-validated, URL-resolved view via status.serviceDiscovery.*
+	// without re-deriving it from spec.
 	nebariApp.Status.ServiceDiscovery = buildServiceDiscoveryStatus(nebariApp)
 
 	// Update status
@@ -231,7 +233,8 @@ func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 // buildServiceDiscoveryStatus computes the service discovery descriptor from
 // the validated and reconciled NebariApp and writes it to status.serviceDiscovery.
-// The service-discovery-api reads this field instead of re-deriving from spec.
+// The webapi watcher reads this field via status.serviceDiscovery.* (unstructured
+// client) so it gets the controller-resolved URL and display fields.
 func buildServiceDiscoveryStatus(app *appsv1.NebariApp) *appsv1.ServiceDiscoveryStatus {
 	if app.Spec.LandingPage == nil || !app.Spec.LandingPage.Enabled {
 		return &appsv1.ServiceDiscoveryStatus{Enabled: false}

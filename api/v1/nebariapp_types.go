@@ -346,9 +346,9 @@ type HealthCheckConfig struct {
 }
 
 // ServiceDiscoveryStatus is the service discovery descriptor computed by the
-// controller and written to status. The service-discovery-api reads this field
-// instead of re-deriving it from spec, giving it the controller's authoritative,
-// URL-resolved view of each service.
+// controller and written to status. The webapi watcher reads this field via the
+// unstructured client (status.serviceDiscovery.*) to get the controller's
+// authoritative, URL-resolved view of each service without re-deriving it from spec.
 type ServiceDiscoveryStatus struct {
 	// Enabled mirrors spec.landingPage.enabled at the time of last reconciliation.
 	Enabled bool `json:"enabled"`
@@ -425,8 +425,8 @@ type NebariAppStatus struct {
 
 	// ServiceDiscovery is the computed service discovery descriptor.
 	// The controller populates this after reconciling spec.landingPage so the
-	// service-discovery-api can consume a pre-validated, URL-resolved view
-	// without re-deriving it from spec.
+	// webapi watcher can consume a pre-validated, URL-resolved view via
+	// status.serviceDiscovery.* without re-deriving it from spec.
 	// +optional
 	ServiceDiscovery *ServiceDiscoveryStatus `json:"serviceDiscovery,omitempty"`
 }

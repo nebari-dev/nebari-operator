@@ -84,10 +84,6 @@ test-unit-html: test-unit ## Generate HTML coverage report for unit tests.
 test-e2e: manifests generate fmt vet ## Run all e2e tests.
 	USE_EXISTING_CLUSTER=$(USE_EXISTING_CLUSTER) IMG=$(IMG) go test ./test/e2e -v -ginkgo.v -tags=e2e -timeout=30m
 
-.PHONY: test-e2e-operator
-test-e2e-operator: manifests generate fmt vet ## Run operator e2e tests (excludes webapi tests).
-	USE_EXISTING_CLUSTER=$(USE_EXISTING_CLUSTER) go test ./test/e2e -v -ginkgo.v -tags=e2e -timeout=30m -ginkgo.skip="Service Discovery API"
-
 .PHONY: test-e2e-parallel
 test-e2e-parallel: manifests generate fmt vet ## Run e2e tests in parallel (faster).
 	USE_EXISTING_CLUSTER=$(USE_EXISTING_CLUSTER) go test ./test/e2e -v -ginkgo.v -ginkgo.procs=4 -tags=e2e -timeout=30m
