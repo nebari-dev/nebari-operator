@@ -288,6 +288,209 @@ func TestKeycloakProvider_StoreClientSecret(t *testing.T) {
 	}
 }
 
+func TestKeycloakProvider_LoadCredentials(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+
+	tests := []struct {
+		name             string
+		kcConfig         config.KeycloakConfig
+		secret           *corev1.Secret
+		expectError      bool
+		expectedUsername string
+		expectedPassword string
+	}{
+		{
+			name: "Loads credentials from secret with standard keys",
+			kcConfig: config.KeycloakConfig{
+				AdminSecretName:      "kc-admin",
+				AdminSecretNamespace: "keycloak",
+			},
+			secret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "kc-admin",
+					Namespace: "keycloak",
+				},
+				Data: map[string][]byte{
+					"username": []byte("admin"),
+					"password": []byte("secret123"),
+				},
+			},
+			expectError:      false,
+			expectedUsername: "admin",
+			expectedPassword: "secret123",
+		},
+		{
+			name: "Loads credentials from secret with admin- prefixed keys",
+			kcConfig: config.KeycloakConfig{
+				AdminSecretName:      "kc-admin",
+				AdminSecretNamespace: "keycloak",
+			},
+			secret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "kc-admin",
+					Namespace: "keycloak",
+				},
+				Data: map[string][]byte{
+					"admin-username": []byte("admin2"),
+					"admin-password": []byte("secret456"),
+				},
+			},
+			expectError:      false,
+			expectedUsername: "admin2",
+			expectedPassword: "secret456",
+		},
+		{
+			name: "Uses direct credentials when no secret configured",
+			kcConfig: config.KeycloakConfig{
+				AdminSecretName: "",
+				AdminUsername:   "direct-admin",
+				AdminPassword:   "direct-pass",
+			},
+			secret:           nil,
+			expectError:      false,
+			expectedUsername: "direct-admin",
+			expectedPassword: "direct-pass",
+		},
+		{
+			name: "Error when no secret and no direct credentials",
+			kcConfig: config.KeycloakConfig{
+				AdminSecretName: "",
+				AdminUsername:   "",
+				AdminPassword:   "",
+			},
+			secret:      nil,
+			expectError: true,
+		},
+		{
+			name: "Error when secret not found",
+			kcConfig: config.KeycloakConfig{
+				AdminSecretName:      "nonexistent",
+				AdminSecretNamespace: "keycloak",
+			},
+			secret:      nil,
+			expectError: true,
+		},
+		{
+			name: "Error when secret missing username",
+			kcConfig: config.KeycloakConfig{
+				AdminSecretName:      "kc-admin",
+				AdminSecretNamespace: "keycloak",
+			},
+			secret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "kc-admin",
+					Namespace: "keycloak",
+				},
+				Data: map[string][]byte{
+					"password": []byte("secret123"),
+				},
+			},
+			expectError: true,
+		},
+		{
+			name: "Error when secret missing password",
+			kcConfig: config.KeycloakConfig{
+				AdminSecretName:      "kc-admin",
+				AdminSecretNamespace: "keycloak",
+			},
+			secret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "kc-admin",
+					Namespace: "keycloak",
+				},
+				Data: map[string][]byte{
+					"username": []byte("admin"),
+				},
+			},
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			builder := fake.NewClientBuilder().WithScheme(scheme)
+			if tt.secret != nil {
+				builder = builder.WithObjects(tt.secret)
+			}
+			k8sClient := builder.Build()
+
+			provider := &KeycloakProvider{
+				Config: tt.kcConfig,
+				Client: k8sClient,
+			}
+
+			err := provider.loadCredentials(context.Background())
+
+			if tt.expectError && err == nil {
+				t.Error("expected error, got nil")
+			}
+			if !tt.expectError && err != nil {
+				t.Errorf("expected no error, got: %v", err)
+			}
+			if !tt.expectError {
+				if provider.Config.AdminUsername != tt.expectedUsername {
+					t.Errorf("expected username %q, got %q", tt.expectedUsername, provider.Config.AdminUsername)
+				}
+				if provider.Config.AdminPassword != tt.expectedPassword {
+					t.Errorf("expected password %q, got %q", tt.expectedPassword, provider.Config.AdminPassword)
+				}
+			}
+		})
+	}
+}
+
+func TestKeycloakProvider_LoadCredentials_RefreshesOnSecretChange(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "kc-admin",
+			Namespace: "keycloak",
+		},
+		Data: map[string][]byte{
+			"username": []byte("admin"),
+			"password": []byte("old-password"),
+		},
+	}
+
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(secret).
+		Build()
+
+	provider := &KeycloakProvider{
+		Config: config.KeycloakConfig{
+			AdminSecretName:      "kc-admin",
+			AdminSecretNamespace: "keycloak",
+		},
+		Client: k8sClient,
+	}
+
+	// First load
+	if err := provider.loadCredentials(context.Background()); err != nil {
+		t.Fatalf("first loadCredentials failed: %v", err)
+	}
+	if provider.Config.AdminPassword != "old-password" {
+		t.Fatalf("expected old-password, got %s", provider.Config.AdminPassword)
+	}
+
+	// Simulate secret rotation by updating the secret in the fake client
+	secret.Data["password"] = []byte("new-password")
+	if err := k8sClient.Update(context.Background(), secret); err != nil {
+		t.Fatalf("failed to update secret: %v", err)
+	}
+
+	// Second load should pick up the new password
+	if err := provider.loadCredentials(context.Background()); err != nil {
+		t.Fatalf("second loadCredentials failed: %v", err)
+	}
+	if provider.Config.AdminPassword != "new-password" {
+		t.Errorf("expected credentials to be refreshed to 'new-password', got %q", provider.Config.AdminPassword)
+	}
+}
+
 func TestKeycloakProvider_SyncClientScopes_NoScopes(t *testing.T) {
 	// syncClientScopes should return nil immediately when no scopes are configured
 	provider := &KeycloakProvider{
