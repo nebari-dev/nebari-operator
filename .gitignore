@@ -39,6 +39,8 @@ dist/
 
 # But keep the helm chart in git
 !dist/chart/
+!dist/chart/**
+
 Dockerfile.cross
 
 # MacOS files
@@ -55,3 +57,10 @@ CLAUDE.md
 
 # Git worktrees
 .worktrees/
+
+# Local dev artefacts
+diff.txt
+landingpage
+/webapi
+*-coverage.out
+*-coverage.html

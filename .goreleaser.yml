@@ -12,7 +12,7 @@ before:
 
 builds:
   - id: manager
-    main: ./cmd/main.go
+    main: ./cmd/operator
     binary: manager
     env:
       - CGO_ENABLED=0

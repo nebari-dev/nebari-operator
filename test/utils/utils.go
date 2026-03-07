@@ -212,6 +212,19 @@ func LoadImageToKindClusterWithName(name string) error {
 
 	kindOptions := []string{"load", "docker-image", name, "--name", cluster}
 	cmd := exec.Command(kindBinary, kindOptions...)
+
+	// kind creates a temporary tar archive of the image in TMPDIR before
+	// loading it into the node. The default /tmp may live on a small root
+	// partition; prefer /dev/shm (tmpfs, usually gigabytes of free RAM) when
+	// the caller has not already overridden TMPDIR.
+	tmpdir := os.Getenv("TMPDIR")
+	if tmpdir == "" {
+		if info, err := os.Stat("/dev/shm"); err == nil && info.IsDir() {
+			_ = os.Setenv("TMPDIR", "/dev/shm")
+			defer func() { _ = os.Unsetenv("TMPDIR") }()
+		}
+	}
+
 	_, err := Run(cmd)
 	return err
 }

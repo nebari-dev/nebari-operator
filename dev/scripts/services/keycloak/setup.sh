@@ -120,6 +120,51 @@ run_kcadm add-roles -r "$REALM_NAME" --uusername "$REALM_ADMIN_USER" --rolename 
 
 log_success "Roles assigned"
 
+# Keycloak 26+ uses "lightweight access tokens" by default: access tokens carry only
+# minimal session claims (jti, iss, exp, azp, sid, scope).  User-profile claims such
+# as preferred_username and sub only appear in the id_token and /userinfo endpoint.
+# To include those claims in the bearer access token (required by the nebari-landing
+# webapi JWT validator), we must explicitly create per-client protocol mappers on admin-cli
+# in the nebari realm.  The profile scope already has the mappers for the id_token
+# path; we add matching ones that explicitly target the access token.
+log_info "Configuring admin-cli protocol mappers in $REALM_NAME realm (Keycloak 26 lightweight token workaround)..."
+
+# Find admin-cli client UUID in the nebari realm
+ADMIN_CLI_ID=$(kubectl exec -n "$KEYCLOAK_NAMESPACE" "$KEYCLOAK_POD" -- \
+    /opt/keycloak/bin/kcadm.sh get clients -r "$REALM_NAME" --fields id,clientId 2>/dev/null \
+    | python3 -c "
+import sys, json
+clients = json.load(sys.stdin)
+print(next((c['id'] for c in clients if c.get('clientId') == 'admin-cli'), ''))
+" 2>/dev/null) || true
+
+if [ -n "$ADMIN_CLI_ID" ]; then
+    # preferred_username — maps Keycloak username into the access token
+    run_kcadm create "clients/$ADMIN_CLI_ID/protocol-mappers/models" -r "$REALM_NAME" \
+        -s name=at-preferred-username \
+        -s protocol=openid-connect \
+        -s protocolMapper=oidc-usermodel-attribute-mapper \
+        -s 'config.user.attribute=username' \
+        -s 'config.claim.name=preferred_username' \
+        -s 'config.jsonType.label=String' \
+        -s 'config.id.token.claim=false' \
+        -s 'config.access.token.claim=true' \
+        -s 'config.userinfo.token.claim=false' \
+        -s 'config.lightweight.claim=false' 2>/dev/null || log_warning "at-preferred-username mapper may already exist"
+
+    # sub — includes the user UUID as the JWT Subject in the access token
+    run_kcadm create "clients/$ADMIN_CLI_ID/protocol-mappers/models" -r "$REALM_NAME" \
+        -s name=at-sub \
+        -s protocol=openid-connect \
+        -s protocolMapper=oidc-sub-mapper \
+        -s 'config.access.token.claim=true' \
+        -s 'config.lightweight.claim=false' 2>/dev/null || log_warning "at-sub mapper may already exist"
+
+    log_success "Protocol mappers configured on admin-cli (admin-cli UUID: $ADMIN_CLI_ID)"
+else
+    log_warning "Could not find admin-cli client ID in realm $REALM_NAME — skipping protocol mapper setup"
+fi
+
 echo ""
 echo "=========================================="
 echo "✨ Keycloak realm setup complete!"

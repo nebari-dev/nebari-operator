@@ -243,7 +243,61 @@ kubectl wait --for=condition=Programmed gateway/nebari-gateway -n envoy-gateway-
 # 7. Install Keycloak
 # ============================================
 log_info "Installing Keycloak..."
-${SCRIPT_DIR}/keycloak/install.sh
+
+kubectl create namespace keycloak --dry-run=client -o yaml | kubectl apply -f -
+
+# Clean up any failed installations
+kubectl delete statefulset keycloak-keycloakx -n keycloak --ignore-not-found --timeout=60s || true
+kubectl delete pod -n keycloak -l app.kubernetes.io/name=keycloakx --ignore-not-found || true
+
+if ! helm repo list | grep -q codecentric; then
+    helm repo add codecentric https://codecentric.github.io/helm-charts
+    helm repo update
+fi
+
+cat > /tmp/keycloak-values.yaml <<'KEYCLOAK_VALUES'
+replicas: 1
+resources:
+  requests:
+    memory: "1Gi"
+    cpu: "500m"
+  limits:
+    memory: "2Gi"
+    cpu: "1000m"
+command:
+  - "/opt/keycloak/bin/kc.sh"
+  - "start-dev"
+extraEnv: |
+  - name: KC_BOOTSTRAP_ADMIN_USERNAME
+    value: "admin"
+  - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+    value: "admin"
+  - name: KC_HTTP_RELATIVE_PATH
+    value: "/auth"
+  - name: JAVA_OPTS_APPEND
+    value: "-Xms512m -Xmx1536m"
+http:
+  relativePath: "/auth"
+KEYCLOAK_VALUES
+
+helm upgrade --install keycloak codecentric/keycloakx \
+    --namespace keycloak \
+    --wait \
+    --timeout=5m \
+    --values /tmp/keycloak-values.yaml || {
+        log_error "Keycloak installation failed. Check logs: kubectl logs -n keycloak -l app.kubernetes.io/name=keycloakx"
+        rm -f /tmp/keycloak-values.yaml
+        exit 1
+    }
+rm -f /tmp/keycloak-values.yaml
+
+kubectl create secret generic keycloak-admin-credentials \
+    --namespace keycloak \
+    --from-literal=admin-username=admin \
+    --from-literal=admin-password=admin \
+    --dry-run=client -o yaml | kubectl apply -f -
+
+kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=keycloakx -n keycloak --timeout=300s
 
 log_success "Keycloak installed"
 echo ""

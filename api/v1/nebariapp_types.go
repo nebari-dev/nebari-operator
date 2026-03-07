@@ -49,6 +49,11 @@ type NebariAppSpec struct {
 	// +kubebuilder:default=public
 	// +optional
 	Gateway string `json:"gateway,omitempty"`
+
+	// LandingPage configures how this service appears on the Nebari landing page.
+	// When enabled, the service will be discoverable through the landing page portal.
+	// +optional
+	LandingPage *LandingPageConfig `json:"landingPage,omitempty"`
 }
 
 // ServiceReference identifies the Kubernetes Service that backs this application.
@@ -79,6 +84,14 @@ type RoutingConfig struct {
 	// for the application's hostname and adds a per-app HTTPS listener to the shared Gateway.
 	// +optional
 	TLS *RoutingTLSConfig `json:"tls,omitempty"`
+
+	// Annotations defines additional annotations to merge onto the generated HTTPRoute.
+	// Useful for tools like ArgoCD that track resources via annotations
+	// (e.g. argocd.argoproj.io/tracking-id).
+	// These annotations are merged with any operator-managed annotations; operator
+	// annotations always take precedence to avoid breaking internal behaviour.
+	// +optional
+	Annotations map[string]string `json:"annotations,omitempty"`
 }
 
 // RouteMatch defines a path-based routing rule.
@@ -240,6 +253,142 @@ type KeycloakProtocolMapperConfig struct {
 	Config map[string]string `json:"config,omitempty"`
 }
 
+// LandingPageConfig defines how a service appears on the Nebari landing page.
+type LandingPageConfig struct {
+	// Enabled determines if this service appears on the landing page.
+	// When false, the service is not shown on the landing page.
+	// +kubebuilder:default=false
+	Enabled bool `json:"enabled"`
+
+	// DisplayName is the human-readable name shown on the landing page.
+	// Required when Enabled is true.
+	// +kubebuilder:validation:MaxLength=64
+	// +optional
+	DisplayName string `json:"displayName,omitempty"`
+
+	// Description provides additional context about the service.
+	// Shown as supplementary text on the service card.
+	// +kubebuilder:validation:MaxLength=256
+	// +optional
+	Description string `json:"description,omitempty"`
+
+	// Icon is an identifier for the service icon (e.g., "jupyter", "grafana")
+	// or a URL to a custom icon image.
+	// Supported built-in icons: jupyter, grafana, prometheus, keycloak, argocd, kubernetes
+	// +optional
+	Icon string `json:"icon,omitempty"`
+
+	// Category groups related services together on the landing page.
+	// Common categories: Development, Monitoring, Platform, Data Science
+	// +optional
+	Category string `json:"category,omitempty"`
+
+	// Priority determines sort order within a category (lower number = higher priority).
+	// Services are displayed in ascending priority order within each category.
+	// +kubebuilder:default=100
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=1000
+	// +optional
+	Priority *int `json:"priority,omitempty"`
+
+	// ExternalUrl overrides the default URL derived from the hostname.
+	// Use this when the service URL differs from https://<hostname>
+	// +optional
+	ExternalUrl string `json:"externalUrl,omitempty"`
+
+	// Visibility controls who can see this service on the landing page.
+	// - "public": Visible to everyone, including unauthenticated users
+	// - "authenticated": Visible to any authenticated user (default)
+	// - "private": Visible only to users in RequiredGroups
+	// +kubebuilder:validation:Enum=public;authenticated;private
+	// +kubebuilder:default=authenticated
+	// +optional
+	Visibility string `json:"visibility,omitempty"`
+
+	// RequiredGroups specifies Keycloak groups required to see/access this service.
+	// Only applies when Visibility is "private".
+	// Groups are checked from the user's JWT claims (groups field).
+	// User must be a member of at least one group to see the service (OR logic).
+	// Example: ["data-science", "admin"]
+	// +optional
+	RequiredGroups []string `json:"requiredGroups,omitempty"`
+
+	// HealthCheck configures health status monitoring for this service.
+	// +optional
+	HealthCheck *HealthCheckConfig `json:"healthCheck,omitempty"`
+}
+
+// HealthCheckConfig defines health check parameters for a service.
+type HealthCheckConfig struct {
+	// Enabled determines if health checks are performed.
+	// +kubebuilder:default=false
+	Enabled bool `json:"enabled"`
+
+	// Path is the HTTP path to check for health status.
+	// Common paths: /health, /healthz, /api/health
+	// +kubebuilder:default=/health
+	// +optional
+	Path string `json:"path,omitempty"`
+
+	// IntervalSeconds is how often to perform health checks (in seconds).
+	// +kubebuilder:default=30
+	// +kubebuilder:validation:Minimum=10
+	// +kubebuilder:validation:Maximum=300
+	// +optional
+	IntervalSeconds *int `json:"intervalSeconds,omitempty"`
+
+	// TimeoutSeconds is the request timeout for health checks (in seconds).
+	// +kubebuilder:default=5
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=30
+	// +optional
+	TimeoutSeconds *int `json:"timeoutSeconds,omitempty"`
+}
+
+// ServiceDiscoveryStatus is the service discovery descriptor computed by the
+// controller and written to status. The webapi watcher reads this field via the
+// unstructured client (status.serviceDiscovery.*) to get the controller's
+// authoritative, URL-resolved view of each service without re-deriving it from spec.
+type ServiceDiscoveryStatus struct {
+	// Enabled mirrors spec.landingPage.enabled at the time of last reconciliation.
+	Enabled bool `json:"enabled"`
+
+	// DisplayName is the human-readable name shown on the landing page.
+	// +optional
+	DisplayName string `json:"displayName,omitempty"`
+
+	// Description is supplementary text for the service card.
+	// +optional
+	Description string `json:"description,omitempty"`
+
+	// URL is the effective service URL (derived from spec.hostname or
+	// spec.landingPage.externalUrl by the controller).
+	// +optional
+	URL string `json:"url,omitempty"`
+
+	// Icon identifies the service icon.
+	// +optional
+	Icon string `json:"icon,omitempty"`
+
+	// Category groups related services on the landing page.
+	// +optional
+	Category string `json:"category,omitempty"`
+
+	// Priority controls sort order within a category (lower = higher priority).
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=1000
+	// +optional
+	Priority int `json:"priority,omitempty"`
+
+	// Visibility controls who can see this service (public/authenticated/private).
+	// +optional
+	Visibility string `json:"visibility,omitempty"`
+
+	// RequiredGroups lists groups required when visibility is "private".
+	// +optional
+	RequiredGroups []string `json:"requiredGroups,omitempty"`
+}
+
 // NebariAppStatus defines the observed state of NebariApp.
 type NebariAppStatus struct {
 	// For Kubernetes API conventions, see:
@@ -273,6 +422,13 @@ type NebariAppStatus struct {
 	// ClientSecretRef identifies the Secret containing OIDC client credentials.
 	// +optional
 	ClientSecretRef *ResourceReference `json:"clientSecretRef,omitempty"`
+
+	// ServiceDiscovery is the computed service discovery descriptor.
+	// The controller populates this after reconciling spec.landingPage so the
+	// webapi watcher can consume a pre-validated, URL-resolved view via
+	// status.serviceDiscovery.* without re-deriving it from spec.
+	// +optional
+	ServiceDiscovery *ServiceDiscoveryStatus `json:"serviceDiscovery,omitempty"`
 }
 
 // GatewayReference identifies a Gateway resource.

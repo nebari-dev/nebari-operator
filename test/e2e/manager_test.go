@@ -38,11 +38,24 @@ var _ = Describe("Manager", Ordered, func() {
 	// enforce the restricted security policy to the namespace, installing CRDs,
 	// and deploying the controller.
 	BeforeAll(func() {
+		By("undeploying any existing controller-manager")
+		_, _ = utils.Run(exec.Command("make", "undeploy"))
+
+		By("waiting for operator namespace to be fully terminated from previous runs")
+		// Ginkgo randomizes suite execution order, so a prior suite may have left
+		// nebari-operator-system in a terminating state. Wait for it to be gone.
+		Eventually(func() error {
+			cmd := exec.Command("kubectl", "get", "namespace", "nebari-operator-system")
+			_, err := utils.Run(cmd)
+			return err
+		}, VeryLongTimeout, time.Second).Should(HaveOccurred(),
+			"nebari-operator-system should be absent before deploying")
+
 		By("creating manager namespace")
 		cmd := exec.Command("kubectl", "create", "ns", namespace, "--dry-run=client", "-o", "yaml")
 		output, err := utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to generate namespace yaml")
-		
+
 		cmd = exec.Command("kubectl", "apply", "-f", "-")
 		cmd.Stdin = strings.NewReader(output)
 		_, err = utils.Run(cmd)

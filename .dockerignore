@@ -9,3 +9,8 @@
 # Re-include Go module files
 !go.mod
 !go.sum
+
+# Re-include source directories used by Dockerfiles
+!api/
+!cmd/
+!internal/

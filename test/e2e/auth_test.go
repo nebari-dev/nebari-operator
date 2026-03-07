@@ -54,6 +54,15 @@ var _ = Describe("NebariApp Authentication", Ordered, func() {
 			_, err := utils.Run(cmd)
 			return err
 		}, 2*time.Minute, time.Second).Should(HaveOccurred())
+			By("undeploying any existing controller-manager")
+			_, _ = utils.Run(exec.Command("make", "undeploy"))
+		By("waiting for operator namespace to be fully terminated from previous runs")
+		Eventually(func() error {
+			cmd = exec.Command("kubectl", "get", "namespace", "nebari-operator-system")
+			_, err := utils.Run(cmd)
+			return err
+		}, VeryLongTimeout, time.Second).Should(HaveOccurred(),
+			"nebari-operator-system should be absent before deploying")
 
 		By("deploying the controller-manager")
 		cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", projectImage))

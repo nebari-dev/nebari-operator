@@ -214,6 +214,11 @@ func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// Update observed generation
 	nebariApp.Status.ObservedGeneration = nebariApp.Generation
 
+	// Populate the service discovery status so the webapi watcher can read
+	// a pre-validated, URL-resolved view via status.serviceDiscovery.*
+	// without re-deriving it from spec.
+	nebariApp.Status.ServiceDiscovery = buildServiceDiscoveryStatus(nebariApp)
+
 	// Update status
 	if err := r.Status().Update(ctx, nebariApp); err != nil {
 		logger.Error(err, "Failed to update NebariApp status")
@@ -223,6 +228,49 @@ func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	logger.Info("Successfully reconciled NebariApp")
 	// Requeue after 1 minute for now (until full implementation)
 	return ctrl.Result{RequeueAfter: time.Minute}, nil
+}
+
+// buildServiceDiscoveryStatus computes the service discovery descriptor from
+// the validated and reconciled NebariApp and writes it to status.serviceDiscovery.
+// The webapi watcher reads this field via status.serviceDiscovery.* (unstructured
+// client) so it gets the controller-resolved URL and display fields.
+func buildServiceDiscoveryStatus(app *appsv1.NebariApp) *appsv1.ServiceDiscoveryStatus {
+	if app.Spec.LandingPage == nil || !app.Spec.LandingPage.Enabled {
+		return &appsv1.ServiceDiscoveryStatus{Enabled: false}
+	}
+	lp := app.Spec.LandingPage
+
+	priority := 100
+	if lp.Priority != nil {
+		priority = *lp.Priority
+	}
+	visibility := "authenticated"
+	if lp.Visibility != "" {
+		visibility = lp.Visibility
+	}
+
+	scheme := "https"
+	if app.Spec.Routing != nil && app.Spec.Routing.TLS != nil {
+		if app.Spec.Routing.TLS.Enabled != nil && !*app.Spec.Routing.TLS.Enabled {
+			scheme = "http"
+		}
+	}
+	url := scheme + "://" + app.Spec.Hostname
+	if lp.ExternalUrl != "" {
+		url = lp.ExternalUrl
+	}
+
+	return &appsv1.ServiceDiscoveryStatus{
+		Enabled:        true,
+		DisplayName:    lp.DisplayName,
+		Description:    lp.Description,
+		URL:            url,
+		Icon:           lp.Icon,
+		Category:       lp.Category,
+		Priority:       priority,
+		Visibility:     visibility,
+		RequiredGroups: lp.RequiredGroups,
+	}
 }
 
 // cleanup removes resources created by this NebariApp

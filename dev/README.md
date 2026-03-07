@@ -13,12 +13,10 @@ dev/
 │   │   ├── create.sh          # Create Kind cluster with MetalLB
 │   │   └── delete.sh          # Delete Kind cluster
 │   ├── services/              # Service installation
-│   │   ├── install.sh         # Install Envoy Gateway, cert-manager, Gateway
+│   │   ├── install.sh         # Install Envoy Gateway, cert-manager, Keycloak, Gateway
 │   │   ├── uninstall.sh       # Uninstall all services
 │   │   └── keycloak/          # Keycloak OIDC authentication
-│   │       ├── install.sh     # Install Keycloak
-│   │       ├── setup.sh       # Setup Keycloak realm
-│   │       ├── uninstall.sh   # Uninstall Keycloak
+│   │       ├── setup.sh       # Configure Keycloak realm and users
 │   │       └── README.md      # Keycloak documentation
 │   ├── networking/            # Network configuration
 │   │   ├── update-hosts.sh    # Manage /etc/hosts entries for NebariApps
@@ -87,11 +85,10 @@ make port-forward       # Setup port forwarding for local access
   - Secret: `nebari-gateway-tls`
   - Self-signed for development
 
-### 5. Keycloak (Optional)
-For testing OIDC authentication:
+### 5. Keycloak
+Installed automatically by `scripts/services/install.sh`. To configure the Nebari realm and users:
 ```bash
-./scripts/services/keycloak/install.sh   # Install Keycloak
-./scripts/services/keycloak/setup.sh     # Setup nebari realm
+./scripts/services/keycloak/setup.sh
 ```
 - Namespace: `keycloak`
 - Admin credentials: `admin/admin`
