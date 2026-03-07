@@ -21,6 +21,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"time"
 
 	"github.com/Nerzal/gocloak/v13"
 	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
@@ -65,16 +66,22 @@ func (p *KeycloakProvider) SupportsProvisioning() bool {
 	return true
 }
 
-// loadCredentials loads admin credentials from the Kubernetes secret if not already loaded.
+// loadCredentials loads admin credentials from the Kubernetes secret.
+// When AdminSecretName is configured, credentials are always read fresh from the
+// secret to support secret rotation without pod restarts.
+// When no secret is configured, falls back to direct credentials (env vars).
 func (p *KeycloakProvider) loadCredentials(ctx context.Context) error {
-	// If credentials are already loaded, skip
-	if p.Config.AdminUsername != "" && p.Config.AdminPassword != "" {
+	// If no secret is configured, use direct credentials from config (env vars)
+	if p.Config.AdminSecretName == "" {
+		if p.Config.AdminUsername == "" || p.Config.AdminPassword == "" {
+			return fmt.Errorf("keycloak admin credentials not configured: set KEYCLOAK_ADMIN_SECRET_NAME or KEYCLOAK_ADMIN_USERNAME/PASSWORD")
+		}
 		return nil
 	}
 
 	logger := log.FromContext(ctx)
 
-	// Load credentials from secret
+	// Always read fresh from the secret to support rotation
 	secret := &corev1.Secret{}
 	err := p.Client.Get(ctx, types.NamespacedName{
 		Name:      p.Config.AdminSecretName,
@@ -121,6 +128,9 @@ func (p *KeycloakProvider) loadCredentials(ctx context.Context) error {
 
 // ProvisionClient creates or updates a Keycloak OIDC client for the NebariApp.
 func (p *KeycloakProvider) ProvisionClient(ctx context.Context, nebariApp *appsv1.NebariApp) error {
+	ctx, cancel := p.withAPITimeout(ctx)
+	defer cancel()
+
 	logger := log.FromContext(ctx)
 	clientID := p.GetClientID(ctx, nebariApp)
 
@@ -180,6 +190,9 @@ func (p *KeycloakProvider) ProvisionClient(ctx context.Context, nebariApp *appsv
 
 // DeleteClient removes the Keycloak OIDC client.
 func (p *KeycloakProvider) DeleteClient(ctx context.Context, nebariApp *appsv1.NebariApp) error {
+	ctx, cancel := p.withAPITimeout(ctx)
+	defer cancel()
+
 	clientID := p.GetClientID(ctx, nebariApp)
 
 	// Load admin credentials from secret if not already loaded
@@ -211,6 +224,19 @@ func (p *KeycloakProvider) DeleteClient(ctx context.Context, nebariApp *appsv1.N
 	}
 
 	return nil
+}
+
+// defaultAPITimeout is used when APITimeout is not configured.
+const defaultAPITimeout = 30 * time.Second
+
+// withAPITimeout returns a context with the configured API timeout applied.
+// If the context already has an earlier deadline, it is preserved.
+func (p *KeycloakProvider) withAPITimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	timeout := p.Config.APITimeout
+	if timeout <= 0 {
+		timeout = defaultAPITimeout
+	}
+	return context.WithTimeout(ctx, timeout)
 }
 
 // authenticate creates a Keycloak client and obtains an admin token.

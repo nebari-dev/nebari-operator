@@ -18,7 +18,11 @@ package providers
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
 	"github.com/nebari-dev/nebari-operator/internal/config"
@@ -281,6 +285,209 @@ func TestKeycloakProvider_StoreClientSecret(t *testing.T) {
 				t.Errorf("expected no error, got: %v", err)
 			}
 		})
+	}
+}
+
+func TestKeycloakProvider_LoadCredentials(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+
+	tests := []struct {
+		name             string
+		kcConfig         config.KeycloakConfig
+		secret           *corev1.Secret
+		expectError      bool
+		expectedUsername string
+		expectedPassword string
+	}{
+		{
+			name: "Loads credentials from secret with standard keys",
+			kcConfig: config.KeycloakConfig{
+				AdminSecretName:      "kc-admin",
+				AdminSecretNamespace: "keycloak",
+			},
+			secret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "kc-admin",
+					Namespace: "keycloak",
+				},
+				Data: map[string][]byte{
+					"username": []byte("admin"),
+					"password": []byte("secret123"),
+				},
+			},
+			expectError:      false,
+			expectedUsername: "admin",
+			expectedPassword: "secret123",
+		},
+		{
+			name: "Loads credentials from secret with admin- prefixed keys",
+			kcConfig: config.KeycloakConfig{
+				AdminSecretName:      "kc-admin",
+				AdminSecretNamespace: "keycloak",
+			},
+			secret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "kc-admin",
+					Namespace: "keycloak",
+				},
+				Data: map[string][]byte{
+					"admin-username": []byte("admin2"),
+					"admin-password": []byte("secret456"),
+				},
+			},
+			expectError:      false,
+			expectedUsername: "admin2",
+			expectedPassword: "secret456",
+		},
+		{
+			name: "Uses direct credentials when no secret configured",
+			kcConfig: config.KeycloakConfig{
+				AdminSecretName: "",
+				AdminUsername:   "direct-admin",
+				AdminPassword:   "direct-pass",
+			},
+			secret:           nil,
+			expectError:      false,
+			expectedUsername: "direct-admin",
+			expectedPassword: "direct-pass",
+		},
+		{
+			name: "Error when no secret and no direct credentials",
+			kcConfig: config.KeycloakConfig{
+				AdminSecretName: "",
+				AdminUsername:   "",
+				AdminPassword:   "",
+			},
+			secret:      nil,
+			expectError: true,
+		},
+		{
+			name: "Error when secret not found",
+			kcConfig: config.KeycloakConfig{
+				AdminSecretName:      "nonexistent",
+				AdminSecretNamespace: "keycloak",
+			},
+			secret:      nil,
+			expectError: true,
+		},
+		{
+			name: "Error when secret missing username",
+			kcConfig: config.KeycloakConfig{
+				AdminSecretName:      "kc-admin",
+				AdminSecretNamespace: "keycloak",
+			},
+			secret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "kc-admin",
+					Namespace: "keycloak",
+				},
+				Data: map[string][]byte{
+					"password": []byte("secret123"),
+				},
+			},
+			expectError: true,
+		},
+		{
+			name: "Error when secret missing password",
+			kcConfig: config.KeycloakConfig{
+				AdminSecretName:      "kc-admin",
+				AdminSecretNamespace: "keycloak",
+			},
+			secret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "kc-admin",
+					Namespace: "keycloak",
+				},
+				Data: map[string][]byte{
+					"username": []byte("admin"),
+				},
+			},
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			builder := fake.NewClientBuilder().WithScheme(scheme)
+			if tt.secret != nil {
+				builder = builder.WithObjects(tt.secret)
+			}
+			k8sClient := builder.Build()
+
+			provider := &KeycloakProvider{
+				Config: tt.kcConfig,
+				Client: k8sClient,
+			}
+
+			err := provider.loadCredentials(context.Background())
+
+			if tt.expectError && err == nil {
+				t.Error("expected error, got nil")
+			}
+			if !tt.expectError && err != nil {
+				t.Errorf("expected no error, got: %v", err)
+			}
+			if !tt.expectError {
+				if provider.Config.AdminUsername != tt.expectedUsername {
+					t.Errorf("expected username %q, got %q", tt.expectedUsername, provider.Config.AdminUsername)
+				}
+				if provider.Config.AdminPassword != tt.expectedPassword {
+					t.Errorf("expected password %q, got %q", tt.expectedPassword, provider.Config.AdminPassword)
+				}
+			}
+		})
+	}
+}
+
+func TestKeycloakProvider_LoadCredentials_RefreshesOnSecretChange(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "kc-admin",
+			Namespace: "keycloak",
+		},
+		Data: map[string][]byte{
+			"username": []byte("admin"),
+			"password": []byte("old-password"),
+		},
+	}
+
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(secret).
+		Build()
+
+	provider := &KeycloakProvider{
+		Config: config.KeycloakConfig{
+			AdminSecretName:      "kc-admin",
+			AdminSecretNamespace: "keycloak",
+		},
+		Client: k8sClient,
+	}
+
+	// First load
+	if err := provider.loadCredentials(context.Background()); err != nil {
+		t.Fatalf("first loadCredentials failed: %v", err)
+	}
+	if provider.Config.AdminPassword != "old-password" {
+		t.Fatalf("expected old-password, got %s", provider.Config.AdminPassword)
+	}
+
+	// Simulate secret rotation by updating the secret in the fake client
+	secret.Data["password"] = []byte("new-password")
+	if err := k8sClient.Update(context.Background(), secret); err != nil {
+		t.Fatalf("failed to update secret: %v", err)
+	}
+
+	// Second load should pick up the new password
+	if err := provider.loadCredentials(context.Background()); err != nil {
+		t.Fatalf("second loadCredentials failed: %v", err)
+	}
+	if provider.Config.AdminPassword != "new-password" {
+		t.Errorf("expected credentials to be refreshed to 'new-password', got %q", provider.Config.AdminPassword)
 	}
 }
 
@@ -644,4 +851,169 @@ func TestKeycloakProvider_ProvisionClient(t *testing.T) {
 	// This will fail without a real Keycloak instance, but that's expected
 	// The important part is that the method has the correct signature
 	_ = provider.ProvisionClient(context.Background(), nebariApp)
+}
+
+func TestKeycloakProvider_APITimeout(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = appsv1.AddToScheme(scheme)
+
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	nebariApp := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-app",
+			Namespace: "default",
+			UID:       "test-uid",
+		},
+		Spec: appsv1.NebariAppSpec{
+			Hostname: "test.example.com",
+			Auth: &appsv1.AuthConfig{
+				Enabled: true,
+			},
+		},
+	}
+
+	tests := []struct {
+		name        string
+		timeout     time.Duration
+		serverFunc  func(w http.ResponseWriter, r *http.Request)
+		callFunc    string
+		wantErr     bool
+		wantTimeout bool
+	}{
+		{
+			name:    "ProvisionClient times out with slow server",
+			timeout: 100 * time.Millisecond,
+			serverFunc: func(w http.ResponseWriter, r *http.Request) {
+				// Simulate a slow Keycloak by sleeping longer than the timeout
+				time.Sleep(500 * time.Millisecond)
+				w.WriteHeader(http.StatusOK)
+			},
+			callFunc:    "ProvisionClient",
+			wantErr:     true,
+			wantTimeout: true,
+		},
+		{
+			name:    "DeleteClient times out with slow server",
+			timeout: 100 * time.Millisecond,
+			serverFunc: func(w http.ResponseWriter, r *http.Request) {
+				time.Sleep(500 * time.Millisecond)
+				w.WriteHeader(http.StatusOK)
+			},
+			callFunc:    "DeleteClient",
+			wantErr:     true,
+			wantTimeout: true,
+		},
+		{
+			name:    "ProvisionClient fails with auth error, not timeout",
+			timeout: 5 * time.Second,
+			serverFunc: func(w http.ResponseWriter, r *http.Request) {
+				// Respond immediately with an auth error
+				w.WriteHeader(http.StatusUnauthorized)
+			},
+			callFunc:    "ProvisionClient",
+			wantErr:     true,
+			wantTimeout: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(tt.serverFunc))
+			defer server.Close()
+
+			provider := &KeycloakProvider{
+				Config: config.KeycloakConfig{
+					URL:           server.URL,
+					Realm:         "test",
+					AdminUsername: "admin",
+					AdminPassword: "admin",
+					APITimeout:    tt.timeout,
+				},
+				Client: k8sClient,
+			}
+
+			var err error
+			switch tt.callFunc {
+			case "ProvisionClient":
+				err = provider.ProvisionClient(context.Background(), nebariApp)
+			case "DeleteClient":
+				err = provider.DeleteClient(context.Background(), nebariApp)
+			}
+
+			if tt.wantErr && err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("expected no error, got: %v", err)
+			}
+
+			// gocloak does not use %w for error wrapping, so errors.Is cannot
+			// traverse the chain. Check the error string instead.
+			isTimeout := err != nil && strings.Contains(err.Error(), "context deadline exceeded")
+			if tt.wantTimeout && !isTimeout {
+				t.Errorf("expected timeout error, got: %v", err)
+			}
+			if !tt.wantTimeout && isTimeout {
+				t.Errorf("expected non-timeout error, got: %v", err)
+			}
+		})
+	}
+}
+
+func TestKeycloakProvider_WithAPITimeout(t *testing.T) {
+	tests := []struct {
+		name          string
+		configTimeout time.Duration
+		expectDefault bool
+	}{
+		{
+			name:          "Uses configured timeout",
+			configTimeout: 45 * time.Second,
+			expectDefault: false,
+		},
+		{
+			name:          "Falls back to default when zero",
+			configTimeout: 0,
+			expectDefault: true,
+		},
+		{
+			name:          "Falls back to default when negative",
+			configTimeout: -1 * time.Second,
+			expectDefault: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := &KeycloakProvider{
+				Config: config.KeycloakConfig{
+					APITimeout: tt.configTimeout,
+				},
+			}
+
+			ctx, cancel := provider.withAPITimeout(context.Background())
+			defer cancel()
+
+			deadline, ok := ctx.Deadline()
+			if !ok {
+				t.Fatal("expected context to have a deadline")
+			}
+
+			remaining := time.Until(deadline)
+			if tt.expectDefault {
+				// Should be close to 30s (the default)
+				if remaining < 29*time.Second || remaining > 31*time.Second {
+					t.Errorf("expected ~30s deadline, got %v", remaining)
+				}
+			} else {
+				// Should be close to configured value
+				expected := tt.configTimeout
+				if remaining < expected-time.Second || remaining > expected+time.Second {
+					t.Errorf("expected ~%v deadline, got %v", expected, remaining)
+				}
+			}
+		})
+	}
 }
