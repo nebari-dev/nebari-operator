@@ -211,16 +211,6 @@ spec:
                 description: Routing configures routing behavior including path-based
                   rules and TLS.
                 properties:
-                  publicRoutes:
-                    description: |-
-                      PublicRoutes specifies paths that should bypass OIDC authentication.
-                      When auth is enabled and these are specified, these paths will be routed
-                      via a separate HTTPRoute that is not protected by the SecurityPolicy.
-                      Paths should start with "/" and use PathPrefix matching.
-                      Example: ["/api/v1/health", "/api/v1/version"]
-                    items:
-                      type: string
-                    type: array
                   routes:
                     description: |-
                       Routes defines path-based routing rules for the application.
