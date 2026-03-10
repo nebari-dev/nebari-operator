@@ -19,6 +19,7 @@ func ValidateResourceNames(nebariApp *appsv1.NebariApp) error {
 		value string
 	}{
 		{"HTTPRoute", HTTPRouteName(nebariApp)},
+		{"PublicHTTPRoute", PublicHTTPRouteName(nebariApp)},
 		{"SecurityPolicy", SecurityPolicyName(nebariApp)},
 		{"Certificate", CertificateName(nebariApp)},
 		{"CertificateSecret", CertificateSecretName(nebariApp)},
@@ -56,6 +57,12 @@ func SecurityPolicyName(nebariApp *appsv1.NebariApp) string {
 // Pattern: <nebariapp-name>-route
 func HTTPRouteName(nebariApp *appsv1.NebariApp) string {
 	return ResourceName(nebariApp, constants.HTTPRouteSuffix)
+}
+
+// PublicHTTPRouteName generates the name for the public (unauthenticated) HTTPRoute.
+// Pattern: <nebariapp-name>-public-route
+func PublicHTTPRouteName(nebariApp *appsv1.NebariApp) string {
+	return ResourceName(nebariApp, constants.PublicHTTPRouteSuffix)
 }
 
 // ClientSecretName generates the name for the OIDC client secret.

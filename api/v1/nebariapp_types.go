@@ -79,6 +79,15 @@ type RoutingConfig struct {
 	// +optional
 	Routes []RouteMatch `json:"routes,omitempty"`
 
+	// PublicRoutes specifies paths that should bypass OIDC authentication.
+	// When auth is enabled and these are specified, these paths will be routed
+	// via a separate HTTPRoute that is not protected by the SecurityPolicy.
+	// Each entry uses the same RouteMatch format as routes, supporting both
+	// PathPrefix (default) and Exact matching via the pathType field.
+	// Example: [{pathPrefix: "/api/v1/health", pathType: "Exact"}]
+	// +optional
+	PublicRoutes []RouteMatch `json:"publicRoutes,omitempty"`
+
 	// TLS configures TLS certificate management and termination behavior.
 	// When TLS is enabled (the default), the operator creates a cert-manager Certificate
 	// for the application's hostname and adds a per-app HTTPS listener to the shared Gateway.
@@ -105,10 +114,11 @@ type RouteMatch struct {
 
 	// PathType specifies how the path should be matched.
 	// Valid values:
-	//   - "PathPrefix" (default): Match requests with the specified path prefix
+	//   - "PathPrefix": Match requests with the specified path prefix
 	//   - "Exact": Match requests with the exact path
+	// When used in routing.routes, defaults to "PathPrefix".
+	// When used in routing.publicRoutes, defaults to "Exact" (safer for auth bypass).
 	// +kubebuilder:validation:Enum=PathPrefix;Exact
-	// +kubebuilder:default=PathPrefix
 	// +optional
 	PathType string `json:"pathType,omitempty"`
 }

@@ -195,6 +195,14 @@ func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		logger.Info("Routing not configured, skipping HTTPRoute reconciliation", "nebariapp", nebariApp.Name)
 	}
 
+	// Reconcile public route (unauthenticated paths) if routing has publicRoutes
+	if result, err := r.reconcilePublicRoutes(ctx, nebariApp, tlsListenerName); err != nil || result != nil {
+		if result != nil {
+			return *result, err
+		}
+		return ctrl.Result{}, err
+	}
+
 	// Reconcile authentication (SecurityPolicy creation/update) if auth is configured
 	if err := r.AuthReconciler.ReconcileAuth(ctx, nebariApp); err != nil {
 		logger.Error(err, "Auth reconciliation failed")
@@ -273,6 +281,35 @@ func buildServiceDiscoveryStatus(app *appsv1.NebariApp) *appsv1.ServiceDiscovery
 	}
 }
 
+// reconcilePublicRoutes handles public route reconciliation for paths that bypass OIDC.
+// Returns a non-nil Result pointer if the caller should return early.
+func (r *NebariAppReconciler) reconcilePublicRoutes(ctx context.Context, nebariApp *appsv1.NebariApp, tlsListenerName string) (*ctrl.Result, error) {
+	logger := logf.FromContext(ctx)
+
+	if nebariApp.Spec.Routing == nil || len(nebariApp.Spec.Routing.PublicRoutes) == 0 {
+		return nil, nil
+	}
+
+	if nebariApp.Spec.Auth == nil || !nebariApp.Spec.Auth.Enabled {
+		// Warn: publicRoutes configured but auth is not enabled, so they have no effect
+		r.Recorder.Event(nebariApp, corev1.EventTypeWarning, "PublicRoutesIgnored",
+			"routing.publicRoutes is configured but auth is not enabled — all routes are already public")
+		return nil, nil
+	}
+
+	if err := r.RoutingReconciler.ReconcilePublicRoute(ctx, nebariApp, tlsListenerName); err != nil {
+		logger.Error(err, "Public route reconciliation failed")
+		conditions.SetCondition(nebariApp, appsv1.ConditionTypeReady, metav1.ConditionFalse,
+			appsv1.ReasonFailed, fmt.Sprintf("Public route reconciliation failed: %v", err))
+		if err := r.Status().Update(ctx, nebariApp); err != nil {
+			return &ctrl.Result{}, err
+		}
+		return &ctrl.Result{RequeueAfter: time.Minute}, nil
+	}
+	logger.Info("Public route reconciled successfully", "nebariapp", nebariApp.Name)
+	return nil, nil
+}
+
 // cleanup removes resources created by this NebariApp
 func (r *NebariAppReconciler) cleanup(ctx context.Context, nebariApp *appsv1.NebariApp) error {
 	logger := logf.FromContext(ctx)
@@ -296,6 +333,11 @@ func (r *NebariAppReconciler) cleanup(ctx context.Context, nebariApp *appsv1.Neb
 	if r.RoutingReconciler != nil {
 		if err := r.RoutingReconciler.CleanupHTTPRoute(ctx, nebariApp); err != nil {
 			logger.Error(err, "Failed to delete HTTPRoute")
+			return err
+		}
+		// Also clean up the public HTTPRoute if it exists
+		if err := r.RoutingReconciler.CleanupPublicHTTPRoute(ctx, nebariApp); err != nil {
+			logger.Error(err, "Failed to delete public HTTPRoute")
 			return err
 		}
 	}

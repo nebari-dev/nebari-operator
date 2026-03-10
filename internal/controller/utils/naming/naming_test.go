@@ -98,6 +98,21 @@ func TestClientSecretName(t *testing.T) {
 	}
 }
 
+func TestPublicHTTPRouteName(t *testing.T) {
+	nebariApp := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "my-app",
+		},
+	}
+
+	expected := "my-app-public-route"
+	result := PublicHTTPRouteName(nebariApp)
+
+	if result != expected {
+		t.Errorf("PublicHTTPRouteName() = %q, want %q", result, expected)
+	}
+}
+
 func TestClientID(t *testing.T) {
 	nebariApp := &appsv1.NebariApp{
 		ObjectMeta: metav1.ObjectMeta{

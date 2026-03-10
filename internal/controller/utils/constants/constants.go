@@ -42,6 +42,9 @@ const (
 	// HTTPRouteSuffix is appended to NebariApp name for HTTPRoute resources
 	HTTPRouteSuffix = "route"
 
+	// PublicHTTPRouteSuffix is appended to NebariApp name for public (unauthenticated) HTTPRoute resources
+	PublicHTTPRouteSuffix = "public-route"
+
 	// SecurityPolicySuffix is appended to NebariApp name for SecurityPolicy resources
 	SecurityPolicySuffix = "security"
 
