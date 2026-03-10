@@ -195,8 +195,9 @@ func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		logger.Info("Routing not configured, skipping HTTPRoute reconciliation", "nebariapp", nebariApp.Name)
 	}
 
-	// Reconcile public route (unauthenticated paths) if auth has publicPaths
-	if nebariApp.Spec.Auth != nil && nebariApp.Spec.Auth.Enabled && len(nebariApp.Spec.Auth.PublicPaths) > 0 {
+	// Reconcile public route (unauthenticated paths) if routing has publicRoutes and auth is enabled
+	if nebariApp.Spec.Routing != nil && len(nebariApp.Spec.Routing.PublicRoutes) > 0 &&
+		nebariApp.Spec.Auth != nil && nebariApp.Spec.Auth.Enabled {
 		if err := r.RoutingReconciler.ReconcilePublicRoute(ctx, nebariApp, tlsListenerName); err != nil {
 			logger.Error(err, "Public route reconciliation failed")
 			conditions.SetCondition(nebariApp, appsv1.ConditionTypeReady, metav1.ConditionFalse,

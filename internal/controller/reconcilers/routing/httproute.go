@@ -265,19 +265,19 @@ func (r *RoutingReconciler) buildBackendRefs(nebariApp *appsv1.NebariApp) []gate
 }
 
 // ReconcilePublicRoute creates or updates the public (unauthenticated) HTTPRoute for a NebariApp.
-// This route handles paths listed in auth.publicPaths that should bypass OIDC authentication.
+// This route handles paths listed in routing.publicRoutes that should bypass OIDC authentication.
 func (r *RoutingReconciler) ReconcilePublicRoute(ctx context.Context, nebariApp *appsv1.NebariApp, tlsListenerName string) error {
 	logger := log.FromContext(ctx)
 
-	// Only create public route if there are public paths configured
-	if nebariApp.Spec.Auth == nil || len(nebariApp.Spec.Auth.PublicPaths) == 0 {
+	// Only create public route if there are public routes configured
+	if nebariApp.Spec.Routing == nil || len(nebariApp.Spec.Routing.PublicRoutes) == 0 {
 		// No public paths - clean up any existing public route
 		return r.CleanupPublicHTTPRoute(ctx, nebariApp)
 	}
 
 	gatewayName := naming.GatewayName(nebariApp)
 	logger.Info("Reconciling public route", "gateway", gatewayName, "hostname", nebariApp.Spec.Hostname,
-		"publicPaths", nebariApp.Spec.Auth.PublicPaths)
+		"publicRoutes", nebariApp.Spec.Routing.PublicRoutes)
 
 	desiredRoute := r.buildPublicHTTPRoute(nebariApp, gatewayName, tlsListenerName)
 
@@ -350,7 +350,7 @@ func (r *RoutingReconciler) CleanupPublicHTTPRoute(ctx context.Context, nebariAp
 	return nil
 }
 
-// buildPublicHTTPRoute generates an HTTPRoute for paths that bypass OIDC authentication.
+// buildPublicHTTPRoute generates an HTTPRoute for public routes that bypass OIDC authentication.
 // This route is separate from the main route so the SecurityPolicy only targets the main route.
 func (r *RoutingReconciler) buildPublicHTTPRoute(nebariApp *appsv1.NebariApp, gatewayName string, tlsListenerName string) *gatewayv1.HTTPRoute {
 	routeName := naming.PublicHTTPRouteName(nebariApp)
@@ -367,8 +367,8 @@ func (r *RoutingReconciler) buildPublicHTTPRoute(nebariApp *appsv1.NebariApp, ga
 	}
 
 	// Build matches for each public path
-	matches := make([]gatewayv1.HTTPRouteMatch, 0, len(nebariApp.Spec.Auth.PublicPaths))
-	for _, path := range nebariApp.Spec.Auth.PublicPaths {
+	matches := make([]gatewayv1.HTTPRouteMatch, 0, len(nebariApp.Spec.Routing.PublicRoutes))
+	for _, path := range nebariApp.Spec.Routing.PublicRoutes {
 		pathType := gatewayv1.PathMatchPathPrefix
 		pathValue := path
 		matches = append(matches, gatewayv1.HTTPRouteMatch{

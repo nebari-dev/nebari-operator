@@ -53,11 +53,6 @@ func (in *AuthConfig) DeepCopyInto(out *AuthConfig) {
 		*out = new(bool)
 		**out = **in
 	}
-	if in.PublicPaths != nil {
-		in, out := &in.PublicPaths, &out.PublicPaths
-		*out = make([]string, len(*in))
-		copy(*out, *in)
-	}
 	if in.KeycloakConfig != nil {
 		in, out := &in.KeycloakConfig, &out.KeycloakConfig
 		*out = new(KeycloakClientConfig)
@@ -314,6 +309,11 @@ func (in *RoutingConfig) DeepCopyInto(out *RoutingConfig) {
 	if in.Routes != nil {
 		in, out := &in.Routes, &out.Routes
 		*out = make([]RouteMatch, len(*in))
+		copy(*out, *in)
+	}
+	if in.PublicRoutes != nil {
+		in, out := &in.PublicRoutes, &out.PublicRoutes
+		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
 	if in.TLS != nil {

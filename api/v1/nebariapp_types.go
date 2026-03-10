@@ -74,6 +74,14 @@ type RoutingConfig struct {
 	// +optional
 	Routes []RouteMatch `json:"routes,omitempty"`
 
+	// PublicRoutes specifies paths that should bypass OIDC authentication.
+	// When auth is enabled and these are specified, these paths will be routed
+	// via a separate HTTPRoute that is not protected by the SecurityPolicy.
+	// Paths should start with "/" and use PathPrefix matching.
+	// Example: ["/api/v1/health", "/api/v1/version"]
+	// +optional
+	PublicRoutes []string `json:"publicRoutes,omitempty"`
+
 	// TLS configures TLS certificate management and termination behavior.
 	// When TLS is enabled (the default), the operator creates a cert-manager Certificate
 	// for the application's hostname and adds a per-app HTTPS listener to the shared Gateway.
@@ -179,14 +187,6 @@ type AuthConfig struct {
 	// Example: https://accounts.google.com, https://login.microsoftonline.com/<tenant>/v2.0
 	// +optional
 	IssuerURL string `json:"issuerURL,omitempty"`
-
-	// PublicPaths specifies paths that should bypass OIDC authentication.
-	// When specified, these paths will be routed via a separate HTTPRoute
-	// that is not protected by the SecurityPolicy.
-	// Paths should start with "/" and use PathPrefix matching.
-	// Example: ["/api/v1/health", "/api/v1/version"]
-	// +optional
-	PublicPaths []string `json:"publicPaths,omitempty"`
 
 	// KeycloakConfig provides Keycloak-specific configuration for fine-grained control
 	// over realm resources like groups, client scopes, and protocol mappers.

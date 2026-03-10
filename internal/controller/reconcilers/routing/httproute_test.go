@@ -548,13 +548,15 @@ func TestBuildPublicHTTPRoute(t *testing.T) {
 						Name: "test-service",
 						Port: 8080,
 					},
-					Auth: &appsv1.AuthConfig{
-						Enabled: true,
-						PublicPaths: []string{
+					Routing: &appsv1.RoutingConfig{
+						PublicRoutes: []string{
 							"/api/v1/health",
 							"/api/v1/version",
 							"/api/v1/auth/login",
 						},
+					},
+					Auth: &appsv1.AuthConfig{
+						Enabled: true,
 					},
 				},
 			},
@@ -576,9 +578,11 @@ func TestBuildPublicHTTPRoute(t *testing.T) {
 						Name: "my-service",
 						Port: 9090,
 					},
+					Routing: &appsv1.RoutingConfig{
+						PublicRoutes: []string{"/health"},
+					},
 					Auth: &appsv1.AuthConfig{
-						Enabled:     true,
-						PublicPaths: []string{"/health"},
+						Enabled: true,
 					},
 				},
 			},
@@ -664,9 +668,11 @@ func TestReconcilePublicRoute(t *testing.T) {
 						Name: "test-service",
 						Port: 8080,
 					},
+					Routing: &appsv1.RoutingConfig{
+						PublicRoutes: []string{"/health", "/version"},
+					},
 					Auth: &appsv1.AuthConfig{
-						Enabled:     true,
-						PublicPaths: []string{"/health", "/version"},
+						Enabled: true,
 					},
 				},
 			},
@@ -691,6 +697,7 @@ func TestReconcilePublicRoute(t *testing.T) {
 						Name: "test-service",
 						Port: 8080,
 					},
+					Routing: &appsv1.RoutingConfig{},
 					Auth: &appsv1.AuthConfig{
 						Enabled: true,
 					},
