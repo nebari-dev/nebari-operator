@@ -534,9 +534,10 @@ func TestBuildPublicHTTPRoute(t *testing.T) {
 		expectedName         string
 		expectedMatchesCount int
 		expectedPaths        []string
+		expectedPathTypes    []gatewayv1.PathMatchType
 	}{
 		{
-			name: "Public route with multiple paths",
+			name: "Public route with multiple paths and mixed match types",
 			nebariApp: &appsv1.NebariApp{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-app",
@@ -549,10 +550,10 @@ func TestBuildPublicHTTPRoute(t *testing.T) {
 						Port: 8080,
 					},
 					Routing: &appsv1.RoutingConfig{
-						PublicRoutes: []string{
-							"/api/v1/health",
-							"/api/v1/version",
-							"/api/v1/auth/login",
+						PublicRoutes: []appsv1.RouteMatch{
+							{PathPrefix: "/api/v1/health"},
+							{PathPrefix: "/api/v1/version"},
+							{PathPrefix: "/api/v1/auth/login", PathType: "Exact"},
 						},
 					},
 					Auth: &appsv1.AuthConfig{
@@ -564,6 +565,7 @@ func TestBuildPublicHTTPRoute(t *testing.T) {
 			expectedName:         "test-app-public-route",
 			expectedMatchesCount: 3,
 			expectedPaths:        []string{"/api/v1/health", "/api/v1/version", "/api/v1/auth/login"},
+			expectedPathTypes:    []gatewayv1.PathMatchType{gatewayv1.PathMatchPathPrefix, gatewayv1.PathMatchPathPrefix, gatewayv1.PathMatchExact},
 		},
 		{
 			name: "Public route with single path",
@@ -579,7 +581,9 @@ func TestBuildPublicHTTPRoute(t *testing.T) {
 						Port: 9090,
 					},
 					Routing: &appsv1.RoutingConfig{
-						PublicRoutes: []string{"/health"},
+						PublicRoutes: []appsv1.RouteMatch{
+							{PathPrefix: "/health"},
+						},
 					},
 					Auth: &appsv1.AuthConfig{
 						Enabled: true,
@@ -590,6 +594,7 @@ func TestBuildPublicHTTPRoute(t *testing.T) {
 			expectedName:         "my-app-public-route",
 			expectedMatchesCount: 1,
 			expectedPaths:        []string{"/health"},
+			expectedPathTypes:    []gatewayv1.PathMatchType{gatewayv1.PathMatchPathPrefix},
 		},
 	}
 
@@ -621,8 +626,8 @@ func TestBuildPublicHTTPRoute(t *testing.T) {
 					t.Errorf("match %d: path is nil", i)
 					continue
 				}
-				if *match.Path.Type != gatewayv1.PathMatchPathPrefix {
-					t.Errorf("match %d: expected PathPrefix, got %s", i, *match.Path.Type)
+				if i < len(tt.expectedPathTypes) && *match.Path.Type != tt.expectedPathTypes[i] {
+					t.Errorf("match %d: expected %s, got %s", i, tt.expectedPathTypes[i], *match.Path.Type)
 				}
 				if i < len(tt.expectedPaths) && *match.Path.Value != tt.expectedPaths[i] {
 					t.Errorf("match %d: expected path=%s, got=%s", i, tt.expectedPaths[i], *match.Path.Value)
@@ -669,7 +674,10 @@ func TestReconcilePublicRoute(t *testing.T) {
 						Port: 8080,
 					},
 					Routing: &appsv1.RoutingConfig{
-						PublicRoutes: []string{"/health", "/version"},
+						PublicRoutes: []appsv1.RouteMatch{
+							{PathPrefix: "/health"},
+							{PathPrefix: "/version"},
+						},
 					},
 					Auth: &appsv1.AuthConfig{
 						Enabled: true,

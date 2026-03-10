@@ -77,10 +77,11 @@ type RoutingConfig struct {
 	// PublicRoutes specifies paths that should bypass OIDC authentication.
 	// When auth is enabled and these are specified, these paths will be routed
 	// via a separate HTTPRoute that is not protected by the SecurityPolicy.
-	// Paths should start with "/" and use PathPrefix matching.
-	// Example: ["/api/v1/health", "/api/v1/version"]
+	// Each entry uses the same RouteMatch format as routes, supporting both
+	// PathPrefix (default) and Exact matching via the pathType field.
+	// Example: [{pathPrefix: "/api/v1/health", pathType: "Exact"}]
 	// +optional
-	PublicRoutes []string `json:"publicRoutes,omitempty"`
+	PublicRoutes []RouteMatch `json:"publicRoutes,omitempty"`
 
 	// TLS configures TLS certificate management and termination behavior.
 	// When TLS is enabled (the default), the operator creates a cert-manager Certificate

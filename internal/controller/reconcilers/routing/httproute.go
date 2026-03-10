@@ -366,11 +366,14 @@ func (r *RoutingReconciler) buildPublicHTTPRoute(nebariApp *appsv1.NebariApp, ga
 		sectionName = gatewayv1.SectionName(tlsListenerName)
 	}
 
-	// Build matches for each public path
+	// Build matches for each public route
 	matches := make([]gatewayv1.HTTPRouteMatch, 0, len(nebariApp.Spec.Routing.PublicRoutes))
-	for _, path := range nebariApp.Spec.Routing.PublicRoutes {
+	for _, route := range nebariApp.Spec.Routing.PublicRoutes {
 		pathType := gatewayv1.PathMatchPathPrefix
-		pathValue := path
+		if route.PathType == "Exact" {
+			pathType = gatewayv1.PathMatchExact
+		}
+		pathValue := route.PathPrefix
 		matches = append(matches, gatewayv1.HTTPRouteMatch{
 			Path: &gatewayv1.HTTPPathMatch{
 				Type:  &pathType,

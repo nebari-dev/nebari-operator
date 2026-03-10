@@ -148,16 +148,16 @@ spec:
 
 #### routing.publicRoutes
 
-**Type:** `array of strings` (optional)
+**Type:** `array of RouteMatch` (optional)
 
 Specifies paths that should bypass OIDC authentication. When auth is enabled and these are specified, these paths will
 be routed via a separate HTTPRoute that is not protected by the SecurityPolicy. All other paths remain protected.
 
 This is useful for health checks, public APIs, or login endpoints that must be accessible without authentication.
 
-**Validation:**
-- Each path should start with `/`
-- Uses `PathPrefix` matching
+Each entry uses the same format as `routing.routes`:
+- `pathPrefix` (required): The path to match. Must start with `/`.
+- `pathType` (optional): `PathPrefix` (default) or `Exact`.
 
 **Note:** Public routes are only created when `auth.enabled: true`. If auth is disabled, all routes are already public.
 
@@ -168,9 +168,11 @@ spec:
     routes:
       - pathPrefix: /
     publicRoutes:
-      - /api/v1/health
-      - /api/v1/version
-      - /.well-known
+      - pathPrefix: /api/v1/health
+        pathType: Exact
+      - pathPrefix: /api/v1/version
+        pathType: Exact
+      - pathPrefix: /.well-known
   auth:
     enabled: true
 ```
@@ -556,8 +558,10 @@ spec:
     routes:
       - pathPrefix: /
     publicRoutes:
-      - /api/v1/health
-      - /api/v1/version
+      - pathPrefix: /api/v1/health
+        pathType: Exact
+      - pathPrefix: /api/v1/version
+        pathType: Exact
     tls:
       enabled: true
   auth:

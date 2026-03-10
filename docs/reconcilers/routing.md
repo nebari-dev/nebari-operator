@@ -288,8 +288,10 @@ spec:
     routes:
       - pathPrefix: /
     publicRoutes:
-      - /api/v1/health
-      - /api/v1/version
+      - pathPrefix: /api/v1/health
+        pathType: Exact
+      - pathPrefix: /api/v1/version
+        pathType: Exact
   auth:
     enabled: true
 ```
