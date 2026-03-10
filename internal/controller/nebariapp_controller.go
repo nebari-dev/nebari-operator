@@ -196,18 +196,23 @@ func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	// Reconcile public route (unauthenticated paths) if routing has publicRoutes and auth is enabled
-	if nebariApp.Spec.Routing != nil && len(nebariApp.Spec.Routing.PublicRoutes) > 0 &&
-		nebariApp.Spec.Auth != nil && nebariApp.Spec.Auth.Enabled {
-		if err := r.RoutingReconciler.ReconcilePublicRoute(ctx, nebariApp, tlsListenerName); err != nil {
-			logger.Error(err, "Public route reconciliation failed")
-			conditions.SetCondition(nebariApp, appsv1.ConditionTypeReady, metav1.ConditionFalse,
-				appsv1.ReasonFailed, fmt.Sprintf("Public route reconciliation failed: %v", err))
-			if err := r.Status().Update(ctx, nebariApp); err != nil {
-				return ctrl.Result{}, err
+	if nebariApp.Spec.Routing != nil && len(nebariApp.Spec.Routing.PublicRoutes) > 0 {
+		if nebariApp.Spec.Auth == nil || !nebariApp.Spec.Auth.Enabled {
+			// Warn: publicRoutes configured but auth is not enabled, so they have no effect
+			r.Recorder.Event(nebariApp, corev1.EventTypeWarning, "PublicRoutesIgnored",
+				"routing.publicRoutes is configured but auth is not enabled — all routes are already public")
+		} else {
+			if err := r.RoutingReconciler.ReconcilePublicRoute(ctx, nebariApp, tlsListenerName); err != nil {
+				logger.Error(err, "Public route reconciliation failed")
+				conditions.SetCondition(nebariApp, appsv1.ConditionTypeReady, metav1.ConditionFalse,
+					appsv1.ReasonFailed, fmt.Sprintf("Public route reconciliation failed: %v", err))
+				if err := r.Status().Update(ctx, nebariApp); err != nil {
+					return ctrl.Result{}, err
+				}
+				return ctrl.Result{RequeueAfter: time.Minute}, nil
 			}
-			return ctrl.Result{RequeueAfter: time.Minute}, nil
+			logger.Info("Public route reconciled successfully", "nebariapp", nebariApp.Name)
 		}
-		logger.Info("Public route reconciled successfully", "nebariapp", nebariApp.Name)
 	}
 
 	// Reconcile authentication (SecurityPolicy creation/update) if auth is configured
