@@ -155,11 +155,17 @@ helm-chart: build-installer ## Generate Helm chart from manifests using kubebuil
 	@command -v kubebuilder >/dev/null 2>&1 || { echo >&2 "kubebuilder is required but not installed. See https://book.kubebuilder.io/quick-start.html#installation"; exit 1; }
 	kubebuilder edit --plugins=helm/v2-alpha --force
 	@echo "Merging chart extensions from config/chart-extensions/..."
-	@for dir in config/chart-extensions/*/; do \
-		name=$$(basename $$dir); \
-		mkdir -p dist/chart/templates/$$name; \
-		cp -r $$dir/. dist/chart/templates/$$name/; \
-	done
+	@if [ -d config/chart-extensions ]; then \
+		for dir in config/chart-extensions/*/; do \
+			if [ -d "$$dir" ] && [ "$$dir" != "config/chart-extensions/*/" ]; then \
+				name=$$(basename $$dir); \
+				mkdir -p dist/chart/templates/$$name; \
+				cp -r $$dir/. dist/chart/templates/$$name/; \
+			fi; \
+		done; \
+	else \
+		echo "No chart extensions found (config/chart-extensions/ does not exist)"; \
+	fi
 	@echo "✅ Helm chart generated in dist/chart/"
 	@echo ""
 	@echo "To package the chart:"
