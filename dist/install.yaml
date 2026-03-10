@@ -97,6 +97,73 @@ spec:
                       Required when provider="generic-oidc", ignored for other providers.
                       Example: https://accounts.google.com, https://login.microsoftonline.com/<tenant>/v2.0
                     type: string
+                  keycloakConfig:
+                    description: |-
+                      KeycloakConfig provides Keycloak-specific configuration for fine-grained control
+                      over realm resources like groups, client scopes, and protocol mappers.
+                      Only used when provider="keycloak" and provisionClient=true; silently ignored
+                      for other providers (e.g., generic-oidc).
+                    properties:
+                      groups:
+                        description: |-
+                          Groups defines Keycloak groups to ensure exist in the realm,
+                          with optional user membership assignments.
+                        items:
+                          description: KeycloakGroup defines a Keycloak group to create
+                            in the realm with optional member assignments.
+                          properties:
+                            members:
+                              description: |-
+                                Members is a list of Keycloak usernames that should be members of this group.
+                                Membership sync is additive-only: users in this list will be added to the group,
+                                but existing group members not in this list will NOT be removed.
+                                Users that don't exist in Keycloak will be logged as warnings but won't cause errors.
+                              items:
+                                type: string
+                              type: array
+                            name:
+                              description: Name is the group name to create in Keycloak.
+                              minLength: 1
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                      protocolMappers:
+                        description: |-
+                          ProtocolMappers defines client-level protocol mappers to configure on the
+                          OIDC client. These are applied directly to the client (not to shared client
+                          scopes), so each NebariApp gets isolated mapper configuration.
+                          When specified, the operator's default mappers (e.g., group-membership) are
+                          not auto-created - the user's configuration takes full control.
+                        items:
+                          description: KeycloakProtocolMapperConfig defines a protocol
+                            mapper with arbitrary configuration.
+                          properties:
+                            config:
+                              additionalProperties:
+                                type: string
+                              description: |-
+                                Config is the mapper configuration as arbitrary key-value pairs.
+                                Keys and values are specific to the mapper type.
+                                Example for group-membership mapper: {"claim.name": "groups", "full.path": "false"}
+                              type: object
+                            name:
+                              description: Name of the protocol mapper.
+                              minLength: 1
+                              type: string
+                            protocolMapper:
+                              description: |-
+                                ProtocolMapper is the mapper type identifier.
+                                Example: "oidc-group-membership-mapper", "oidc-usermodel-attribute-mapper"
+                              minLength: 1
+                              type: string
+                          required:
+                          - name
+                          - protocolMapper
+                          type: object
+                        type: array
+                    type: object
                   provider:
                     default: keycloak
                     description: |-
@@ -255,6 +322,50 @@ spec:
                 description: Routing configures routing behavior including path-based
                   rules and TLS.
                 properties:
+                  annotations:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      Annotations defines additional annotations to merge onto the generated HTTPRoute.
+                      Useful for tools like ArgoCD that track resources via annotations
+                      (e.g. argocd.argoproj.io/tracking-id).
+                      These annotations are merged with any operator-managed annotations; operator
+                      annotations always take precedence to avoid breaking internal behaviour.
+                    type: object
+                  publicRoutes:
+                    description: |-
+                      PublicRoutes specifies paths that should bypass OIDC authentication.
+                      When auth is enabled and these are specified, these paths will be routed
+                      via a separate HTTPRoute that is not protected by the SecurityPolicy.
+                      Each entry uses the same RouteMatch format as routes, supporting both
+                      PathPrefix (default) and Exact matching via the pathType field.
+                      Example: [{pathPrefix: "/api/v1/health", pathType: "Exact"}]
+                    items:
+                      description: RouteMatch defines a path-based routing rule.
+                      properties:
+                        pathPrefix:
+                          description: |-
+                            PathPrefix specifies the path prefix to match for routing.
+                            Traffic matching this prefix will be routed to the service.
+                            Must start with "/". Example: "/app-1", "/api/v1"
+                          pattern: ^/.*
+                          type: string
+                        pathType:
+                          description: |-
+                            PathType specifies how the path should be matched.
+                            Valid values:
+                              - "PathPrefix": Match requests with the specified path prefix
+                              - "Exact": Match requests with the exact path
+                            When used in routing.routes, defaults to "PathPrefix".
+                            When used in routing.publicRoutes, defaults to "Exact" (safer for auth bypass).
+                          enum:
+                          - PathPrefix
+                          - Exact
+                          type: string
+                      required:
+                      - pathPrefix
+                      type: object
+                    type: array
                   routes:
                     description: |-
                       Routes defines path-based routing rules for the application.
@@ -272,12 +383,13 @@ spec:
                           pattern: ^/.*
                           type: string
                         pathType:
-                          default: PathPrefix
                           description: |-
                             PathType specifies how the path should be matched.
                             Valid values:
-                              - "PathPrefix" (default): Match requests with the specified path prefix
+                              - "PathPrefix": Match requests with the specified path prefix
                               - "Exact": Match requests with the exact path
+                            When used in routing.routes, defaults to "PathPrefix".
+                            When used in routing.publicRoutes, defaults to "Exact" (safer for auth bypass).
                           enum:
                           - PathPrefix
                           - Exact
@@ -437,8 +549,8 @@ spec:
                 description: |-
                   ServiceDiscovery is the computed service discovery descriptor.
                   The controller populates this after reconciling spec.landingPage so the
-                  service-discovery-api can consume a pre-validated, URL-resolved view
-                  without re-deriving it from spec.
+                  webapi watcher can consume a pre-validated, URL-resolved view via
+                  status.serviceDiscovery.* without re-deriving it from spec.
                 properties:
                   category:
                     description: Category groups related services on the landing page.

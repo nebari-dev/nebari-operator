@@ -209,8 +209,10 @@ spec:
     category: "Development"          # Grouping category
     priority: 10                     # Sort order within category (lower = higher)
     externalUrl: ""                  # Override URL (default: derived from hostname)
-    visibility: "authenticated"      # Who can see this service (public|authenticated|private)
-    requiredGroups: ["data-science"] # Keycloak groups required to see/access (for visibility: private)
+    # NOTE: visibility and requiredGroups are computed from spec.auth
+    # - auth.enabled=false → visibility="public"
+    # - auth.enabled=true, auth.groups=[] → visibility="private" (any authenticated user)
+    # - auth.enabled=true, auth.groups=[...] → visibility="private", requiredGroups=auth.groups
     healthCheck:
       enabled: true                  # Enable health checking (default: false)
       path: "/health"                # Health endpoint path
@@ -1142,7 +1144,7 @@ Authorization: Bearer eyJhbGciOiJSUzI1NiIs...  # Optional
         "icon": "grafana",
         "category": "Monitoring",
         "priority": 20,
-        "visibility": "authenticated",
+        "visibility": "private",  // Computed from spec.auth.enabled=true, auth.groups=[]
         "health": {
           "status": "healthy",
           "lastCheck": "2026-02-24T10:31:00Z",
@@ -1394,18 +1396,27 @@ keycloakConfig:
 - "Sign In" button initiates OIDC flow for personalized view
 
 **Service Visibility Access Control:**
-- `visibility: "public"` - No authentication required
-- `visibility: "authenticated"` - Any valid JWT token
-- `visibility: "private"` - JWT must contain groups matching `requiredGroups`
 
-**Group Validation (Private Services):**
+Visibility and group access for the landing page are **automatically computed from `spec.auth`** to ensure consistency:
+
+- **`auth.enabled = false`** → Service appears as "public" on landing page (no authentication required)
+- **`auth.enabled = true, auth.groups = []`** → Service appears as "private" (any authenticated user can see it)
+- **`auth.enabled = true, auth.groups = [...]`** → Service appears as "private" with group restrictions (only users in specified groups can see it)
+
+This ensures landing page visibility exactly matches service access control, eliminating configuration redundancy.
+
+**Group Validation Logic (in webapi):**
 ```go
 // Backend validates groups from JWT claims
-func (h *Handler) canAccessService(service *ServiceInfo, userGroups []string) bool {
+func (h *Handler) canAccessService(service *cache.ServiceInfo, authenticated bool, claims *auth.Claims) bool {
     if service.Visibility == "public" {
         return true
     }
-    if service.Visibility == "authenticated" {
+    // visibility: "private" (computed from auth)
+    if !authenticated {
+        return false
+    }
+    if len(service.RequiredGroups) == 0 {
         return true  // Any authenticated user
     }
     // visibility == "private": check groups
@@ -1629,7 +1640,8 @@ spec:
     icon: "grafana"
     category: "Monitoring"
     priority: 10
-    visibility: "authenticated"  # Any authenticated user can see
+    # visibility computed from spec.auth (auth.enabled=true, auth.groups=[])
+    # → visibility="private", requiredGroups=[]
     healthCheck:
       enabled: true
       path: "/api/health"

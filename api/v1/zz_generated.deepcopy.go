@@ -189,11 +189,6 @@ func (in *LandingPageConfig) DeepCopyInto(out *LandingPageConfig) {
 		*out = new(int)
 		**out = **in
 	}
-	if in.RequiredGroups != nil {
-		in, out := &in.RequiredGroups, &out.RequiredGroups
-		*out = make([]string, len(*in))
-		copy(*out, *in)
-	}
 	if in.HealthCheck != nil {
 		in, out := &in.HealthCheck, &out.HealthCheck
 		*out = new(HealthCheckConfig)

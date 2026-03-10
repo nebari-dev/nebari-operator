@@ -306,23 +306,6 @@ type LandingPageConfig struct {
 	// +optional
 	ExternalUrl string `json:"externalUrl,omitempty"`
 
-	// Visibility controls who can see this service on the landing page.
-	// - "public": Visible to everyone, including unauthenticated users
-	// - "authenticated": Visible to any authenticated user (default)
-	// - "private": Visible only to users in RequiredGroups
-	// +kubebuilder:validation:Enum=public;authenticated;private
-	// +kubebuilder:default=authenticated
-	// +optional
-	Visibility string `json:"visibility,omitempty"`
-
-	// RequiredGroups specifies Keycloak groups required to see/access this service.
-	// Only applies when Visibility is "private".
-	// Groups are checked from the user's JWT claims (groups field).
-	// User must be a member of at least one group to see the service (OR logic).
-	// Example: ["data-science", "admin"]
-	// +optional
-	RequiredGroups []string `json:"requiredGroups,omitempty"`
-
 	// HealthCheck configures health status monitoring for this service.
 	// +optional
 	HealthCheck *HealthCheckConfig `json:"healthCheck,omitempty"`
@@ -390,7 +373,7 @@ type ServiceDiscoveryStatus struct {
 	// +optional
 	Priority int `json:"priority,omitempty"`
 
-	// Visibility controls who can see this service (public/authenticated/private).
+	// Visibility controls who can see this service (public/private).
 	// +optional
 	Visibility string `json:"visibility,omitempty"`
 

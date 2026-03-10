@@ -242,6 +242,11 @@ func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 // the validated and reconciled NebariApp and writes it to status.serviceDiscovery.
 // The webapi watcher reads this field via status.serviceDiscovery.* (unstructured
 // client) so it gets the controller-resolved URL and display fields.
+//
+// Visibility and RequiredGroups are computed from spec.auth to ensure consistency:
+// - auth disabled → visibility="public", requiredGroups=[]
+// - auth enabled, no groups → visibility="private", requiredGroups=[]
+// - auth enabled, with groups → visibility="private", requiredGroups=auth.groups
 func buildServiceDiscoveryStatus(app *appsv1.NebariApp) *appsv1.ServiceDiscoveryStatus {
 	if app.Spec.LandingPage == nil || !app.Spec.LandingPage.Enabled {
 		return &appsv1.ServiceDiscoveryStatus{Enabled: false}
@@ -252,9 +257,14 @@ func buildServiceDiscoveryStatus(app *appsv1.NebariApp) *appsv1.ServiceDiscovery
 	if lp.Priority != nil {
 		priority = *lp.Priority
 	}
-	visibility := "authenticated"
-	if lp.Visibility != "" {
-		visibility = lp.Visibility
+
+	// Compute visibility and requiredGroups from spec.auth
+	// This ensures landing page visibility matches service access control
+	visibility := "public"
+	var requiredGroups []string
+	if app.Spec.Auth != nil && app.Spec.Auth.Enabled {
+		visibility = "private"
+		requiredGroups = app.Spec.Auth.Groups
 	}
 
 	scheme := "https"
@@ -277,7 +287,7 @@ func buildServiceDiscoveryStatus(app *appsv1.NebariApp) *appsv1.ServiceDiscovery
 		Category:       lp.Category,
 		Priority:       priority,
 		Visibility:     visibility,
-		RequiredGroups: lp.RequiredGroups,
+		RequiredGroups: requiredGroups,
 	}
 }
 
