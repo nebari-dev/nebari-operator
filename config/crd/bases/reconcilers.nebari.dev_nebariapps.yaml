@@ -211,6 +211,40 @@ spec:
                 description: Routing configures routing behavior including path-based
                   rules and TLS.
                 properties:
+                  publicRoutes:
+                    description: |-
+                      PublicRoutes specifies paths that should bypass OIDC authentication.
+                      When auth is enabled and these are specified, these paths will be routed
+                      via a separate HTTPRoute that is not protected by the SecurityPolicy.
+                      Each entry uses the same RouteMatch format as routes, supporting both
+                      PathPrefix (default) and Exact matching via the pathType field.
+                      Example: [{pathPrefix: "/api/v1/health", pathType: "Exact"}]
+                    items:
+                      description: RouteMatch defines a path-based routing rule.
+                      properties:
+                        pathPrefix:
+                          description: |-
+                            PathPrefix specifies the path prefix to match for routing.
+                            Traffic matching this prefix will be routed to the service.
+                            Must start with "/". Example: "/app-1", "/api/v1"
+                          pattern: ^/.*
+                          type: string
+                        pathType:
+                          description: |-
+                            PathType specifies how the path should be matched.
+                            Valid values:
+                              - "PathPrefix": Match requests with the specified path prefix
+                              - "Exact": Match requests with the exact path
+                            When used in routing.routes, defaults to "PathPrefix".
+                            When used in routing.publicRoutes, defaults to "Exact" (safer for auth bypass).
+                          enum:
+                          - PathPrefix
+                          - Exact
+                          type: string
+                      required:
+                      - pathPrefix
+                      type: object
+                    type: array
                   routes:
                     description: |-
                       Routes defines path-based routing rules for the application.
@@ -228,12 +262,13 @@ spec:
                           pattern: ^/.*
                           type: string
                         pathType:
-                          default: PathPrefix
                           description: |-
                             PathType specifies how the path should be matched.
                             Valid values:
-                              - "PathPrefix" (default): Match requests with the specified path prefix
+                              - "PathPrefix": Match requests with the specified path prefix
                               - "Exact": Match requests with the exact path
+                            When used in routing.routes, defaults to "PathPrefix".
+                            When used in routing.publicRoutes, defaults to "Exact" (safer for auth bypass).
                           enum:
                           - PathPrefix
                           - Exact
