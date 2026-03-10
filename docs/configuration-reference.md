@@ -146,6 +146,37 @@ spec:
         pathType: Exact
 ```
 
+#### routing.publicRoutes
+
+**Type:** `array of RouteMatch` (optional)
+
+Specifies paths that should bypass OIDC authentication. When auth is enabled and these are specified, these paths will
+be routed via a separate HTTPRoute that is not protected by the SecurityPolicy. All other paths remain protected.
+
+This is useful for health checks, public APIs, or login endpoints that must be accessible without authentication.
+
+Each entry uses the same `RouteMatch` format as `routing.routes`:
+- `pathPrefix` (required): The path to match. Must start with `/`.
+- `pathType` (optional): `Exact` (default) or `PathPrefix`. Defaults to `Exact` for public routes
+  (safer for auth bypass), unlike `routing.routes` which defaults to `PathPrefix`.
+
+**Note:** Public routes are only created when `auth.enabled: true`. If auth is disabled, all routes are already public.
+
+**Example:**
+```yaml
+spec:
+  routing:
+    routes:
+      - pathPrefix: /
+    publicRoutes:
+      - pathPrefix: /api/v1/health            # Exact match (default)
+      - pathPrefix: /api/v1/version            # Exact match (default)
+      - pathPrefix: /.well-known
+        pathType: PathPrefix                   # Explicit prefix match
+  auth:
+    enabled: true
+```
+
 #### routing.tls
 
 **Type:** `object` (optional)
@@ -507,6 +538,41 @@ spec:
 ```
 
 
+
+### Protected Application with Public Routes
+
+Application requiring authentication, but with health and version endpoints publicly accessible:
+
+```yaml
+apiVersion: reconcilers.nebari.dev/v1
+kind: NebariApp
+metadata:
+  name: api-app
+  namespace: default
+spec:
+  hostname: api.nebari.local
+  service:
+    name: api-service
+    port: 3000
+  routing:
+    routes:
+      - pathPrefix: /
+    publicRoutes:
+      - pathPrefix: /api/v1/health       # Exact match (default)
+      - pathPrefix: /api/v1/version      # Exact match (default)
+    tls:
+      enabled: true
+  auth:
+    enabled: true
+    provider: keycloak
+    provisionClient: true
+```
+
+This will:
+- Route all traffic from `api.nebari.local` to `api-service:3000`
+- Require OIDC authentication for all paths
+- **Except** `/api/v1/health` and `/api/v1/version`, which are publicly accessible
+- The operator creates two HTTPRoutes: a protected one (targeted by SecurityPolicy) and a public one (no SecurityPolicy)
 
 ### Full Configuration Example
 

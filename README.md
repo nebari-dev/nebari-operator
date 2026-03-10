@@ -86,17 +86,15 @@ spec:
   service:
     name: my-service
     port: 8080
-  tls:
-    enabled: true
-    mode: wildcard
+  routing:
+    routes:
+      - pathPrefix: /
+    tls:
+      enabled: true
   auth:
     enabled: true
-    oidc:
-      provider: keycloak
-      issuer: "https://keycloak.example.com/realms/main"
-      clientSecretRef:
-        name: my-app-oidc
-        namespace: default
+    provider: keycloak
+    provisionClient: true
 ```
 
 The operator will automatically create:

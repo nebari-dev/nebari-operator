@@ -160,6 +160,11 @@ func (r *AuthReconciler) validateAuthConfig(ctx, nebariApp) error
 - Namespace: Same as NebariApp
 - Owner reference: NebariApp (for garbage collection)
 
+**Important:** The SecurityPolicy targets only the **main** HTTPRoute (`{nebariapp-name}-route`), not the public
+HTTPRoute (`{nebariapp-name}-public-route`). This is how `spec.routing.publicRoutes` bypass authentication — they are
+served by a separate HTTPRoute that has no SecurityPolicy attached. See the
+[Routing Reconciler](routing.md#public-routes-authentication-bypass) for details.
+
 **SecurityPolicy Spec:**
 ```yaml
 spec:

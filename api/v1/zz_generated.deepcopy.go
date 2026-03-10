@@ -311,6 +311,11 @@ func (in *RoutingConfig) DeepCopyInto(out *RoutingConfig) {
 		*out = make([]RouteMatch, len(*in))
 		copy(*out, *in)
 	}
+	if in.PublicRoutes != nil {
+		in, out := &in.PublicRoutes, &out.PublicRoutes
+		*out = make([]RouteMatch, len(*in))
+		copy(*out, *in)
+	}
 	if in.TLS != nil {
 		in, out := &in.TLS, &out.TLS
 		*out = new(RoutingTLSConfig)
