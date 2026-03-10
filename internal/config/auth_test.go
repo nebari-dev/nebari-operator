@@ -20,6 +20,7 @@ import (
 	"context"
 	"os"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -47,6 +48,7 @@ func TestLoadAuthConfig(t *testing.T) {
 					IssuerServiceNamespace: "keycloak",
 					IssuerServicePort:      8080,
 					IssuerContextPath:      "/auth",
+					APITimeout:             30 * time.Second,
 				},
 			},
 		},
@@ -70,6 +72,7 @@ func TestLoadAuthConfig(t *testing.T) {
 					IssuerServiceNamespace: "keycloak",
 					IssuerServicePort:      8080,
 					IssuerContextPath:      "/auth",
+					APITimeout:             30 * time.Second,
 				},
 			},
 		},
@@ -92,6 +95,7 @@ func TestLoadAuthConfig(t *testing.T) {
 					IssuerServiceNamespace: "keycloak",
 					IssuerServicePort:      8080,
 					IssuerContextPath:      "/auth",
+					APITimeout:             30 * time.Second,
 				},
 			},
 		},
@@ -114,6 +118,27 @@ func TestLoadAuthConfig(t *testing.T) {
 					IssuerServiceNamespace: "auth",
 					IssuerServicePort:      9090,
 					IssuerContextPath:      "",
+					APITimeout:             30 * time.Second,
+				},
+			},
+		},
+		{
+			name: "Custom API timeout",
+			envVars: map[string]string{
+				"KEYCLOAK_API_TIMEOUT": "45s",
+			},
+			expected: AuthConfig{
+				Keycloak: KeycloakConfig{
+					Enabled:                true,
+					URL:                    "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/auth",
+					Realm:                  "nebari",
+					AdminSecretName:        "nebari-realm-admin-credentials",
+					AdminSecretNamespace:   "keycloak",
+					IssuerServiceName:      "keycloak-keycloakx-http",
+					IssuerServiceNamespace: "keycloak",
+					IssuerServicePort:      8080,
+					IssuerContextPath:      "/auth",
+					APITimeout:             45 * time.Second,
 				},
 			},
 		},
@@ -152,6 +177,9 @@ func TestLoadAuthConfig(t *testing.T) {
 			}
 			if config.Keycloak.AdminPassword != tt.expected.Keycloak.AdminPassword {
 				t.Errorf("AdminPassword: expected %s, got %s", tt.expected.Keycloak.AdminPassword, config.Keycloak.AdminPassword)
+			}
+			if config.Keycloak.APITimeout != tt.expected.Keycloak.APITimeout {
+				t.Errorf("APITimeout: expected %v, got %v", tt.expected.Keycloak.APITimeout, config.Keycloak.APITimeout)
 			}
 		})
 	}

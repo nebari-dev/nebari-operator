@@ -187,6 +187,65 @@ type AuthConfig struct {
 	// Example: ["/api/v1/health", "/api/v1/version"]
 	// +optional
 	PublicPaths []string `json:"publicPaths,omitempty"`
+
+	// KeycloakConfig provides Keycloak-specific configuration for fine-grained control
+	// over realm resources like groups, client scopes, and protocol mappers.
+	// Only used when provider="keycloak" and provisionClient=true; silently ignored
+	// for other providers (e.g., generic-oidc).
+	// +optional
+	KeycloakConfig *KeycloakClientConfig `json:"keycloakConfig,omitempty"`
+}
+
+// KeycloakClientConfig provides Keycloak-specific configuration for managing
+// realm resources associated with a NebariApp's OIDC client.
+type KeycloakClientConfig struct {
+	// Groups defines Keycloak groups to ensure exist in the realm,
+	// with optional user membership assignments.
+	// +optional
+	Groups []KeycloakGroup `json:"groups,omitempty"`
+
+	// ProtocolMappers defines client-level protocol mappers to configure on the
+	// OIDC client. These are applied directly to the client (not to shared client
+	// scopes), so each NebariApp gets isolated mapper configuration.
+	// When specified, the operator's default mappers (e.g., group-membership) are
+	// not auto-created - the user's configuration takes full control.
+	// +optional
+	ProtocolMappers []KeycloakProtocolMapperConfig `json:"protocolMappers,omitempty"`
+}
+
+// KeycloakGroup defines a Keycloak group to create in the realm with optional member assignments.
+type KeycloakGroup struct {
+	// Name is the group name to create in Keycloak.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+
+	// Members is a list of Keycloak usernames that should be members of this group.
+	// Membership sync is additive-only: users in this list will be added to the group,
+	// but existing group members not in this list will NOT be removed.
+	// Users that don't exist in Keycloak will be logged as warnings but won't cause errors.
+	// +optional
+	Members []string `json:"members,omitempty"`
+}
+
+// KeycloakProtocolMapperConfig defines a protocol mapper with arbitrary configuration.
+type KeycloakProtocolMapperConfig struct {
+	// Name of the protocol mapper.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+
+	// ProtocolMapper is the mapper type identifier.
+	// Example: "oidc-group-membership-mapper", "oidc-usermodel-attribute-mapper"
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	ProtocolMapper string `json:"protocolMapper"`
+
+	// Config is the mapper configuration as arbitrary key-value pairs.
+	// Keys and values are specific to the mapper type.
+	// Example for group-membership mapper: {"claim.name": "groups", "full.path": "false"}
+	// +optional
+	Config map[string]string `json:"config,omitempty"`
 }
 
 // NebariAppStatus defines the observed state of NebariApp.

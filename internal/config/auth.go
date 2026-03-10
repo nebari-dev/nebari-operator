@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -74,6 +75,10 @@ type KeycloakConfig struct {
 
 	// IssuerContextPath is the HTTP context path for Keycloak (e.g., "/auth")
 	IssuerContextPath string
+
+	// APITimeout is the timeout for Keycloak API calls (authentication, client CRUD).
+	// Prevents reconciliation from hanging indefinitely if Keycloak is unresponsive.
+	APITimeout time.Duration
 }
 
 // LoadAuthConfig loads authentication configuration from environment variables.
@@ -92,6 +97,7 @@ func LoadAuthConfig() AuthConfig {
 			IssuerServiceNamespace: getEnv("KEYCLOAK_ISSUER_SERVICE_NAMESPACE", constants.DefaultKeycloakNamespace),
 			IssuerServicePort:      getEnvInt("KEYCLOAK_ISSUER_SERVICE_PORT", constants.DefaultKeycloakServicePort),
 			IssuerContextPath:      getEnv("KEYCLOAK_ISSUER_CONTEXT_PATH", constants.DefaultKeycloakContextPath),
+			APITimeout:             getEnvDuration("KEYCLOAK_API_TIMEOUT", 30*time.Second),
 		},
 	}
 }
@@ -174,6 +180,17 @@ func getEnvInt(key string, defaultValue int) int {
 	if value := os.Getenv(key); value != "" {
 		if intValue, err := strconv.Atoi(value); err == nil {
 			return intValue
+		}
+	}
+	return defaultValue
+}
+
+// getEnvDuration gets a duration environment variable or returns a default value.
+// Accepts Go duration strings (e.g., "30s", "1m", "500ms").
+func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
+	if value := os.Getenv(key); value != "" {
+		if d, err := time.ParseDuration(value); err == nil {
+			return d
 		}
 	}
 	return defaultValue
