@@ -338,6 +338,9 @@ func TestBuildSecurityPolicySpec(t *testing.T) {
 				if len(spec.OIDC.Scopes) != 3 {
 					t.Errorf("expected 3 default scopes, got %d", len(spec.OIDC.Scopes))
 				}
+				if spec.OIDC.ForwardAccessToken == nil || !*spec.OIDC.ForwardAccessToken {
+					t.Error("expected ForwardAccessToken to be true")
+				}
 			},
 		},
 		{
