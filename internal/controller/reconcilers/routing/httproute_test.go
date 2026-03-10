@@ -553,7 +553,7 @@ func TestBuildPublicHTTPRoute(t *testing.T) {
 						PublicRoutes: []appsv1.RouteMatch{
 							{PathPrefix: "/api/v1/health"},
 							{PathPrefix: "/api/v1/version"},
-							{PathPrefix: "/api/v1/auth/login", PathType: "Exact"},
+							{PathPrefix: "/static/", PathType: "PathPrefix"},
 						},
 					},
 					Auth: &appsv1.AuthConfig{
@@ -564,8 +564,8 @@ func TestBuildPublicHTTPRoute(t *testing.T) {
 			gatewayName:          constants.PublicGatewayName,
 			expectedName:         "test-app-public-route",
 			expectedMatchesCount: 3,
-			expectedPaths:        []string{"/api/v1/health", "/api/v1/version", "/api/v1/auth/login"},
-			expectedPathTypes:    []gatewayv1.PathMatchType{gatewayv1.PathMatchPathPrefix, gatewayv1.PathMatchPathPrefix, gatewayv1.PathMatchExact},
+			expectedPaths:        []string{"/api/v1/health", "/api/v1/version", "/static/"},
+			expectedPathTypes:    []gatewayv1.PathMatchType{gatewayv1.PathMatchExact, gatewayv1.PathMatchExact, gatewayv1.PathMatchPathPrefix},
 		},
 		{
 			name: "Public route with single path",
@@ -594,7 +594,7 @@ func TestBuildPublicHTTPRoute(t *testing.T) {
 			expectedName:         "my-app-public-route",
 			expectedMatchesCount: 1,
 			expectedPaths:        []string{"/health"},
-			expectedPathTypes:    []gatewayv1.PathMatchType{gatewayv1.PathMatchPathPrefix},
+			expectedPathTypes:    []gatewayv1.PathMatchType{gatewayv1.PathMatchExact},
 		},
 	}
 

@@ -155,9 +155,10 @@ be routed via a separate HTTPRoute that is not protected by the SecurityPolicy. 
 
 This is useful for health checks, public APIs, or login endpoints that must be accessible without authentication.
 
-Each entry uses the same format as `routing.routes`:
+Each entry uses the same `RouteMatch` format as `routing.routes`:
 - `pathPrefix` (required): The path to match. Must start with `/`.
-- `pathType` (optional): `PathPrefix` (default) or `Exact`.
+- `pathType` (optional): `Exact` (default) or `PathPrefix`. Defaults to `Exact` for public routes
+  (safer for auth bypass), unlike `routing.routes` which defaults to `PathPrefix`.
 
 **Note:** Public routes are only created when `auth.enabled: true`. If auth is disabled, all routes are already public.
 
@@ -168,11 +169,10 @@ spec:
     routes:
       - pathPrefix: /
     publicRoutes:
-      - pathPrefix: /api/v1/health
-        pathType: Exact
-      - pathPrefix: /api/v1/version
-        pathType: Exact
+      - pathPrefix: /api/v1/health            # Exact match (default)
+      - pathPrefix: /api/v1/version            # Exact match (default)
       - pathPrefix: /.well-known
+        pathType: PathPrefix                   # Explicit prefix match
   auth:
     enabled: true
 ```
@@ -558,10 +558,8 @@ spec:
     routes:
       - pathPrefix: /
     publicRoutes:
-      - pathPrefix: /api/v1/health
-        pathType: Exact
-      - pathPrefix: /api/v1/version
-        pathType: Exact
+      - pathPrefix: /api/v1/health       # Exact match (default)
+      - pathPrefix: /api/v1/version      # Exact match (default)
     tls:
       enabled: true
   auth:

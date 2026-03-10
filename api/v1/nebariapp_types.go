@@ -101,10 +101,11 @@ type RouteMatch struct {
 
 	// PathType specifies how the path should be matched.
 	// Valid values:
-	//   - "PathPrefix" (default): Match requests with the specified path prefix
+	//   - "PathPrefix": Match requests with the specified path prefix
 	//   - "Exact": Match requests with the exact path
+	// When used in routing.routes, defaults to "PathPrefix".
+	// When used in routing.publicRoutes, defaults to "Exact" (safer for auth bypass).
 	// +kubebuilder:validation:Enum=PathPrefix;Exact
-	// +kubebuilder:default=PathPrefix
 	// +optional
 	PathType string `json:"pathType,omitempty"`
 }
