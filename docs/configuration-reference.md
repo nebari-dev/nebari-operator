@@ -146,6 +146,35 @@ spec:
         pathType: Exact
 ```
 
+#### routing.publicRoutes
+
+**Type:** `array of strings` (optional)
+
+Specifies paths that should bypass OIDC authentication. When auth is enabled and these are specified, these paths will
+be routed via a separate HTTPRoute that is not protected by the SecurityPolicy. All other paths remain protected.
+
+This is useful for health checks, public APIs, or login endpoints that must be accessible without authentication.
+
+**Validation:**
+- Each path should start with `/`
+- Uses `PathPrefix` matching
+
+**Note:** Public routes are only created when `auth.enabled: true`. If auth is disabled, all routes are already public.
+
+**Example:**
+```yaml
+spec:
+  routing:
+    routes:
+      - pathPrefix: /
+    publicRoutes:
+      - /api/v1/health
+      - /api/v1/version
+      - /.well-known
+  auth:
+    enabled: true
+```
+
 #### routing.tls
 
 **Type:** `object` (optional)
@@ -507,6 +536,41 @@ spec:
 ```
 
 
+
+### Protected Application with Public Routes
+
+Application requiring authentication, but with health and version endpoints publicly accessible:
+
+```yaml
+apiVersion: reconcilers.nebari.dev/v1
+kind: NebariApp
+metadata:
+  name: api-app
+  namespace: default
+spec:
+  hostname: api.nebari.local
+  service:
+    name: api-service
+    port: 3000
+  routing:
+    routes:
+      - pathPrefix: /
+    publicRoutes:
+      - /api/v1/health
+      - /api/v1/version
+    tls:
+      enabled: true
+  auth:
+    enabled: true
+    provider: keycloak
+    provisionClient: true
+```
+
+This will:
+- Route all traffic from `api.nebari.local` to `api-service:3000`
+- Require OIDC authentication for all paths
+- **Except** `/api/v1/health` and `/api/v1/version`, which are publicly accessible
+- The operator creates two HTTPRoutes: a protected one (targeted by SecurityPolicy) and a public one (no SecurityPolicy)
 
 ### Full Configuration Example
 

@@ -271,6 +271,68 @@ rules:
 **Note:** All path rules are combined into a single HTTPRoute rule with multiple matches, following Gateway API best
 practices. All matches route to the same backend service.
 
+### Public Routes (Authentication Bypass)
+
+When `spec.routing.publicRoutes` is specified and auth is enabled, the operator creates a **second HTTPRoute** for
+paths that should bypass OIDC authentication. This works because the Envoy Gateway SecurityPolicy only targets the
+main HTTPRoute — the public route has no SecurityPolicy attached.
+
+**NebariApp spec:**
+```yaml
+spec:
+  hostname: myapp.nebari.local
+  service:
+    name: myapp-service
+    port: 8080
+  routing:
+    routes:
+      - pathPrefix: /
+    publicRoutes:
+      - /api/v1/health
+      - /api/v1/version
+  auth:
+    enabled: true
+```
+
+**Generated resources:**
+
+1. **Main HTTPRoute** (`myapp-route`) — matches all paths, targeted by SecurityPolicy (requires OIDC)
+2. **Public HTTPRoute** (`myapp-public-route`) — matches only `/api/v1/health` and `/api/v1/version`, no SecurityPolicy
+
+```yaml
+# Public HTTPRoute (auto-generated)
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: myapp-public-route
+  labels:
+    nebari.dev/route-type: "public"
+spec:
+  parentRefs:
+    - name: nebari-gateway
+      namespace: envoy-gateway-system
+  hostnames:
+    - myapp.nebari.local
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api/v1/health
+        - path:
+            type: PathPrefix
+            value: /api/v1/version
+      backendRefs:
+        - name: myapp-service
+          port: 8080
+```
+
+**Key details:**
+- Public routes always use `PathPrefix` matching
+- The public HTTPRoute has the label `nebari.dev/route-type: public`
+- Both routes point to the same backend service
+- If auth is disabled, no public route is created (all routes are already public)
+- Cleanup removes both HTTPRoutes when the NebariApp is deleted
+
 ### Backend References
 
 The operator creates backend references using the service details from the NebariApp spec:
