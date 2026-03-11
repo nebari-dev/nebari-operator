@@ -170,6 +170,16 @@ jobs:
       - name: Setup Keycloak realm
         run: dev/scripts/services/keycloak/setup.sh
 
+      - name: Deploy operator to cluster
+        env:
+          IMG: quay.io/nebari/nebari-operator:v0.0.1
+        run: make deploy
+
+      - name: Wait for operator to be ready
+        run: |
+          kubectl wait --for=condition=available deployment/nebari-operator-controller-manager \
+            -n nebari-operator-system --timeout=120s
+
       - name: Run operator E2E tests
         env:
           USE_EXISTING_CLUSTER: "true"
