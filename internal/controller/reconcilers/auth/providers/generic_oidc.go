@@ -37,6 +37,12 @@ func (p *GenericOIDCProvider) GetIssuerURL(ctx context.Context, nebariApp *appsv
 	return nebariApp.Spec.Auth.IssuerURL, nil
 }
 
+// GetTokenEndpoint returns empty string for generic OIDC providers.
+// The token endpoint will be discovered from the OIDC provider's well-known configuration.
+func (p *GenericOIDCProvider) GetTokenEndpoint(ctx context.Context, nebariApp *appsv1.NebariApp) string {
+	return ""
+}
+
 // GetClientID returns the OIDC client ID based on the NebariApp name.
 func (p *GenericOIDCProvider) GetClientID(ctx context.Context, nebariApp *appsv1.NebariApp) string {
 	return naming.ClientID(nebariApp)

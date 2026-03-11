@@ -31,6 +31,12 @@ type OIDCProvider interface {
 	// The URL should be accessible from within the cluster (internal DNS).
 	GetIssuerURL(ctx context.Context, nebariApp *appsv1.NebariApp) (string, error)
 
+	// GetTokenEndpoint returns an explicit token endpoint URL if needed.
+	// This is used when the OIDC discovery document returns an external URL
+	// that is not reachable from within the cluster (e.g., uses HTTPS with
+	// a certificate not trusted by Envoy). Returns empty string to use discovery.
+	GetTokenEndpoint(ctx context.Context, nebariApp *appsv1.NebariApp) string
+
 	// GetClientID returns the OIDC client ID for the application.
 	// This is typically derived from the NebariApp name/namespace.
 	GetClientID(ctx context.Context, nebariApp *appsv1.NebariApp) string

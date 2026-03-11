@@ -55,6 +55,18 @@ func (p *KeycloakProvider) GetIssuerURL(ctx context.Context, nebariApp *appsv1.N
 		realm), nil
 }
 
+// GetTokenEndpoint returns the internal cluster token endpoint URL for Keycloak.
+// This avoids Envoy using the external HTTPS token endpoint from the OIDC discovery
+// document, which may use a certificate not trusted by Envoy (e.g., self-signed).
+func (p *KeycloakProvider) GetTokenEndpoint(ctx context.Context, nebariApp *appsv1.NebariApp) string {
+	return fmt.Sprintf("http://%s.%s.svc.cluster.local:%d%s/realms/%s/protocol/openid-connect/token",
+		p.Config.IssuerServiceName,
+		p.Config.IssuerServiceNamespace,
+		p.Config.IssuerServicePort,
+		p.Config.IssuerContextPath,
+		p.Config.Realm)
+}
+
 // GetClientID returns the OIDC client ID for the NebariApp.
 func (p *KeycloakProvider) GetClientID(ctx context.Context, nebariApp *appsv1.NebariApp) string {
 	return naming.ClientID(nebariApp)

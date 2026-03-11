@@ -42,6 +42,7 @@ func boolPtr(b bool) *bool {
 // mockProvider implements OIDCProvider for testing
 type mockProvider struct {
 	issuerURL            string
+	tokenEndpoint        string
 	clientID             string
 	supportsProvisioning bool
 	provisionError       error
@@ -54,6 +55,10 @@ func (m *mockProvider) GetIssuerURL(ctx context.Context, nebariApp *appsv1.Nebar
 		return "", m.issuerError
 	}
 	return m.issuerURL, nil
+}
+
+func (m *mockProvider) GetTokenEndpoint(ctx context.Context, nebariApp *appsv1.NebariApp) string {
+	return m.tokenEndpoint
 }
 
 func (m *mockProvider) GetClientID(ctx context.Context, nebariApp *appsv1.NebariApp) string {
@@ -399,6 +404,73 @@ func TestBuildSecurityPolicySpec(t *testing.T) {
 				}
 				if len(spec.OIDC.Scopes) != 4 {
 					t.Errorf("expected 4 custom scopes, got %d", len(spec.OIDC.Scopes))
+				}
+			},
+		},
+		{
+			name: "Token endpoint set by provider",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app",
+					Namespace: "default",
+				},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "test.example.com",
+					Auth: &appsv1.AuthConfig{
+						Enabled:  true,
+						Provider: constants.ProviderKeycloak,
+					},
+				},
+			},
+			provider: &mockProvider{
+				issuerURL:     "http://keycloak.keycloak.svc.cluster.local:8080/auth/realms/nebari",
+				tokenEndpoint: "http://keycloak.keycloak.svc.cluster.local:8080/auth/realms/nebari/protocol/openid-connect/token",
+				clientID:      "test-client",
+			},
+			expectError: false,
+			validateSpec: func(t *testing.T, spec egv1alpha1.SecurityPolicySpec) {
+				if spec.OIDC == nil {
+					t.Error("OIDC config is nil")
+					return
+				}
+				if spec.OIDC.Provider.TokenEndpoint == nil {
+					t.Error("expected TokenEndpoint to be set")
+					return
+				}
+				expected := "http://keycloak.keycloak.svc.cluster.local:8080/auth/realms/nebari/protocol/openid-connect/token"
+				if *spec.OIDC.Provider.TokenEndpoint != expected {
+					t.Errorf("expected TokenEndpoint %s, got %s", expected, *spec.OIDC.Provider.TokenEndpoint)
+				}
+			},
+		},
+		{
+			name: "Token endpoint empty uses discovery",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app",
+					Namespace: "default",
+				},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "test.example.com",
+					Auth: &appsv1.AuthConfig{
+						Enabled:  true,
+						Provider: constants.ProviderKeycloak,
+					},
+				},
+			},
+			provider: &mockProvider{
+				issuerURL:     "https://keycloak.example.com/realms/test",
+				tokenEndpoint: "",
+				clientID:      "test-client",
+			},
+			expectError: false,
+			validateSpec: func(t *testing.T, spec egv1alpha1.SecurityPolicySpec) {
+				if spec.OIDC == nil {
+					t.Error("OIDC config is nil")
+					return
+				}
+				if spec.OIDC.Provider.TokenEndpoint != nil {
+					t.Errorf("expected TokenEndpoint to be nil (use discovery), got %s", *spec.OIDC.Provider.TokenEndpoint)
 				}
 			},
 		},
