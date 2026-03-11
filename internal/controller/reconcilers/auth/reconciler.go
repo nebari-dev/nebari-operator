@@ -327,9 +327,8 @@ func (r *AuthReconciler) buildSecurityPolicySpec(ctx context.Context, nebariApp 
 			Name:      gwapiv1.ObjectName(clientSecretName),
 			Namespace: &secretNamespace,
 		},
-		RedirectURL:        ptrTo(redirectURL),
-		LogoutPath:         ptrTo(constants.DefaultLogoutPath),
-		ForwardAccessToken: ptrTo(true),
+		RedirectURL: ptrTo(redirectURL),
+		LogoutPath:  ptrTo(constants.DefaultLogoutPath),
 	}
 
 	// Set OIDC scopes

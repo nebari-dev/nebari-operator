@@ -160,10 +160,12 @@ func TestKeycloakProvider_BuildRedirectURLs(t *testing.T) {
 					},
 				},
 			},
-			// buildRedirectURLs returns both HTTP and HTTPS for dev/prod support
+			// buildRedirectURLs returns HTTP/HTTPS plus app-level OIDC callbacks
 			expectedURLs: []string{
 				"https://test.example.com/oauth2/callback",
 				"http://test.example.com/oauth2/callback",
+				"https://test.example.com/api/v1/auth/oidc/callback",
+				"https://test.example.com/api/v1/auth/cli-login/callback",
 			},
 		},
 		{
@@ -184,6 +186,8 @@ func TestKeycloakProvider_BuildRedirectURLs(t *testing.T) {
 			expectedURLs: []string{
 				"https://test.example.com/custom/callback",
 				"http://test.example.com/custom/callback",
+				"https://test.example.com/api/v1/auth/oidc/callback",
+				"https://test.example.com/api/v1/auth/cli-login/callback",
 			},
 		},
 	}
