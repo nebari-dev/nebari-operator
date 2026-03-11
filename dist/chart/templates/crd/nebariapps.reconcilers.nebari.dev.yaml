@@ -187,6 +187,36 @@ spec:
                                         items:
                                             type: string
                                         type: array
+                                    spaClient:
+                                        description: |-
+                                            SPAClient configures a public OIDC client for browser-based authentication.
+                                            When enabled, the operator provisions a separate public client for Single-Page
+                                            Applications that use PKCE flows (e.g., React apps with keycloak-js).
+                                            This is distinct from the confidential client used for server-side auth (oauth2-proxy).
+                                            The public client is configured with:
+                                              - publicClient: true (no client secret, safe for browser)
+                                              - Redirect URIs: https://<hostname>/* and https://<hostname>
+                                              - PKCE enforcement (S256)
+                                            Only supported for provider="keycloak".
+                                        properties:
+                                            clientId:
+                                                description: |-
+                                                    ClientID optionally overrides the generated client ID for the SPA client.
+                                                    If not specified, defaults to: <namespace>-<name>-spa
+                                                    This allows custom client naming for organizational conventions.
+                                                type: string
+                                            enabled:
+                                                default: false
+                                                description: |-
+                                                    Enabled determines whether a public OIDC client should be provisioned for SPA use.
+                                                    When true, the operator creates a second Keycloak client configured as:
+                                                      - publicClient: true (no client secret, safe for browser)
+                                                      - Redirect URIs: https://<hostname>/* and https://<hostname>
+                                                      - PKCE enforcement with S256 code challenge method
+                                                    The public client ID will be written to a ConfigMap or the OIDC secret for
+                                                    runtime consumption by the frontend application.
+                                                type: boolean
+                                        type: object
                                 type: object
                             gateway:
                                 default: public
@@ -280,28 +310,6 @@ spec:
                                         maximum: 1000
                                         minimum: 0
                                         type: integer
-                                    requiredGroups:
-                                        description: |-
-                                            RequiredGroups specifies Keycloak groups required to see/access this service.
-                                            Only applies when Visibility is "private".
-                                            Groups are checked from the user's JWT claims (groups field).
-                                            User must be a member of at least one group to see the service (OR logic).
-                                            Example: ["data-science", "admin"]
-                                        items:
-                                            type: string
-                                        type: array
-                                    visibility:
-                                        default: authenticated
-                                        description: |-
-                                            Visibility controls who can see this service on the landing page.
-                                            - "public": Visible to everyone, including unauthenticated users
-                                            - "authenticated": Visible to any authenticated user (default)
-                                            - "private": Visible only to users in RequiredGroups
-                                        enum:
-                                            - public
-                                            - authenticated
-                                            - private
-                                        type: string
                                 required:
                                     - enabled
                                 type: object
@@ -563,7 +571,7 @@ spec:
                                             spec.landingPage.externalUrl by the controller).
                                         type: string
                                     visibility:
-                                        description: Visibility controls who can see this service (public/authenticated/private).
+                                        description: Visibility controls who can see this service (public/private).
                                         type: string
                                 required:
                                     - enabled
