@@ -225,7 +225,8 @@ prepare-release: ## Prepare manifests for release (must be on a release tag)
 	cp dist/install.yaml deploy/install.yaml; \
 	echo ""; \
 	echo "6️⃣  Staging files for commit..."; \
-	git add config/crd/bases/ api/ deploy/ dist/chart/; \
+	git add config/crd/bases/ api/; \
+	git add -f deploy/ dist/chart/; \
 	echo ""; \
 	echo "✅ Release manifests prepared for $$TAG"; \
 	echo ""; \
