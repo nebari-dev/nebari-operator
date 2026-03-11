@@ -61,9 +61,11 @@ type TLSResult struct {
 
 // isTLSEnabled returns true if TLS is enabled for the NebariApp.
 // TLS defaults to enabled unless explicitly set to false.
+// When routing is nil (externally managed routing), TLS is considered disabled
+// since the operator won't create HTTPRoutes that would use the certificate.
 func isTLSEnabled(nebariApp *appsv1.NebariApp) bool {
 	if nebariApp.Spec.Routing == nil {
-		return true
+		return false
 	}
 	if nebariApp.Spec.Routing.TLS == nil {
 		return true

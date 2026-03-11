@@ -45,3 +45,40 @@ spec:
   #           id.token.claim: "true"
   #           access.token.claim: "true"
   #           userinfo.token.claim: "true"
+---
+# Example: Cross-namespace service reference
+# Useful for centralized service architectures where services live in different namespaces
+apiVersion: reconcilers.nebari.dev/v1
+kind: NebariApp
+metadata:
+  name: cross-namespace-app
+spec:
+  hostname: cross-ns-app.nebari.local
+  service:
+    name: shared-backend-service
+    namespace: services  # Reference service from 'services' namespace
+    port: 8080
+  routing:
+    routes:
+      - pathPrefix: /
+        pathType: PathPrefix
+---
+# Example: Externally managed routing
+# Omit the 'routing' field to disable operator-managed HTTPRoute creation
+# Useful when you manage Ingress or HTTPRoute resources externally
+# Note: When routing is nil, TLS is also disabled (no certificate or listener provisioning)
+apiVersion: reconcilers.nebari.dev/v1
+kind: NebariApp
+metadata:
+  name: external-routing-app
+spec:
+  hostname: external-app.nebari.local
+  service:
+    name: app-service
+    port: 8080
+  # routing: <omitted> - HTTPRoute and TLS managed externally
+  # You can still use other features like auth:
+  auth:
+    enabled: true
+    provider: keycloak
+    provisionClient: true

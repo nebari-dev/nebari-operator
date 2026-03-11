@@ -119,6 +119,7 @@ func TestReconcileTLS(t *testing.T) { //nolint:gocyclo // table-driven test with
 				Spec: appsv1.NebariAppSpec{
 					Hostname: "myapp.example.com",
 					Service:  appsv1.ServiceReference{Name: "test-svc", Port: 8080},
+					Routing:  &appsv1.RoutingConfig{}, // Explicitly enable routing (TLS defaults to enabled)
 				},
 			},
 			clusterIssuerName: "letsencrypt-prod",
@@ -218,30 +219,25 @@ func TestReconcileTLS(t *testing.T) { //nolint:gocyclo // table-driven test with
 			},
 		},
 		{
-			name: "TLS enabled with nil Enabled (default true) creates Certificate",
+			name: "TLS disabled when routing is nil (externally managed)",
 			nebariApp: &appsv1.NebariApp{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      "app-default-tls",
+					Name:      "app-no-routing",
 					Namespace: "default",
 				},
 				Spec: appsv1.NebariAppSpec{
-					Hostname: "app-default.example.com",
+					Hostname: "app-no-routing.example.com",
 					Service:  appsv1.ServiceReference{Name: "test-svc", Port: 8080},
-					// No Routing config at all - TLS defaults to enabled
+					// No Routing config - TLS disabled for externally managed routing
 				},
 			},
 			clusterIssuerName: "letsencrypt-prod",
 			gateway:           newGateway(constants.PublicGatewayName),
 			expectError:       false,
-			expectNilResult:   false,
+			expectNilResult:   true, // TLS disabled when routing is nil
 			validateResult: func(t *testing.T, result *TLSResult) {
-				if result == nil {
-					t.Fatal("expected non-nil result for default TLS-enabled app")
-				}
-			},
-			validateCert: func(t *testing.T, cert *certmanagerv1.Certificate) {
-				if len(cert.Spec.DNSNames) != 1 || cert.Spec.DNSNames[0] != "app-default.example.com" {
-					t.Errorf("expected dnsNames [app-default.example.com], got %v", cert.Spec.DNSNames)
+				if result != nil {
+					t.Fatal("expected nil result when routing is nil (TLS disabled)")
 				}
 			},
 		},
@@ -255,6 +251,7 @@ func TestReconcileTLS(t *testing.T) { //nolint:gocyclo // table-driven test with
 				Spec: appsv1.NebariAppSpec{
 					Hostname: "test.example.com",
 					Service:  appsv1.ServiceReference{Name: "test-svc", Port: 8080},
+					Routing:  &appsv1.RoutingConfig{},
 				},
 			},
 			clusterIssuerName: "", // Empty - no ClusterIssuer configured
@@ -281,6 +278,7 @@ func TestReconcileTLS(t *testing.T) { //nolint:gocyclo // table-driven test with
 				Spec: appsv1.NebariAppSpec{
 					Hostname: "test.example.com",
 					Service:  appsv1.ServiceReference{Name: "test-svc", Port: 8080},
+					Routing:  &appsv1.RoutingConfig{},
 				},
 			},
 			clusterIssuerName: "letsencrypt-prod",
@@ -299,6 +297,7 @@ func TestReconcileTLS(t *testing.T) { //nolint:gocyclo // table-driven test with
 					Hostname: "internal.example.com",
 					Service:  appsv1.ServiceReference{Name: "test-svc", Port: 8080},
 					Gateway:  "internal",
+					Routing:  &appsv1.RoutingConfig{},
 				},
 			},
 			clusterIssuerName: "letsencrypt-prod",
@@ -324,6 +323,7 @@ func TestReconcileTLS(t *testing.T) { //nolint:gocyclo // table-driven test with
 				Spec: appsv1.NebariAppSpec{
 					Hostname: "ready.example.com",
 					Service:  appsv1.ServiceReference{Name: "test-svc", Port: 8080},
+					Routing:  &appsv1.RoutingConfig{},
 				},
 			},
 			clusterIssuerName: "letsencrypt-prod",
@@ -377,6 +377,7 @@ func TestReconcileTLS(t *testing.T) { //nolint:gocyclo // table-driven test with
 				Spec: appsv1.NebariAppSpec{
 					Hostname: "update.example.com",
 					Service:  appsv1.ServiceReference{Name: "test-svc", Port: 8080},
+					Routing:  &appsv1.RoutingConfig{},
 				},
 			},
 			clusterIssuerName: "letsencrypt-prod",
@@ -424,6 +425,7 @@ func TestReconcileTLS(t *testing.T) { //nolint:gocyclo // table-driven test with
 				Spec: appsv1.NebariAppSpec{
 					Hostname: "update-cert.example.com",
 					Service:  appsv1.ServiceReference{Name: "test-svc", Port: 8080},
+					Routing:  &appsv1.RoutingConfig{},
 				},
 			},
 			clusterIssuerName: "letsencrypt-prod",

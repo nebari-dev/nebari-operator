@@ -259,13 +259,28 @@ func (r *RoutingReconciler) buildBackendRefs(nebariApp *appsv1.NebariApp) []gate
 
 	port := gatewayv1.PortNumber(nebariApp.Spec.Service.Port)
 
+	// Use specified service namespace, or default to NebariApp's namespace
+	serviceNamespace := nebariApp.Spec.Service.Namespace
+	if serviceNamespace == "" {
+		serviceNamespace = nebariApp.Namespace
+	}
+
+	backendRef := gatewayv1.BackendObjectReference{
+		Name: gatewayv1.ObjectName(nebariApp.Spec.Service.Name),
+		Port: &port,
+	}
+
+	// Only set namespace if it's different from the HTTPRoute's namespace
+	// to support cross-namespace service references
+	if serviceNamespace != nebariApp.Namespace {
+		ns := gatewayv1.Namespace(serviceNamespace)
+		backendRef.Namespace = &ns
+	}
+
 	return []gatewayv1.HTTPBackendRef{
 		{
 			BackendRef: gatewayv1.BackendRef{
-				BackendObjectReference: gatewayv1.BackendObjectReference{
-					Name: gatewayv1.ObjectName(nebariApp.Spec.Service.Name),
-					Port: &port,
-				},
+				BackendObjectReference: backendRef,
 				// Weight: &weight,
 			},
 		},
