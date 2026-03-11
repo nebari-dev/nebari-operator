@@ -164,6 +164,7 @@ Common reasons you'll see in conditions:
 - `NamespaceNotOptedIn` - Namespace missing required label
 - `ServiceNotFound` - Referenced service doesn't exist
 - `GatewayNotFound` - Target gateway not found
+- `GatewayListenerConflict` - Multiple apps share hostname with per-app TLS (seen in TLSReady condition)
 - `SecretNotFound` - OIDC client secret missing
 - `Failed` - General reconciliation failure
 
@@ -183,6 +184,7 @@ Reconcilers emit Kubernetes events to provide visibility into operations:
 - `HTTPRouteDeleted` (Normal) - HTTPRoute deleted
 - `TLSConfigured` (Normal) - TLS configured successfully
 - `GatewayNotFound` (Warning) - Gateway not available
+- `GatewayListenerConflict` (Warning) - Multiple NebariApps share hostname with per-app TLS
 
 **Authentication Events:**
 - `ClientProvisioned` (Normal) - OIDC client created
