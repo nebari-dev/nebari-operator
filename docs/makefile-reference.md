@@ -399,7 +399,7 @@ You can override these variables when invoking make:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `IMG` | `controller:latest` | Docker image name and tag |
+| `IMG` | `nebari-operator:latest` | Docker image name and tag |
 | `PLATFORMS` | `linux/arm64,linux/amd64,...` | Platforms for docker-buildx |
 | `CONTAINER_TOOL` | `docker` | Container tool (docker or podman) |
 | `ENVTEST_K8S_VERSION` | (auto-detected) | Kubernetes version for envtest |
