@@ -1,0 +1,143 @@
+name: Generated Files
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'api/**/*.go'
+      - 'config/**'
+      - 'internal/controller/**/*.go'
+      - 'dist/**'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  verify-sync:
+    name: Verify Generated Files Are Up-to-Date
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
+      - name: Install controller-gen
+        run: make controller-gen
+
+      - name: Generate manifests
+        run: make generate-dev
+
+      - name: Check for uncommitted changes
+        id: check-changes
+        run: |
+          if git diff --exit-code config/crd/bases/ api/; then
+            echo "has-changes=false" >>$GITHUB_OUTPUT
+            echo "✅ Generated files are up-to-date"
+          else
+            echo "has-changes=true" >>$GITHUB_OUTPUT
+            echo "❌ Generated files are out of sync"
+          fi
+
+      - name: Show diff
+        if: steps.check-changes.outputs.has-changes == 'true'
+        run: |
+          echo "::group::Diff of generated files"
+          git diff config/crd/bases/ api/
+          echo "::endgroup::"
+
+      - name: Fail if out of sync
+        if: steps.check-changes.outputs.has-changes == 'true'
+        run: |
+          echo "❌ ERROR: Generated files are out of sync with source code"
+          echo ""
+          echo "The CRDs and generated code need to be updated."
+          echo ""
+          echo "To fix this:"
+          echo "  1. Run: make generate-dev"
+          echo "  2. Commit the changes: git add config/ api/ && git commit -m 'chore: regenerate CRDs'"
+          echo "  3. Push: git push"
+          echo ""
+          echo "This ensures that CRDs stay in sync with Go type definitions."
+          exit 1
+
+      - name: Comment on PR
+        if: always() && steps.check-changes.outputs.has-changes == 'true'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const body = `## ⚠️ Generated Files Out of Sync
+
+            The CRDs and generated code are not up-to-date with the source files.
+
+            ### How to fix:
+
+            Run the following commands locally:
+
+            \`\`\`bash
+            make generate-dev
+            git add config/crd/bases/ api/
+            git commit -m "chore: regenerate CRDs"
+            git push
+            \`\`\`
+
+            ### Why is this required?
+
+            Kubernetes CRDs must stay in sync with Go type definitions. The \`make generate-dev\` command:
+            - Generates DeepCopy methods for API types
+            - Updates CRD manifests from struct tags
+            - Ensures the operator and Kubernetes agree on the schema
+
+            See [Development Workflow](https://github.com/${context.repo.owner}/${context.repo.repo}#development-workflow) for more information.`;
+
+            // Check if comment already exists
+            const { data: comments } = await github.rest.issues.listComments({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            });
+
+            const existingComment = comments.find(comment => 
+              comment.user.type === 'Bot' && 
+              comment.body.includes('⚠️ Generated Files Out of Sync')
+            );
+
+            if (existingComment) {
+              // Update existing comment
+              await github.rest.issues.updateComment({
+                comment_id: existingComment.id,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: body
+              });
+            } else {
+              // Create new comment
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: body
+              });
+            }
+
+  check-no-manual-edits:
+    name: Verify No Manual Changes to Generated Files
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check generated files
+        uses: ./.github/actions/check-generated-files
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          base-ref: ${{ github.base_ref }}
