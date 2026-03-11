@@ -371,16 +371,16 @@ func (p *KeycloakProvider) buildRedirectURLs(nebariApp *appsv1.NebariApp) []stri
 // If spaClientID is provided, it's also stored in the secret for frontend consumption.
 func (p *KeycloakProvider) storeClientSecret(ctx context.Context, nebariApp *appsv1.NebariApp, clientSecret, spaClientID string) error {
 	secretName := naming.ClientSecretName(nebariApp)
-	
+
 	secretData := map[string][]byte{
 		constants.ClientSecretKey: []byte(clientSecret),
 	}
-	
+
 	// Add SPA client ID if present
 	if spaClientID != "" {
 		secretData[constants.SPAClientIDKey] = []byte(spaClientID)
 	}
-	
+
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      secretName,
@@ -777,7 +777,7 @@ func (p *KeycloakProvider) provisionSPAClient(ctx context.Context, kcClient *goc
 		existingSPAClient.WebOrigins = &[]string{"*"}
 		existingSPAClient.PublicClient = gocloak.BoolP(true)
 		existingSPAClient.StandardFlowEnabled = gocloak.BoolP(true)
-		
+
 		// Ensure PKCE is enforced
 		if existingSPAClient.Attributes == nil {
 			existingSPAClient.Attributes = &map[string]string{}

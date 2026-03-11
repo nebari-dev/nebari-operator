@@ -1019,121 +1019,121 @@ func TestKeycloakProvider_WithAPITimeout(t *testing.T) {
 }
 
 func TestKeycloakProvider_GetSPAClientID(t *testing.T) {
-provider := &KeycloakProvider{
-Config: config.KeycloakConfig{},
-}
+	provider := &KeycloakProvider{
+		Config: config.KeycloakConfig{},
+	}
 
-tests := []struct {
-name       string
-nebariApp  *appsv1.NebariApp
-expectedID string
-}{
-{
-name: "Default SPA client ID (no custom override)",
-nebariApp: &appsv1.NebariApp{
-ObjectMeta: metav1.ObjectMeta{
-Name:      "test-app",
-Namespace: "default",
-},
-Spec: appsv1.NebariAppSpec{
-Auth: &appsv1.AuthConfig{
-Enabled: true,
-SPAClient: &appsv1.SPAClientConfig{
-Enabled: true,
-},
-},
-},
-},
-expectedID: "default-test-app-spa",
-},
-{
-name: "Custom SPA client ID",
-nebariApp: &appsv1.NebariApp{
-ObjectMeta: metav1.ObjectMeta{
-Name:      "test-app",
-Namespace: "default",
-},
-Spec: appsv1.NebariAppSpec{
-Auth: &appsv1.AuthConfig{
-Enabled: true,
-SPAClient: &appsv1.SPAClientConfig{
-Enabled:  true,
-ClientID: "my-custom-spa-client",
-},
-},
-},
-},
-expectedID: "my-custom-spa-client",
-},
-}
+	tests := []struct {
+		name       string
+		nebariApp  *appsv1.NebariApp
+		expectedID string
+	}{
+		{
+			name: "Default SPA client ID (no custom override)",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app",
+					Namespace: "default",
+				},
+				Spec: appsv1.NebariAppSpec{
+					Auth: &appsv1.AuthConfig{
+						Enabled: true,
+						SPAClient: &appsv1.SPAClientConfig{
+							Enabled: true,
+						},
+					},
+				},
+			},
+			expectedID: "default-test-app-spa",
+		},
+		{
+			name: "Custom SPA client ID",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app",
+					Namespace: "default",
+				},
+				Spec: appsv1.NebariAppSpec{
+					Auth: &appsv1.AuthConfig{
+						Enabled: true,
+						SPAClient: &appsv1.SPAClientConfig{
+							Enabled:  true,
+							ClientID: "my-custom-spa-client",
+						},
+					},
+				},
+			},
+			expectedID: "my-custom-spa-client",
+		},
+	}
 
-for _, tt := range tests {
-t.Run(tt.name, func(t *testing.T) {
-clientID := provider.GetSPAClientID(context.Background(), tt.nebariApp)
-if clientID != tt.expectedID {
-t.Errorf("expected SPA client ID %s, got %s", tt.expectedID, clientID)
-}
-})
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clientID := provider.GetSPAClientID(context.Background(), tt.nebariApp)
+			if clientID != tt.expectedID {
+				t.Errorf("expected SPA client ID %s, got %s", tt.expectedID, clientID)
+			}
+		})
+	}
 }
 
 func TestKeycloakProvider_ShouldProvisionSPAClient(t *testing.T) {
-provider := &KeycloakProvider{
-Config: config.KeycloakConfig{},
-}
+	provider := &KeycloakProvider{
+		Config: config.KeycloakConfig{},
+	}
 
-tests := []struct {
-name      string
-nebariApp *appsv1.NebariApp
-expected  bool
-}{
-{
-name: "SPA client enabled",
-nebariApp: &appsv1.NebariApp{
-Spec: appsv1.NebariAppSpec{
-Auth: &appsv1.AuthConfig{
-Enabled: true,
-SPAClient: &appsv1.SPAClientConfig{
-Enabled: true,
-},
-},
-},
-},
-expected: true,
-},
-{
-name: "SPA client disabled",
-nebariApp: &appsv1.NebariApp{
-Spec: appsv1.NebariAppSpec{
-Auth: &appsv1.AuthConfig{
-Enabled: true,
-SPAClient: &appsv1.SPAClientConfig{
-Enabled: false,
-},
-},
-},
-},
-expected: false,
-},
-{
-name: "SPA client not configured",
-nebariApp: &appsv1.NebariApp{
-Spec: appsv1.NebariAppSpec{
-Auth: &appsv1.AuthConfig{
-Enabled: true,
-},
-},
-},
-expected: false,
-},
-}
+	tests := []struct {
+		name      string
+		nebariApp *appsv1.NebariApp
+		expected  bool
+	}{
+		{
+			name: "SPA client enabled",
+			nebariApp: &appsv1.NebariApp{
+				Spec: appsv1.NebariAppSpec{
+					Auth: &appsv1.AuthConfig{
+						Enabled: true,
+						SPAClient: &appsv1.SPAClientConfig{
+							Enabled: true,
+						},
+					},
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "SPA client disabled",
+			nebariApp: &appsv1.NebariApp{
+				Spec: appsv1.NebariAppSpec{
+					Auth: &appsv1.AuthConfig{
+						Enabled: true,
+						SPAClient: &appsv1.SPAClientConfig{
+							Enabled: false,
+						},
+					},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "SPA client not configured",
+			nebariApp: &appsv1.NebariApp{
+				Spec: appsv1.NebariAppSpec{
+					Auth: &appsv1.AuthConfig{
+						Enabled: true,
+					},
+				},
+			},
+			expected: false,
+		},
+	}
 
-for _, tt := range tests {
-t.Run(tt.name, func(t *testing.T) {
-result := provider.shouldProvisionSPAClient(tt.nebariApp)
-if result != tt.expected {
-t.Errorf("expected %v, got %v", tt.expected, result)
-}
-})
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := provider.shouldProvisionSPAClient(tt.nebariApp)
+			if result != tt.expected {
+				t.Errorf("expected %v, got %v", tt.expected, result)
+			}
+		})
+	}
 }
