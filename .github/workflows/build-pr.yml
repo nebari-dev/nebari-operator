@@ -92,6 +92,8 @@ jobs:
     name: E2E Tests
     runs-on: ubuntu-latest
     needs: lint
+    env:
+      CLUSTER_NAME: test-cluster
     steps:
       - name: Clone the code
         uses: actions/checkout@v4
@@ -127,20 +129,18 @@ jobs:
       - name: Install MetalLB
         run: |
           kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.14.8/config/manifests/metallb-native.yaml
-
           kubectl wait --namespace metallb-system \
             --for=condition=available deployment/controller \
             --timeout=90s
-
           kubectl wait --namespace metallb-system \
             --for=jsonpath='{.status.numberReady}'=1 \
             daemonset/speaker \
             --timeout=90s
 
-          # Configure MetalLB IP address pool
+      - name: Configure MetalLB IP pool
+        run: |
           KIND_NET_CIDR=$(docker network inspect kind -f '{{range .IPAM.Config}}{{.Subnet}}{{"\n"}}{{end}}' | grep '\.' | head -n1)
-          BASE_IP=$(echo ${KIND_NET_CIDR} | awk -F. '{print $1"."$2}')
-
+          BASE_IP=$(echo "${KIND_NET_CIDR}" | awk -F. '{print $1"."$2}')
           kubectl apply -f - <<EOF
           apiVersion: metallb.io/v1beta1
           kind: IPAddressPool
@@ -149,7 +149,7 @@ jobs:
             namespace: metallb-system
           spec:
             addresses:
-            - ${BASE_IP}.255.200-${BASE_IP}.255.250
+              - ${BASE_IP}.255.200-${BASE_IP}.255.250
           ---
           apiVersion: metallb.io/v1beta1
           kind: L2Advertisement
@@ -158,32 +158,47 @@ jobs:
             namespace: metallb-system
           spec:
             ipAddressPools:
-            - kind-pool
+              - kind-pool
           EOF
 
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+
       - name: Install foundational services
-        env:
-          CLUSTER_NAME: test-cluster
-        run: |
-          cd dev
-          make services-install
-          cd ..
+        run: dev/scripts/services/install.sh
 
-      - name: Install/Setup Keycloak
-        env:
-          CLUSTER_NAME: test-cluster
-        run: |
-          cd dev
-          # Keycloak is now installed as part of services-install
-          # Just run realm setup
-          ./scripts/services/keycloak/setup.sh
-          cd ..
+      - name: Setup Keycloak realm
+        run: dev/scripts/services/keycloak/setup.sh
 
-      - name: Running Test e2e
+      - name: Deploy operator to cluster
+        env:
+          IMG: quay.io/nebari/nebari-operator:v0.0.1
+        run: make deploy
+
+      - name: Check operator deployment status
+        if: always()
+        run: |
+          echo "=== Checking operator deployment ==="
+          kubectl get deployment -n nebari-operator-system
+          kubectl get pods -n nebari-operator-system
+          echo ""
+          echo "=== Operator pod logs ==="
+          kubectl logs -n nebari-operator-system -l control-plane=controller-manager --tail=50 || true
+          echo ""
+          echo "=== Operator pod events ==="
+          kubectl get events -n nebari-operator-system --sort-by='.lastTimestamp' || true
+
+      - name: Wait for operator to be ready
+        run: |
+          kubectl wait --for=condition=available deployment/nebari-operator-controller-manager \
+            -n nebari-operator-system --timeout=180s
+
+      - name: Run operator E2E tests
         env:
           USE_EXISTING_CLUSTER: "true"
           CLUSTER_NAME: test-cluster
           SKIP_DOCKER_BUILD: "true"
+          IMG: quay.io/nebari/nebari-operator:v0.0.1
         run: |
           go mod tidy
           make test-e2e
@@ -202,9 +217,8 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Install Helm
-        run: |
-          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
 
       - name: Install kubebuilder
         run: |
@@ -375,24 +389,46 @@ jobs:
         run: |
           docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.branch.outputs.tag }}
 
-      - name: Comment on PR
+      - name: Build summary
         if: steps.login.outcome == 'success'
+        run: |
+          echo "### Operator Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch**: ${{ steps.branch.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Image**: \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.branch.outputs.tag }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Platforms**: linux/amd64, linux/arm64" >> $GITHUB_STEP_SUMMARY
+
+  comment-pr:
+    name: Comment on PR
+    runs-on: ubuntu-latest
+    needs: [merge-manifest]
+    steps:
+      - name: Extract branch name
+        id: branch
+        run: |
+          BRANCH_NAME="${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}}"
+          TAG_NAME=$(echo "$BRANCH_NAME" | sed 's/\//-/g' | sed 's/[^a-zA-Z0-9._-]//g')
+          echo "tag=$TAG_NAME" >> $GITHUB_OUTPUT
+
+      - name: Comment on PR
         uses: actions/github-script@v7
         with:
           script: |
             const branchTag = '${{ steps.branch.outputs.tag }}';
-            const imageName = '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:' + branchTag;
+            const operatorImage = '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:' + branchTag;
 
-            const comment = `### Docker Image Built
+            const comment = `### Docker Images Built
 
-            Image pushed to Quay.io for branch \`${branchTag}\`:
+            Images pushed to Quay.io for branch \`${branchTag}\`:
 
-            - \`${imageName}\` (linux/amd64 + linux/arm64)
+            | Image | Tag | Platforms |
+            |-------|-----|-----------|
+            | Operator | \`${operatorImage}\` | linux/amd64 + linux/arm64 |
 
-            You can test this PR by deploying:
+            **Test the operator:**
             \`\`\`bash
-            kubectl apply -f https://raw.githubusercontent.com/${{ github.repository }}/${{ github.head_ref || github.ref_name }}/config/default/
-            kubectl set image deployment/nebari-operator-controller-manager manager=${imageName} -n nebari-operator-system
+            kubectl apply -k https://github.com/${{ github.repository }}.git/config/default?ref=${{ github.head_ref || github.ref_name }}
+            kubectl set image deployment/nebari-operator-controller-manager manager=${operatorImage} -n nebari-operator-system
             \`\`\`
             `;
 
@@ -402,12 +438,3 @@ jobs:
               repo: context.repo.repo,
               body: comment
             });
-
-      - name: Build summary
-        if: steps.login.outcome == 'success'
-        run: |
-          echo "### Build Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Branch**: ${{ steps.branch.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Image**: \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.branch.outputs.tag }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "**Platforms**: linux/amd64, linux/arm64" >> $GITHUB_STEP_SUMMARY

@@ -1,28 +1,14 @@
 # Keycloak Services
 
-Keycloak installation and configuration scripts for nebari-operator development.
+Keycloak realm configuration scripts for nebari-operator development.
+
+Keycloak itself is installed as part of `dev/scripts/services/install.sh` (the full
+foundational-services installer). This directory contains only the realm setup script.
 
 ## Scripts
 
-### install.sh
-Installs Keycloak to the development cluster using Helm.
-
-**Usage:**
-```bash
-./install.sh
-```
-
-**What it does:**
-- Creates `keycloak` namespace
-- Installs Keycloak via codecentric Helm chart
-- Configures Keycloak in development mode
-- Creates admin credentials secret (admin/admin)
-- Waits for Keycloak to be ready
-
-**Environment Variables:**
-- `CLUSTER_NAME` - Kind cluster name (default: `nebari-operator-dev`)
-
 ### setup.sh
+
 Configures a Keycloak realm for OIDC authentication testing.
 
 **Usage:**
@@ -47,26 +33,14 @@ Configures a Keycloak realm for OIDC authentication testing.
 - `REALM_ADMIN_USER` - Realm admin username (default: `admin`)
 - `REALM_ADMIN_PASSWORD` - Realm admin password (default: `nebari-admin`)
 
-### uninstall.sh
-Removes Keycloak from the development cluster.
-
-**Usage:**
-```bash
-./uninstall.sh
-```
-
-**What it does:**
-- Uninstalls Keycloak Helm release
-- Deletes `keycloak` namespace
-
 ## Quick Start
 
-1. **Install Keycloak:**
+1. **Install foundational services (including Keycloak):**
    ```bash
-   ./install.sh
+   cd dev && make services-install
    ```
 
-2. **Setup realm:**
+2. **Configure the Keycloak realm:**
    ```bash
    ./setup.sh
    ```
@@ -126,9 +100,8 @@ kubectl get pod keycloak-keycloakx-0 -n keycloak
 kubectl exec -n keycloak keycloak-keycloakx-0 -- ls -la /opt/keycloak/bin/kcadm.sh
 ```
 
-**Clean up and reinstall:**
+**Clean up Keycloak:**
 ```bash
-./uninstall.sh
-./install.sh
-./setup.sh
+helm uninstall keycloak -n keycloak
+kubectl delete namespace keycloak --ignore-not-found
 ```

@@ -222,6 +222,11 @@ func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// Update observed generation
 	nebariApp.Status.ObservedGeneration = nebariApp.Generation
 
+	// Populate the service discovery status so the webapi watcher can read
+	// a pre-validated, URL-resolved view via status.serviceDiscovery.*
+	// without re-deriving it from spec.
+	nebariApp.Status.ServiceDiscovery = buildServiceDiscoveryStatus(nebariApp)
+
 	// Update status
 	if err := r.Status().Update(ctx, nebariApp); err != nil {
 		logger.Error(err, "Failed to update NebariApp status")
@@ -231,6 +236,59 @@ func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	logger.Info("Successfully reconciled NebariApp")
 	// Requeue after 1 minute for now (until full implementation)
 	return ctrl.Result{RequeueAfter: time.Minute}, nil
+}
+
+// buildServiceDiscoveryStatus computes the service discovery descriptor from
+// the validated and reconciled NebariApp and writes it to status.serviceDiscovery.
+// The webapi watcher reads this field via status.serviceDiscovery.* (unstructured
+// client) so it gets the controller-resolved URL and display fields.
+//
+// Visibility and RequiredGroups are computed from spec.auth to ensure consistency:
+// - auth disabled → visibility="public", requiredGroups=[]
+// - auth enabled, no groups → visibility="private", requiredGroups=[]
+// - auth enabled, with groups → visibility="private", requiredGroups=auth.groups
+func buildServiceDiscoveryStatus(app *appsv1.NebariApp) *appsv1.ServiceDiscoveryStatus {
+	if app.Spec.LandingPage == nil || !app.Spec.LandingPage.Enabled {
+		return &appsv1.ServiceDiscoveryStatus{Enabled: false}
+	}
+	lp := app.Spec.LandingPage
+
+	priority := 100
+	if lp.Priority != nil {
+		priority = *lp.Priority
+	}
+
+	// Compute visibility and requiredGroups from spec.auth
+	// This ensures landing page visibility matches service access control
+	visibility := "public"
+	var requiredGroups []string
+	if app.Spec.Auth != nil && app.Spec.Auth.Enabled {
+		visibility = "private"
+		requiredGroups = app.Spec.Auth.Groups
+	}
+
+	scheme := "https"
+	if app.Spec.Routing != nil && app.Spec.Routing.TLS != nil {
+		if app.Spec.Routing.TLS.Enabled != nil && !*app.Spec.Routing.TLS.Enabled {
+			scheme = "http"
+		}
+	}
+	url := scheme + "://" + app.Spec.Hostname
+	if lp.ExternalUrl != "" {
+		url = lp.ExternalUrl
+	}
+
+	return &appsv1.ServiceDiscoveryStatus{
+		Enabled:        true,
+		DisplayName:    lp.DisplayName,
+		Description:    lp.Description,
+		URL:            url,
+		Icon:           lp.Icon,
+		Category:       lp.Category,
+		Priority:       priority,
+		Visibility:     visibility,
+		RequiredGroups: requiredGroups,
+	}
 }
 
 // reconcilePublicRoutes handles public route reconciliation for paths that bypass OIDC.

@@ -247,7 +247,7 @@ func TestBuildHTTPRoute(t *testing.T) {
 					if string(backend.Name) != tt.nebariApp.Spec.Service.Name {
 						t.Errorf("rule %d: expected backend name=%s, got=%s", i, tt.nebariApp.Spec.Service.Name, backend.Name)
 					}
-					if *backend.Port != tt.expectedBackendPort {
+					if *backend.Port != gatewayv1.PortNumber(tt.expectedBackendPort) {
 						t.Errorf("rule %d: expected backend port=%d, got=%d", i, tt.expectedBackendPort, *backend.Port)
 					}
 				}
@@ -884,6 +884,99 @@ func TestBuildHTTPRouteWithTLSListener(t *testing.T) {
 			sectionName := string(*route.Spec.ParentRefs[0].SectionName)
 			if sectionName != tt.expectedSectionName {
 				t.Errorf("expected sectionName %q, got %q", tt.expectedSectionName, sectionName)
+			}
+		})
+	}
+}
+
+func TestBuildHTTPRouteAnnotations(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = appsv1.AddToScheme(scheme)
+	_ = gatewayv1.Install(scheme)
+
+	reconciler := &RoutingReconciler{
+		Scheme:   scheme,
+		Recorder: record.NewFakeRecorder(10),
+	}
+
+	tests := []struct {
+		name                string
+		routingAnnotations  map[string]string
+		expectedAnnotations map[string]string
+	}{
+		{
+			name:               "no routing annotations — only operator annotation present",
+			routingAnnotations: nil,
+			expectedAnnotations: map[string]string{
+				"nebari.dev/tls-enabled": "true",
+			},
+		},
+		{
+			name:               "empty routing annotations map — only operator annotation present",
+			routingAnnotations: map[string]string{},
+			expectedAnnotations: map[string]string{
+				"nebari.dev/tls-enabled": "true",
+			},
+		},
+		{
+			name: "user annotations are propagated to HTTPRoute",
+			routingAnnotations: map[string]string{
+				"argocd.argoproj.io/tracking-id": "httproutes:gateway.networking.k8s.io/HTTPRoute:nebari-system/my-app",
+				"custom.io/label":                "value",
+			},
+			expectedAnnotations: map[string]string{
+				"argocd.argoproj.io/tracking-id": "httproutes:gateway.networking.k8s.io/HTTPRoute:nebari-system/my-app",
+				"custom.io/label":                "value",
+				"nebari.dev/tls-enabled":         "true",
+			},
+		},
+		{
+			name: "operator annotation takes precedence over user-supplied one",
+			routingAnnotations: map[string]string{
+				"nebari.dev/tls-enabled": "OVERRIDDEN",
+			},
+			expectedAnnotations: map[string]string{
+				"nebari.dev/tls-enabled": "true", // operator wins
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tlsEnabled := true
+			nebariApp := &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "my-app",
+					Namespace: "nebari-system",
+				},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "my-app.nebari.dev",
+					Service:  appsv1.ServiceReference{Name: "my-app", Port: 8080},
+					Routing: &appsv1.RoutingConfig{
+						TLS:         &appsv1.RoutingTLSConfig{Enabled: &tlsEnabled},
+						Annotations: tt.routingAnnotations,
+					},
+				},
+			}
+
+			route := reconciler.buildHTTPRoute(nebariApp, constants.PublicGatewayName, "")
+
+			for k, want := range tt.expectedAnnotations {
+				got, ok := route.Annotations[k]
+				if !ok {
+					t.Errorf("expected annotation %q to be present, but it was missing", k)
+					continue
+				}
+				if got != want {
+					t.Errorf("annotation %q: expected %q, got %q", k, want, got)
+				}
+			}
+
+			// Ensure no unexpected annotations beyond those declared
+			for k := range route.Annotations {
+				if _, expected := tt.expectedAnnotations[k]; !expected {
+					t.Errorf("unexpected annotation %q on HTTPRoute", k)
+				}
 			}
 		})
 	}

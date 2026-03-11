@@ -30,6 +30,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	reconcilersv1 "github.com/nebari-dev/nebari-operator/api/v1"
+	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/auth"
+	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/core"
+	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/routing"
 )
 
 var _ = Describe("NebariApp Controller", func() {
@@ -118,10 +121,27 @@ var _ = Describe("NebariApp Controller", func() {
 
 		It("should successfully reconcile the resource", func() {
 			By("Reconciling the created resource")
+			fakeRecorder := record.NewFakeRecorder(10)
 			controllerReconciler := &NebariAppReconciler{
 				Client:   k8sClient,
 				Scheme:   k8sClient.Scheme(),
-				Recorder: record.NewFakeRecorder(10),
+				Recorder: fakeRecorder,
+				CoreReconciler: &core.CoreReconciler{
+					Client:   k8sClient,
+					Scheme:   k8sClient.Scheme(),
+					Recorder: fakeRecorder,
+				},
+				RoutingReconciler: &routing.RoutingReconciler{
+					Client:   k8sClient,
+					Scheme:   k8sClient.Scheme(),
+					Recorder: fakeRecorder,
+				},
+				AuthReconciler: &auth.AuthReconciler{
+					Client:    k8sClient,
+					Scheme:    k8sClient.Scheme(),
+					Recorder:  fakeRecorder,
+					Providers: nil,
+				},
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
@@ -183,10 +203,27 @@ var _ = Describe("NebariApp Controller", func() {
 			Expect(k8sClient.Create(ctx, appWithRouting)).To(Succeed())
 
 			By("Reconciling the resource with routing")
+			fakeRecorder2 := record.NewFakeRecorder(10)
 			controllerReconciler := &NebariAppReconciler{
 				Client:   k8sClient,
 				Scheme:   k8sClient.Scheme(),
-				Recorder: record.NewFakeRecorder(10),
+				Recorder: fakeRecorder2,
+				CoreReconciler: &core.CoreReconciler{
+					Client:   k8sClient,
+					Scheme:   k8sClient.Scheme(),
+					Recorder: fakeRecorder2,
+				},
+				RoutingReconciler: &routing.RoutingReconciler{
+					Client:   k8sClient,
+					Scheme:   k8sClient.Scheme(),
+					Recorder: fakeRecorder2,
+				},
+				AuthReconciler: &auth.AuthReconciler{
+					Client:    k8sClient,
+					Scheme:    k8sClient.Scheme(),
+					Recorder:  fakeRecorder2,
+					Providers: nil,
+				},
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{

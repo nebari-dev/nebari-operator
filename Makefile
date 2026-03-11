@@ -1,5 +1,5 @@
 # Image URL to use all building/pushing image targets
-IMG ?= controller:latest
+IMG ?= nebari-operator:latest
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -43,7 +43,13 @@ help: ## Display this help.
 
 .PHONY: manifests
 manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
-	@"$(CONTROLLER_GEN)" rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases 2>&1 | grep -v 'Warning: unrecognized format' || true
+	@set +e; \
+	"$(CONTROLLER_GEN)" rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases 2>&1 | grep -v 'Warning: unrecognized format' | grep -v 'gateway-api@v1.4.1'; \
+	if [ -f config/crd/bases/reconcilers.nebari.dev_nebariapps.yaml ]; then \
+		echo "CRDs generated successfully"; exit 0; \
+	else \
+		echo "Error: CRD generation failed"; exit 1; \
+	fi
 
 .PHONY: generate
 generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
@@ -72,11 +78,11 @@ test-unit: ## Run controller unit tests with coverage.
 test-unit-html: test-unit ## Generate HTML coverage report for unit tests.
 	@go tool cover -html=unit-coverage.out -o unit-coverage.html
 	@echo "Coverage report generated: unit-coverage.html"
-	@open unit-coverage.html 2>/dev/null || xdg-open unit-coverage.html 2>/dev/null || echo "Open unit-coverage.html in your browser"
+	@xdg-open unit-coverage.html 2>/dev/null || open unit-coverage.html 2>/dev/null || echo "Open unit-coverage.html in your browser"
 
 .PHONY: test-e2e
-test-e2e: manifests generate fmt vet ## Run e2e tests.
-	USE_EXISTING_CLUSTER=$(USE_EXISTING_CLUSTER) go test ./test/e2e -v -ginkgo.v -tags=e2e -timeout=30m
+test-e2e: manifests generate fmt vet ## Run all e2e tests.
+	USE_EXISTING_CLUSTER=$(USE_EXISTING_CLUSTER) IMG=$(IMG) go test ./test/e2e -v -ginkgo.v -tags=e2e -timeout=30m
 
 .PHONY: test-e2e-parallel
 test-e2e-parallel: manifests generate fmt vet ## Run e2e tests in parallel (faster).
@@ -102,11 +108,11 @@ lint-config: golangci-lint ## Verify golangci-lint linter configuration
 
 .PHONY: build
 build: manifests generate fmt vet ## Build manager binary.
-	go build -o bin/manager cmd/main.go
+	go build -o bin/manager ./cmd/operator
 
 .PHONY: run
 run: manifests generate fmt vet ## Run a controller from your host.
-	go run ./cmd/main.go
+	go run ./cmd/operator
 
 # If you wish to build the manager image targeting other platforms you can use the --platform flag.
 # (i.e. docker build --platform linux/arm64). However, you must enable docker buildKit for it.
@@ -135,6 +141,8 @@ docker-buildx: ## Build and push docker image for the manager for cross-platform
 	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --tag ${IMG} -f Dockerfile.cross .
 	- $(CONTAINER_TOOL) buildx rm nebari-operator-builder
 	rm Dockerfile.cross
+
+##@ Installer
 
 .PHONY: build-installer
 build-installer: manifests generate kustomize ## Generate a consolidated YAML with CRDs and deployment.

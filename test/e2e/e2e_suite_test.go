@@ -28,13 +28,19 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"k8s.io/apimachinery/pkg/runtime"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
 	"github.com/nebari-dev/nebari-operator/test/utils"
 )
 
 var (
 	// Optional Environment Variables:
 	// - USE_EXISTING_CLUSTER=true: Use existing cluster instead of creating new Kind cluster
-	// - SETUP_INFRASTRUCTURE=true: Run dev/install-services.sh to setup infrastructure
+	// - SETUP_INFRASTRUCTURE=true: Run dev/scripts/services/install.sh and keycloak/setup.sh
 	// - SKIP_SETUP=true: Skip all setup (cluster and infrastructure), assume everything exists
 	// - SKIP_DOCKER_BUILD=true: Skip docker build, assume image is already built and loaded
 	useExistingCluster  = os.Getenv("USE_EXISTING_CLUSTER") == "true"
@@ -47,7 +53,16 @@ var (
 
 	// projectImage is the name of the image which will be build and loaded
 	// with the code source changes to be tested.
-	projectImage = "quay.io/nebari/nebari-operator:v0.0.1"
+	// Override via IMG env var (e.g. IMG=quay.io/nebari/nebari-operator:dev make test-e2e).
+	projectImage = func() string {
+		if v := os.Getenv("IMG"); v != "" {
+			return v
+		}
+		return "quay.io/nebari/nebari-operator:v0.0.1"
+	}()
+
+	// k8sClient is a controller-runtime client for use in e2e tests.
+	k8sClient client.Client
 )
 
 // TestE2E runs the end-to-end (e2e) test suite for the project. These tests execute in an isolated,
@@ -63,53 +78,66 @@ func TestE2E(t *testing.T) {
 var _ = BeforeSuite(func() {
 	if skipSetup {
 		_, _ = fmt.Fprintf(GinkgoWriter, "Skipping all setup, using existing cluster and infrastructure\n")
-		return
-	}
-
-	// Set cluster name for Kind utilities
-	clusterName := os.Getenv("CLUSTER_NAME")
-	if clusterName == "" {
-		clusterName = "nebari-operator-dev"
-	}
-	os.Setenv("KIND_CLUSTER", clusterName)
-	os.Setenv("CLUSTER_NAME", clusterName)
-
-	// Setup cluster and infrastructure
-	if !useExistingCluster {
-		By("creating kind cluster via dev scripts")
-		cmd := exec.Command("make", "-C", "dev", "cluster-create")
-		_, err := utils.Run(cmd)
-		if err == nil {
-			isKindClusterCreated = true
+	} else {
+		// Set cluster name for Kind utilities
+		clusterName := os.Getenv("CLUSTER_NAME")
+		if clusterName == "" {
+			clusterName = "nebari-operator-dev"
 		}
-		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to create Kind cluster")
-	} else {
-		_, _ = fmt.Fprintf(GinkgoWriter, "Using existing cluster\n")
+		os.Setenv("KIND_CLUSTER", clusterName)
+		os.Setenv("CLUSTER_NAME", clusterName)
+
+		// Setup cluster and infrastructure
+		if !useExistingCluster {
+			By("creating kind cluster via dev scripts")
+			cmd := exec.Command("make", "-C", "dev", "cluster-create")
+			_, err := utils.Run(cmd)
+			if err == nil {
+				isKindClusterCreated = true
+			}
+			ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to create Kind cluster")
+		} else {
+			_, _ = fmt.Fprintf(GinkgoWriter, "Using existing cluster\n")
+		}
+
+		// Setup infrastructure (Envoy Gateway, cert-manager, Gateway, etc.)
+		if setupInfrastructure {
+			By("installing foundational services via dev scripts")
+			cmd := exec.Command("make", "-C", "dev", "services-install")
+			_, err := utils.Run(cmd)
+			ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to install foundational services")
+
+			By("configuring Keycloak realm via dev scripts")
+			cmd = exec.Command("dev/scripts/services/keycloak/setup.sh")
+			_, err = utils.Run(cmd)
+			ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to configure Keycloak realm")
+		} else {
+			_, _ = fmt.Fprintf(GinkgoWriter, "Skipping infrastructure setup, assuming services are already installed\n")
+		}
+
+		// Build and load operator image
+		if !skipDockerBuild {
+			By("building the manager(Operator) image")
+			cmd := exec.Command("make", "docker-build", fmt.Sprintf("IMG=%s", projectImage))
+			_, err := utils.Run(cmd)
+			ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the manager(Operator) image")
+
+			By("loading the manager(Operator) image on Kind")
+			err = utils.LoadImageToKindClusterWithName(projectImage)
+			ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the manager(Operator) image into Kind")
+		} else {
+			_, _ = fmt.Fprintf(GinkgoWriter, "Skipping docker build, assuming image is already built and loaded\n")
+		}
 	}
 
-	// Setup infrastructure (Envoy Gateway, cert-manager, Gateway, etc.)
-	if setupInfrastructure {
-		By("installing foundational services via dev scripts")
-		cmd := exec.Command("make", "-C", "dev", "services-install")
-		_, err := utils.Run(cmd)
-		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to install foundational services")
-	} else {
-		_, _ = fmt.Fprintf(GinkgoWriter, "Skipping infrastructure setup, assuming services are already installed\n")
-	}
-
-	// Build and load operator image
-	if !skipDockerBuild {
-		By("building the manager(Operator) image")
-		cmd := exec.Command("make", "docker-build", fmt.Sprintf("IMG=%s", projectImage))
-		_, err := utils.Run(cmd)
-		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the manager(Operator) image")
-
-		By("loading the manager(Operator) image on Kind")
-		err = utils.LoadImageToKindClusterWithName(projectImage)
-		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the manager(Operator) image into Kind")
-	} else {
-		_, _ = fmt.Fprintf(GinkgoWriter, "Skipping docker build, assuming image is already built and loaded\n")
-	}
+	By("setting up the k8s client")
+	scheme := runtime.NewScheme()
+	ExpectWithOffset(1, clientgoscheme.AddToScheme(scheme)).To(Succeed())
+	ExpectWithOffset(1, appsv1.AddToScheme(scheme)).To(Succeed())
+	cfg := ctrl.GetConfigOrDie()
+	var err error
+	k8sClient, err = client.New(cfg, client.Options{Scheme: scheme})
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to create k8s client")
 })
 
 var _ = AfterSuite(func() {

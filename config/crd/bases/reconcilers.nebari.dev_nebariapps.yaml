@@ -207,10 +207,101 @@ spec:
                 minLength: 1
                 pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
                 type: string
+              landingPage:
+                description: |-
+                  LandingPage configures how this service appears on the Nebari landing page.
+                  When enabled, the service will be discoverable through the landing page portal.
+                properties:
+                  category:
+                    description: |-
+                      Category groups related services together on the landing page.
+                      Common categories: Development, Monitoring, Platform, Data Science
+                    type: string
+                  description:
+                    description: |-
+                      Description provides additional context about the service.
+                      Shown as supplementary text on the service card.
+                    maxLength: 256
+                    type: string
+                  displayName:
+                    description: |-
+                      DisplayName is the human-readable name shown on the landing page.
+                      Required when Enabled is true.
+                    maxLength: 64
+                    type: string
+                  enabled:
+                    default: false
+                    description: |-
+                      Enabled determines if this service appears on the landing page.
+                      When false, the service is not shown on the landing page.
+                    type: boolean
+                  externalUrl:
+                    description: |-
+                      ExternalUrl overrides the default URL derived from the hostname.
+                      Use this when the service URL differs from https://<hostname>
+                    type: string
+                  healthCheck:
+                    description: HealthCheck configures health status monitoring for
+                      this service.
+                    properties:
+                      enabled:
+                        default: false
+                        description: Enabled determines if health checks are performed.
+                        type: boolean
+                      intervalSeconds:
+                        default: 30
+                        description: IntervalSeconds is how often to perform health
+                          checks (in seconds).
+                        maximum: 300
+                        minimum: 10
+                        type: integer
+                      path:
+                        default: /health
+                        description: |-
+                          Path is the HTTP path to check for health status.
+                          Common paths: /health, /healthz, /api/health
+                        type: string
+                      timeoutSeconds:
+                        default: 5
+                        description: TimeoutSeconds is the request timeout for health
+                          checks (in seconds).
+                        maximum: 30
+                        minimum: 1
+                        type: integer
+                    required:
+                    - enabled
+                    type: object
+                  icon:
+                    description: |-
+                      Icon is an identifier for the service icon (e.g., "jupyter", "grafana")
+                      or a URL to a custom icon image.
+                      Supported built-in icons: jupyter, grafana, prometheus, keycloak, argocd, kubernetes
+                    type: string
+                  priority:
+                    default: 100
+                    description: |-
+                      Priority determines sort order within a category (lower number = higher priority).
+                      Services are displayed in ascending priority order within each category.
+                    maximum: 1000
+                    minimum: 0
+                    type: integer
+                required:
+                - enabled
+                type: object
               routing:
                 description: Routing configures routing behavior including path-based
                   rules and TLS.
                 properties:
+                  annotations:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      Annotations defines additional annotations to merge onto the generated HTTPRoute.
+                      Useful for tools like ArgoCD that track resources via annotations
+                      (e.g. argocd.argoproj.io/tracking-id).
+                      These annotations are merged with any operator-managed annotations; operator
+                      annotations always take precedence to avoid breaking internal behaviour.
+                    type: object
                   publicRoutes:
                     description: |-
                       PublicRoutes specifies paths that should bypass OIDC authentication.
@@ -424,6 +515,54 @@ spec:
                   It corresponds to the NebariApp's generation, which is updated on mutation by the API Server.
                 format: int64
                 type: integer
+              serviceDiscovery:
+                description: |-
+                  ServiceDiscovery is the computed service discovery descriptor.
+                  The controller populates this after reconciling spec.landingPage so the
+                  webapi watcher can consume a pre-validated, URL-resolved view via
+                  status.serviceDiscovery.* without re-deriving it from spec.
+                properties:
+                  category:
+                    description: Category groups related services on the landing page.
+                    type: string
+                  description:
+                    description: Description is supplementary text for the service
+                      card.
+                    type: string
+                  displayName:
+                    description: DisplayName is the human-readable name shown on the
+                      landing page.
+                    type: string
+                  enabled:
+                    description: Enabled mirrors spec.landingPage.enabled at the time
+                      of last reconciliation.
+                    type: boolean
+                  icon:
+                    description: Icon identifies the service icon.
+                    type: string
+                  priority:
+                    description: Priority controls sort order within a category (lower
+                      = higher priority).
+                    maximum: 1000
+                    minimum: 0
+                    type: integer
+                  requiredGroups:
+                    description: RequiredGroups lists groups required when visibility
+                      is "private".
+                    items:
+                      type: string
+                    type: array
+                  url:
+                    description: |-
+                      URL is the effective service URL (derived from spec.hostname or
+                      spec.landingPage.externalUrl by the controller).
+                    type: string
+                  visibility:
+                    description: Visibility controls who can see this service (public/private).
+                    type: string
+                required:
+                - enabled
+                type: object
             type: object
         required:
         - spec

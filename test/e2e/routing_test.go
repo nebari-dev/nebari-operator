@@ -76,6 +76,15 @@ var _ = Describe("NebariApp Routing Schema Variations", Ordered, func() {
 		cmd = exec.Command("kubectl", "label", "namespace", testNamespace, "nebari.dev/managed=true", "--overwrite")
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to label namespace")
+			By("undeploying any existing controller-manager")
+			_, _ = utils.Run(exec.Command("make", "undeploy"))
+		By("waiting for operator namespace to be fully terminated from previous runs")
+		Eventually(func() error {
+			cmd = exec.Command("kubectl", "get", "namespace", "nebari-operator-system")
+			_, err = utils.Run(cmd)
+			return err
+		}, VeryLongTimeout, time.Second).Should(HaveOccurred(),
+			"nebari-operator-system should be absent before deploying")
 
 		By("deploying the controller-manager")
 		cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", projectImage))

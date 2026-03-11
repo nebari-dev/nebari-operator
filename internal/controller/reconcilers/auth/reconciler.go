@@ -36,6 +36,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
+	gwapiv1a2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
 )
 
 // AuthReconciler reconciles authentication resources for NebariApps.
@@ -302,8 +303,8 @@ func (r *AuthReconciler) buildSecurityPolicySpec(ctx context.Context, nebariApp 
 	group := gwapiv1.Group("gateway.networking.k8s.io")
 	kind := gwapiv1.Kind("HTTPRoute")
 	routeName := gwapiv1.ObjectName(naming.HTTPRouteName(nebariApp))
-	httpRouteRef := gwapiv1.LocalPolicyTargetReferenceWithSectionName{
-		LocalPolicyTargetReference: gwapiv1.LocalPolicyTargetReference{
+	httpRouteRef := gwapiv1a2.LocalPolicyTargetReferenceWithSectionName{
+		LocalPolicyTargetReference: gwapiv1a2.LocalPolicyTargetReference{
 			Group: group,
 			Kind:  kind,
 			Name:  routeName,
@@ -320,7 +321,7 @@ func (r *AuthReconciler) buildSecurityPolicySpec(ctx context.Context, nebariApp 
 		Provider: egv1alpha1.OIDCProvider{
 			Issuer: issuerURL,
 		},
-		ClientID: ptrTo(clientID),
+		ClientID: clientID,
 		ClientSecret: gwapiv1.SecretObjectReference{
 			Group:     &secretGroup,
 			Kind:      &secretKind,
@@ -340,7 +341,7 @@ func (r *AuthReconciler) buildSecurityPolicySpec(ctx context.Context, nebariApp 
 
 	spec := egv1alpha1.SecurityPolicySpec{
 		PolicyTargetReferences: egv1alpha1.PolicyTargetReferences{
-			TargetRefs: []gwapiv1.LocalPolicyTargetReferenceWithSectionName{httpRouteRef},
+			TargetRefs: []gwapiv1a2.LocalPolicyTargetReferenceWithSectionName{httpRouteRef},
 		},
 		OIDC: oidcConfig,
 	}

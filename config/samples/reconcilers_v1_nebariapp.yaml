@@ -20,6 +20,10 @@ spec:
     # Uncomment to disable TLS (defaults to enabled)
     # tls:
     #   enabled: false
+    # Uncomment to add custom annotations to the generated HTTPRoute.
+    # Useful for ArgoCD tracking or other tooling.
+    # annotations:
+    #   argocd.argoproj.io/tracking-id: "httproutes:gateway.networking.k8s.io/HTTPRoute:default/sample-app"
   # Uncomment to enable authentication
   # auth:
   #   enabled: true
