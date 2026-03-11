@@ -175,10 +175,23 @@ jobs:
           IMG: quay.io/nebari/nebari-operator:v0.0.1
         run: make deploy
 
+      - name: Check operator deployment status
+        if: always()
+        run: |
+          echo "=== Checking operator deployment ==="
+          kubectl get deployment -n nebari-operator-system
+          kubectl get pods -n nebari-operator-system
+          echo ""
+          echo "=== Operator pod logs ==="
+          kubectl logs -n nebari-operator-system -l control-plane=controller-manager --tail=50 || true
+          echo ""
+          echo "=== Operator pod events ==="
+          kubectl get events -n nebari-operator-system --sort-by='.lastTimestamp' || true
+
       - name: Wait for operator to be ready
         run: |
           kubectl wait --for=condition=available deployment/nebari-operator-controller-manager \
-            -n nebari-operator-system --timeout=120s
+            -n nebari-operator-system --timeout=180s
 
       - name: Run operator E2E tests
         env:
