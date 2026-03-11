@@ -203,6 +203,18 @@ type AuthConfig struct {
 	// +optional
 	IssuerURL string `json:"issuerURL,omitempty"`
 
+	// SPAClient configures a public OIDC client for browser-based authentication.
+	// When enabled, the operator provisions a separate public client for Single-Page
+	// Applications that use PKCE flows (e.g., React apps with keycloak-js).
+	// This is distinct from the confidential client used for server-side auth (oauth2-proxy).
+	// The public client is configured with:
+	//   - publicClient: true (no client secret, safe for browser)
+	//   - Redirect URIs: https://<hostname>/* and https://<hostname>
+	//   - PKCE enforcement (S256)
+	// Only supported for provider="keycloak".
+	// +optional
+	SPAClient *SPAClientConfig `json:"spaClient,omitempty"`
+
 	// KeycloakConfig provides Keycloak-specific configuration for fine-grained control
 	// over realm resources like groups, client scopes, and protocol mappers.
 	// Only used when provider="keycloak" and provisionClient=true; silently ignored
@@ -261,6 +273,29 @@ type KeycloakProtocolMapperConfig struct {
 	// Example for group-membership mapper: {"claim.name": "groups", "full.path": "false"}
 	// +optional
 	Config map[string]string `json:"config,omitempty"`
+}
+
+// SPAClientConfig specifies configuration for provisioning a public OIDC client
+// for Single-Page Applications (SPA) that use browser-based authentication with PKCE.
+// This client is separate from the confidential client used by oauth2-proxy or similar
+// server-side auth handlers.
+type SPAClientConfig struct {
+	// Enabled determines whether a public OIDC client should be provisioned for SPA use.
+	// When true, the operator creates a second Keycloak client configured as:
+	//   - publicClient: true (no client secret, safe for browser)
+	//   - Redirect URIs: https://<hostname>/* and https://<hostname>
+	//   - PKCE enforcement with S256 code challenge method
+	// The public client ID will be written to a ConfigMap or the OIDC secret for
+	// runtime consumption by the frontend application.
+	// +kubebuilder:default=false
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// ClientID optionally overrides the generated client ID for the SPA client.
+	// If not specified, defaults to: <namespace>-<name>-spa
+	// This allows custom client naming for organizational conventions.
+	// +optional
+	ClientID string `json:"clientId,omitempty"`
 }
 
 // LandingPageConfig defines how a service appears on the Nebari landing page.
