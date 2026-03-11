@@ -5,6 +5,9 @@ version: 2
 
 before:
   hooks:
+    # Clean up ignored files that may be in the git tree from release commits
+    - git checkout -- dist/ || true
+    - git clean -fd dist/ || true
     # Ensure dependencies are up to date
     - go mod tidy
     # Generate code
