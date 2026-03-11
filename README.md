@@ -45,7 +45,12 @@ Get started in 5 minutes! Follow our [Quick Start Guide](docs/quickstart.md) to:
 ### Operations
 - **[Makefile Reference](docs/makefile-reference.md)** - Build, test, and deployment commands
 - **[Release Process](docs/maintainers/release-process.md)** - How releases are created and managed
+- **[Release Checklist](docs/maintainers/release-checklist.md)** - Step-by-step release guide
 - **[Release Setup](docs/maintainers/release-setup.md)** - GitHub Actions configuration
+
+### Contributing
+- **[Contributing Guide](CONTRIBUTING.md)** - Development workflow and guidelines
+- **[Development Workflow](#development-workflow)** - Quick reference for common tasks
 
 ## Installation
 
@@ -160,6 +165,39 @@ make teardown
 ```
 
 See [dev/README.md](dev/README.md) for detailed development workflows.
+
+## Development Workflow
+
+For complete development guidelines, see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+**Quick Reference:**
+
+When modifying API types (`api/v1/*.go`):
+```bash
+# Regenerate CRDs and code
+make generate-dev
+
+# Test locally
+make install  # Updates CRDs in your current cluster
+make run      # Runs operator locally
+```
+
+When preparing a release:
+```bash
+# Ensure you have a clean working directory on the release tag
+git tag v1.0.0
+git checkout v1.0.0
+
+# Generate all release artifacts
+make prepare-release
+
+# Review and commit generated files
+git status
+git commit -m "chore: prepare manifests for v1.0.0"
+git push origin v1.0.0
+```
+
+See [docs/maintainers/release-checklist.md](docs/maintainers/release-checklist.md) for the complete release process.
 
 ### Common Makefile Targets
 
