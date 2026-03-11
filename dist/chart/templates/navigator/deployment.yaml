@@ -1,0 +1,92 @@
+{{- if and .Values.navigator .Values.navigator.enable }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+    labels:
+        app.kubernetes.io/managed-by: {{ .Release.Service }}
+        app.kubernetes.io/name: {{ include "nebari-operator.name" . }}
+        helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: navigator
+    name: {{ include "nebari-operator.navigatorName" . }}
+    namespace: {{ .Release.Namespace }}
+spec:
+    replicas: {{ .Values.navigator.replicas }}
+    selector:
+        matchLabels:
+            app.kubernetes.io/name: {{ include "nebari-operator.name" . }}
+            app.kubernetes.io/component: navigator
+    template:
+        metadata:
+            labels:
+                app.kubernetes.io/name: {{ include "nebari-operator.name" . }}
+                helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+                app.kubernetes.io/instance: {{ .Release.Name }}
+                app.kubernetes.io/managed-by: {{ .Release.Service }}
+                app.kubernetes.io/component: navigator
+        spec:
+            {{- with .Values.navigator.imagePullSecrets }}
+            imagePullSecrets: {{ toYaml . | nindent 12 }}
+            {{- end }}
+            {{- with .Values.navigator.tolerations }}
+            tolerations: {{ toYaml . | nindent 12 }}
+            {{- end }}
+            {{- with .Values.navigator.affinity }}
+            affinity: {{ toYaml . | nindent 12 }}
+            {{- end }}
+            {{- with .Values.navigator.nodeSelector }}
+            nodeSelector: {{ toYaml . | nindent 12 }}
+            {{- end }}
+            serviceAccountName: {{ include "nebari-operator.navigatorName" . }}
+            containers:
+                - name: api
+                  image: "{{ .Values.navigator.image.repository }}:{{ .Values.navigator.image.tag }}"
+                  imagePullPolicy: {{ .Values.navigator.image.pullPolicy }}
+                  ports:
+                      - containerPort: 8080
+                        name: http
+                        protocol: TCP
+                  env:
+                      {{- if .Values.navigator.env }}
+                      {{- toYaml .Values.navigator.env | nindent 20 }}
+                      {{- else }}
+                      []
+                      {{- end }}
+                  livenessProbe:
+                      httpGet:
+                          path: /api/v1/health
+                          port: 8080
+                      initialDelaySeconds: 10
+                      periodSeconds: 30
+                  readinessProbe:
+                      httpGet:
+                          path: /api/v1/health
+                          port: 8080
+                      initialDelaySeconds: 5
+                      periodSeconds: 10
+                  resources:
+                      {{- if .Values.navigator.resources }}
+                      {{- toYaml .Values.navigator.resources | nindent 20 }}
+                      {{- else }}
+                      {}
+                      {{- end }}
+                  securityContext:
+                      {{- if .Values.navigator.securityContext }}
+                      {{- toYaml .Values.navigator.securityContext | nindent 20 }}
+                      {{- else }}
+                      {}
+                      {{- end }}
+                  volumeMounts:
+                      - name: pins-data
+                        mountPath: /data
+            securityContext:
+                {{- if .Values.navigator.podSecurityContext }}
+                {{- toYaml .Values.navigator.podSecurityContext | nindent 14 }}
+                {{- else }}
+                {}
+                {{- end }}
+            volumes:
+                - name: pins-data
+                  emptyDir: {}
+            terminationGracePeriodSeconds: 10
+{{- end }}
