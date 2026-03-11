@@ -61,6 +61,16 @@ func (p *KeycloakProvider) GetClientID(ctx context.Context, nebariApp *appsv1.Ne
 	return naming.ClientID(nebariApp)
 }
 
+// GetSPAClientID returns the SPA client ID for the NebariApp.
+// The SPA client ID can be customized via spec.auth.spaClient.clientId,
+// otherwise defaults to the standard client ID with "-spa" suffix.
+func (p *KeycloakProvider) GetSPAClientID(ctx context.Context, nebariApp *appsv1.NebariApp) string {
+	if nebariApp.Spec.Auth != nil && nebariApp.Spec.Auth.SPAClient != nil && nebariApp.Spec.Auth.SPAClient.ClientID != "" {
+		return nebariApp.Spec.Auth.SPAClient.ClientID
+	}
+	return naming.ClientID(nebariApp) + "-spa"
+}
+
 // SupportsProvisioning returns true as Keycloak supports automatic client provisioning.
 func (p *KeycloakProvider) SupportsProvisioning() bool {
 	return true
@@ -184,8 +194,18 @@ func (p *KeycloakProvider) ProvisionClient(ctx context.Context, nebariApp *appsv
 		return fmt.Errorf("failed to sync groups: %w", err)
 	}
 
+	// Provision SPA client if requested
+	var spaClientID string
+	if p.shouldProvisionSPAClient(nebariApp) {
+		spaClientID, err = p.provisionSPAClient(ctx, kcClient, token, nebariApp)
+		if err != nil {
+			return fmt.Errorf("failed to provision SPA client: %w", err)
+		}
+		logger.Info("Provisioned SPA client", "clientID", spaClientID)
+	}
+
 	// Store secret in Kubernetes
-	return p.storeClientSecret(ctx, nebariApp, clientSecret)
+	return p.storeClientSecret(ctx, nebariApp, clientSecret, spaClientID)
 }
 
 // DeleteClient removes the Keycloak OIDC client.
@@ -193,6 +213,7 @@ func (p *KeycloakProvider) DeleteClient(ctx context.Context, nebariApp *appsv1.N
 	ctx, cancel := p.withAPITimeout(ctx)
 	defer cancel()
 
+	logger := log.FromContext(ctx)
 	clientID := p.GetClientID(ctx, nebariApp)
 
 	// Load admin credentials from secret if not already loaded
@@ -206,21 +227,35 @@ func (p *KeycloakProvider) DeleteClient(ctx context.Context, nebariApp *appsv1.N
 		return err
 	}
 
-	// Find the client
+	// Delete the confidential client
 	existingClient, err := p.findClient(ctx, kcClient, token, clientID)
 	if err != nil {
 		return err
 	}
 
-	if existingClient == nil {
-		// Client doesn't exist, nothing to delete
-		return nil
+	if existingClient != nil {
+		err = kcClient.DeleteClient(ctx, token.AccessToken, p.Config.Realm, *existingClient.ID)
+		if err != nil {
+			return fmt.Errorf("failed to delete client: %w", err)
+		}
+		logger.Info("Deleted confidential client", "clientID", clientID)
 	}
 
-	// Delete the client
-	err = kcClient.DeleteClient(ctx, token.AccessToken, p.Config.Realm, *existingClient.ID)
-	if err != nil {
-		return fmt.Errorf("failed to delete client: %w", err)
+	// Delete SPA client if it exists
+	if p.shouldProvisionSPAClient(nebariApp) {
+		spaClientID := p.GetSPAClientID(ctx, nebariApp)
+		existingSPAClient, err := p.findClient(ctx, kcClient, token, spaClientID)
+		if err != nil {
+			return err
+		}
+
+		if existingSPAClient != nil {
+			err = kcClient.DeleteClient(ctx, token.AccessToken, p.Config.Realm, *existingSPAClient.ID)
+			if err != nil {
+				return fmt.Errorf("failed to delete SPA client: %w", err)
+			}
+			logger.Info("Deleted SPA client", "clientID", spaClientID)
+		}
 	}
 
 	return nil
@@ -333,8 +368,19 @@ func (p *KeycloakProvider) buildRedirectURLs(nebariApp *appsv1.NebariApp) []stri
 }
 
 // storeClientSecret creates or updates the Kubernetes secret containing the OIDC client secret.
-func (p *KeycloakProvider) storeClientSecret(ctx context.Context, nebariApp *appsv1.NebariApp, clientSecret string) error {
+// If spaClientID is provided, it's also stored in the secret for frontend consumption.
+func (p *KeycloakProvider) storeClientSecret(ctx context.Context, nebariApp *appsv1.NebariApp, clientSecret, spaClientID string) error {
 	secretName := naming.ClientSecretName(nebariApp)
+
+	secretData := map[string][]byte{
+		constants.ClientSecretKey: []byte(clientSecret),
+	}
+
+	// Add SPA client ID if present
+	if spaClientID != "" {
+		secretData[constants.SPAClientIDKey] = []byte(spaClientID)
+	}
+
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      secretName,
@@ -346,9 +392,7 @@ func (p *KeycloakProvider) storeClientSecret(ctx context.Context, nebariApp *app
 			},
 		},
 		Type: corev1.SecretTypeOpaque,
-		Data: map[string][]byte{
-			constants.ClientSecretKey: []byte(clientSecret),
-		},
+		Data: secretData,
 	}
 
 	// Check if secret exists
@@ -693,6 +737,83 @@ func (p *KeycloakProvider) syncGroupMembers(ctx context.Context, kcClient *goclo
 	}
 
 	return nil
+}
+
+// shouldProvisionSPAClient returns true if the operator should provision a public SPA client.
+func (p *KeycloakProvider) shouldProvisionSPAClient(nebariApp *appsv1.NebariApp) bool {
+	return nebariApp.Spec.Auth != nil &&
+		nebariApp.Spec.Auth.SPAClient != nil &&
+		nebariApp.Spec.Auth.SPAClient.Enabled
+}
+
+// provisionSPAClient creates or updates a public OIDC client for browser-based SPA authentication.
+// The SPA client is configured with:
+// - publicClient: true (no secret, safe for browser)
+// - Redirect URIs: https://<hostname>/* and https://<hostname>
+// - PKCE enforcement (S256 code challenge method)
+// Returns the SPA client ID.
+func (p *KeycloakProvider) provisionSPAClient(ctx context.Context, kcClient *gocloak.GoCloak, token *gocloak.JWT, nebariApp *appsv1.NebariApp) (string, error) {
+	logger := log.FromContext(ctx)
+	spaClientID := p.GetSPAClientID(ctx, nebariApp)
+
+	// Check if SPA client exists
+	existingSPAClient, err := p.findClient(ctx, kcClient, token, spaClientID)
+	if err != nil {
+		return "", fmt.Errorf("failed to query for SPA client: %w", err)
+	}
+
+	// Build wildcard redirect URLs for SPA
+	hostname := nebariApp.Spec.Hostname
+	redirectURIs := []string{
+		fmt.Sprintf("https://%s/*", hostname),
+		fmt.Sprintf("https://%s", hostname),
+		fmt.Sprintf("http://%s/*", hostname),
+		fmt.Sprintf("http://%s", hostname),
+	}
+
+	if existingSPAClient != nil {
+		// Update existing SPA client
+		existingSPAClient.RedirectURIs = &redirectURIs
+		existingSPAClient.WebOrigins = &[]string{"*"}
+		existingSPAClient.PublicClient = gocloak.BoolP(true)
+		existingSPAClient.StandardFlowEnabled = gocloak.BoolP(true)
+
+		// Ensure PKCE is enforced
+		if existingSPAClient.Attributes == nil {
+			existingSPAClient.Attributes = &map[string]string{}
+		}
+		(*existingSPAClient.Attributes)["pkce.code.challenge.method"] = "S256"
+
+		err = kcClient.UpdateClient(ctx, token.AccessToken, p.Config.Realm, *existingSPAClient)
+		if err != nil {
+			return "", fmt.Errorf("failed to update SPA client: %w", err)
+		}
+		logger.Info("Updated existing SPA client", "clientID", spaClientID)
+	} else {
+		// Create new SPA client
+		newSPAClient := gocloak.Client{
+			ClientID:                  gocloak.StringP(spaClientID),
+			Name:                      gocloak.StringP(fmt.Sprintf("%s SPA Client", nebariApp.Name)),
+			RedirectURIs:              &redirectURIs,
+			WebOrigins:                &[]string{"*"},
+			PublicClient:              gocloak.BoolP(true),
+			StandardFlowEnabled:       gocloak.BoolP(true),
+			DirectAccessGrantsEnabled: gocloak.BoolP(false),
+			Protocol:                  gocloak.StringP("openid-connect"),
+			Enabled:                   gocloak.BoolP(true),
+			Attributes: &map[string]string{
+				"pkce.code.challenge.method": "S256",
+			},
+		}
+
+		_, err := kcClient.CreateClient(ctx, token.AccessToken, p.Config.Realm, newSPAClient)
+		if err != nil {
+			return "", fmt.Errorf("failed to create SPA client: %w", err)
+		}
+		logger.Info("Created new SPA client", "clientID", spaClientID)
+	}
+
+	return spaClientID, nil
 }
 
 // generateSecret generates a random secret string of the specified length.

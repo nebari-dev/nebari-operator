@@ -90,6 +90,10 @@ const (
 const (
 	// ClientSecretKey is the key name for OIDC client secret data
 	ClientSecretKey = "client-secret"
+
+	// SPAClientIDKey is the key name for SPA client ID data
+	// Used to store the public client ID for browser-based SPAs
+	SPAClientIDKey = "spa-client-id"
 )
 
 // Finalizers
