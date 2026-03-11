@@ -981,3 +981,90 @@ func TestBuildHTTPRouteAnnotations(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildBackendRefs(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = appsv1.AddToScheme(scheme)
+
+	reconciler := &RoutingReconciler{
+		Scheme: scheme,
+	}
+
+	tests := []struct {
+		name              string
+		nebariApp         *appsv1.NebariApp
+		expectNamespace   bool
+		expectedNamespace string
+	}{
+		{
+			name: "Same namespace - namespace not set in backend ref",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app",
+					Namespace: "default",
+				},
+				Spec: appsv1.NebariAppSpec{
+					Service: appsv1.ServiceReference{
+						Name: "test-service",
+						Port: 8080,
+					},
+				},
+			},
+			expectNamespace: false,
+		},
+		{
+			name: "Cross-namespace - namespace set in backend ref",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app",
+					Namespace: "default",
+				},
+				Spec: appsv1.NebariAppSpec{
+					Service: appsv1.ServiceReference{
+						Name:      "external-service",
+						Namespace: "other-namespace",
+						Port:      8080,
+					},
+				},
+			},
+			expectNamespace:   true,
+			expectedNamespace: "other-namespace",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			backendRefs := reconciler.buildBackendRefs(tt.nebariApp)
+
+			if len(backendRefs) != 1 {
+				t.Fatalf("expected 1 backend ref, got %d", len(backendRefs))
+			}
+
+			backendRef := backendRefs[0]
+
+			// Check service name
+			if string(backendRef.Name) != tt.nebariApp.Spec.Service.Name {
+				t.Errorf("expected name=%s, got=%s", tt.nebariApp.Spec.Service.Name, backendRef.Name)
+			}
+
+			// Check port
+			expectedPort := gatewayv1.PortNumber(tt.nebariApp.Spec.Service.Port)
+			if *backendRef.Port != expectedPort {
+				t.Errorf("expected port=%d, got=%d", expectedPort, *backendRef.Port)
+			}
+
+			// Check namespace
+			if tt.expectNamespace {
+				if backendRef.Namespace == nil {
+					t.Error("expected namespace to be set, but it was nil")
+				} else if string(*backendRef.Namespace) != tt.expectedNamespace {
+					t.Errorf("expected namespace=%s, got=%s", tt.expectedNamespace, *backendRef.Namespace)
+				}
+			} else {
+				if backendRef.Namespace != nil {
+					t.Errorf("expected namespace to be nil, got=%s", *backendRef.Namespace)
+				}
+			}
+		})
+	}
+}

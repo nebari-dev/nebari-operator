@@ -189,10 +189,18 @@ func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 		logger.Info("Routing reconciled successfully", "nebariapp", nebariApp.Name)
 	} else {
-		// Routing not configured - set condition to indicate routing is not enabled
+		// Routing not configured - cleanup any existing HTTPRoutes and set condition
+		if err := r.RoutingReconciler.CleanupHTTPRoute(ctx, nebariApp); err != nil {
+			logger.Error(err, "Failed to cleanup HTTPRoute when routing disabled")
+			// Don't fail the reconciliation, just log the error
+		}
+		if err := r.RoutingReconciler.CleanupPublicHTTPRoute(ctx, nebariApp); err != nil {
+			logger.Error(err, "Failed to cleanup public HTTPRoute when routing disabled")
+			// Don't fail the reconciliation, just log the error
+		}
 		conditions.SetCondition(nebariApp, appsv1.ConditionTypeRoutingReady, metav1.ConditionFalse,
 			"RoutingNotConfigured", "Routing configuration not provided in spec")
-		logger.Info("Routing not configured, skipping HTTPRoute reconciliation", "nebariapp", nebariApp.Name)
+		logger.Info("Routing not configured, cleaned up HTTPRoutes", "nebariapp", nebariApp.Name)
 	}
 
 	// Reconcile public route (unauthenticated paths) if routing has publicRoutes

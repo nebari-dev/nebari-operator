@@ -68,9 +68,21 @@ type ServiceReference struct {
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=65535
 	Port int32 `json:"port"`
+
+	// Namespace is the namespace of the Service (if different from the NebariApp).
+	// If not specified, defaults to the NebariApp's namespace.
+	// This allows referencing services in other namespaces for centralized service architectures.
+	// Note: The operator has cluster-scoped permissions to read Services across all namespaces.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	Namespace string `json:"namespace,omitempty"`
 }
 
 // RoutingConfig configures routing behavior for the application.
+// To disable operator-managed routing entirely (e.g., for externally managed Ingress/HTTPRoute),
+// omit the routing field from the NebariApp spec. The operator will skip HTTPRoute creation
+// and cleanup any previously created HTTPRoutes. When routing is nil, TLS is also considered
+// disabled, and the operator will not provision certificates or Gateway listeners.
 type RoutingConfig struct {
 	// Routes defines path-based routing rules for the application.
 	// If not specified, all traffic to the hostname will be routed to the service.

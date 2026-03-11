@@ -423,6 +423,14 @@ spec:
                       same namespace.
                     minLength: 1
                     type: string
+                  namespace:
+                    description: |-
+                      Namespace is the namespace of the Service (if different from the NebariApp).
+                      If not specified, defaults to the NebariApp's namespace.
+                      This allows referencing services in other namespaces for centralized service architectures.
+                      Note: The operator has cluster-scoped permissions to read Services across all namespaces.
+                    minLength: 1
+                    type: string
                   port:
                     description: Port is the port number on the Service to route traffic
                       to.

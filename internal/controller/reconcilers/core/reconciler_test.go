@@ -183,6 +183,34 @@ func TestValidateService(t *testing.T) {
 			},
 			expectError: true,
 		},
+		{
+			name: "Cross-namespace service reference",
+			service: &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "external-service",
+					Namespace: "other-namespace",
+				},
+				Spec: corev1.ServiceSpec{
+					Ports: []corev1.ServicePort{
+						{Port: 8080},
+					},
+				},
+			},
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app",
+					Namespace: "default",
+				},
+				Spec: appsv1.NebariAppSpec{
+					Service: appsv1.ServiceReference{
+						Name:      "external-service",
+						Namespace: "other-namespace",
+						Port:      8080,
+					},
+				},
+			},
+			expectError: false,
+		},
 	}
 
 	for _, tt := range tests {
