@@ -182,6 +182,64 @@ helm-chart-version: ## Update Helm chart version and appVersion (requires VERSIO
 	rm -f dist/chart/Chart.yaml.bak
 	@echo "✅ Updated chart version to $(VERSION) and appVersion to $(APP_VERSION)"
 
+.PHONY: generate-dev
+generate-dev: ## Generate for development (CRDs + deepcopy code only)
+	@echo "🔄 Generating CRDs and deepcopy code..."
+	@$(MAKE) manifests generate
+	@echo "✅ Development artifacts generated"
+
+.PHONY: generate-all
+generate-all: ## Generate all artifacts (CRDs + manifests + Helm chart)
+	@echo "🔄 Generating all artifacts..."
+	@$(MAKE) manifests generate
+	@echo "📦 Building installer manifests..."
+	@$(MAKE) build-installer
+	@echo "⎈  Generating Helm chart..."
+	@$(MAKE) helm-chart
+	@echo "✅ All artifacts generated"
+
+.PHONY: prepare-release
+prepare-release: ## Prepare manifests for release (must be on a release tag)
+	@if ! git describe --exact-match --tags HEAD 2>/dev/null; then \
+		echo "❌ Error: Not on a release tag. Create and checkout tag first."; \
+		echo "   Example: git tag v1.2.3 && git checkout v1.2.3"; \
+		exit 1; \
+	fi
+	@TAG=$$(git describe --exact-match --tags HEAD); \
+	echo "📦 Preparing release manifests for $$TAG..."; \
+	echo ""; \
+	echo "1️⃣  Generating CRDs and code..."; \
+	$(MAKE) manifests generate; \
+	echo ""; \
+	echo "2️⃣  Building installer with image tag $$TAG..."; \
+	$(MAKE) build-installer IMG="${REGISTRY}/${IMAGE_NAME}:$$TAG"; \
+	echo ""; \
+	echo "3️⃣  Generating Helm chart..."; \
+	$(MAKE) helm-chart; \
+	echo ""; \
+	echo "4️⃣  Updating Helm chart versions..."; \
+	VERSION="$${TAG#v}" $(MAKE) helm-chart-version VERSION="$${TAG#v}" APP_VERSION="$$TAG"; \
+	echo ""; \
+	echo "5️⃣  Copying install.yaml to deploy/..."; \
+	mkdir -p deploy; \
+	cp dist/install.yaml deploy/install.yaml; \
+	echo ""; \
+	echo "6️⃣  Staging files for commit..."; \
+	git add config/crd/bases/ api/; \
+	git add -f deploy/install.yaml deploy/README.md 2>/dev/null || true; \
+	git add -f dist/chart/ 2>/dev/null || true; \
+	echo ""; \
+	echo "✅ Release manifests prepared for $$TAG"; \
+	echo ""; \
+	echo "Next steps:"; \
+	echo "  1. Review changes: git status && git diff --cached"; \
+	echo "  2. Commit: git commit -m 'chore: prepare manifests for $$TAG'"; \
+	echo "  3. Push tag: git push origin $$TAG"; \
+	echo "  4. Create release via GitHub UI"
+	sed -i.bak "s/^appVersion:.*/appVersion: \"$(APP_VERSION)\"/" dist/chart/Chart.yaml
+	rm -f dist/chart/Chart.yaml.bak
+	@echo "✅ Updated chart version to $(VERSION) and appVersion to $(APP_VERSION)"
+
 ##@ Deployment
 
 ifndef ignore-not-found

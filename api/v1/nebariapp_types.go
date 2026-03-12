@@ -68,9 +68,21 @@ type ServiceReference struct {
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=65535
 	Port int32 `json:"port"`
+
+	// Namespace is the namespace of the Service (if different from the NebariApp).
+	// If not specified, defaults to the NebariApp's namespace.
+	// This allows referencing services in other namespaces for centralized service architectures.
+	// Note: The operator has cluster-scoped permissions to read Services across all namespaces.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	Namespace string `json:"namespace,omitempty"`
 }
 
 // RoutingConfig configures routing behavior for the application.
+// To disable operator-managed routing entirely (e.g., for externally managed Ingress/HTTPRoute),
+// omit the routing field from the NebariApp spec. The operator will skip HTTPRoute creation
+// and cleanup any previously created HTTPRoutes. When routing is nil, TLS is also considered
+// disabled, and the operator will not provision certificates or Gateway listeners.
 type RoutingConfig struct {
 	// Routes defines path-based routing rules for the application.
 	// If not specified, all traffic to the hostname will be routed to the service.
@@ -203,6 +215,18 @@ type AuthConfig struct {
 	// +optional
 	IssuerURL string `json:"issuerURL,omitempty"`
 
+	// SPAClient configures a public OIDC client for browser-based authentication.
+	// When enabled, the operator provisions a separate public client for Single-Page
+	// Applications that use PKCE flows (e.g., React apps with keycloak-js).
+	// This is distinct from the confidential client used for server-side auth (oauth2-proxy).
+	// The public client is configured with:
+	//   - publicClient: true (no client secret, safe for browser)
+	//   - Redirect URIs: https://<hostname>/* and https://<hostname>
+	//   - PKCE enforcement (S256)
+	// Only supported for provider="keycloak".
+	// +optional
+	SPAClient *SPAClientConfig `json:"spaClient,omitempty"`
+
 	// KeycloakConfig provides Keycloak-specific configuration for fine-grained control
 	// over realm resources like groups, client scopes, and protocol mappers.
 	// Only used when provider="keycloak" and provisionClient=true; silently ignored
@@ -261,6 +285,29 @@ type KeycloakProtocolMapperConfig struct {
 	// Example for group-membership mapper: {"claim.name": "groups", "full.path": "false"}
 	// +optional
 	Config map[string]string `json:"config,omitempty"`
+}
+
+// SPAClientConfig specifies configuration for provisioning a public OIDC client
+// for Single-Page Applications (SPA) that use browser-based authentication with PKCE.
+// This client is separate from the confidential client used by oauth2-proxy or similar
+// server-side auth handlers.
+type SPAClientConfig struct {
+	// Enabled determines whether a public OIDC client should be provisioned for SPA use.
+	// When true, the operator creates a second Keycloak client configured as:
+	//   - publicClient: true (no client secret, safe for browser)
+	//   - Redirect URIs: https://<hostname>/* and https://<hostname>
+	//   - PKCE enforcement with S256 code challenge method
+	// The public client ID will be written to a ConfigMap or the OIDC secret for
+	// runtime consumption by the frontend application.
+	// +kubebuilder:default=false
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// ClientID optionally overrides the generated client ID for the SPA client.
+	// If not specified, defaults to: <namespace>-<name>-spa
+	// This allows custom client naming for organizational conventions.
+	// +optional
+	ClientID string `json:"clientId,omitempty"`
 }
 
 // LandingPageConfig defines how a service appears on the Nebari landing page.
@@ -322,6 +369,13 @@ type HealthCheckConfig struct {
 	// +kubebuilder:default=/health
 	// +optional
 	Path string `json:"path,omitempty"`
+
+	// Port is the port number to use for health checks.
+	// If not specified, defaults to the service port defined in spec.service.port.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	// +optional
+	Port *int32 `json:"port,omitempty"`
 
 	// IntervalSeconds is how often to perform health checks (in seconds).
 	// +kubebuilder:default=30
@@ -492,6 +546,9 @@ const (
 
 	// ReasonCertificateNotReady indicates the cert-manager Certificate is not ready
 	ReasonCertificateNotReady = "CertificateNotReady"
+
+	// ReasonGatewayListenerConflict indicates the Gateway listener conflicts with another NebariApp
+	ReasonGatewayListenerConflict = "GatewayListenerConflict"
 )
 
 // Event reasons for recording Kubernetes events
@@ -558,6 +615,9 @@ const (
 
 	// EventReasonGatewayListenerRemoved is used when a per-app listener is removed from the Gateway
 	EventReasonGatewayListenerRemoved = "GatewayListenerRemoved"
+
+	// EventReasonGatewayListenerConflict is used when a listener conflicts with another app
+	EventReasonGatewayListenerConflict = "GatewayListenerConflict"
 )
 
 // +kubebuilder:object:root=true

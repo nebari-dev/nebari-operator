@@ -82,14 +82,20 @@ const (
 	// DefaultKeycloakServicePort is the HTTP port for Keycloak service
 	DefaultKeycloakServicePort = 8080
 
-	// DefaultKeycloakContextPath is the HTTP context path for Keycloak
-	DefaultKeycloakContextPath = "/auth"
+	// DefaultKeycloakContextPath is the HTTP context path for Keycloak.
+	// Empty string means root path, which is the default for Keycloak 26+.
+	// Set KEYCLOAK_ISSUER_CONTEXT_PATH="/auth" for older Keycloak versions.
+	DefaultKeycloakContextPath = ""
 )
 
 // Secret keys
 const (
 	// ClientSecretKey is the key name for OIDC client secret data
 	ClientSecretKey = "client-secret"
+
+	// SPAClientIDKey is the key name for SPA client ID data
+	// Used to store the public client ID for browser-based SPAs
+	SPAClientIDKey = "spa-client-id"
 )
 
 // Finalizers

@@ -120,15 +120,21 @@ func ValidateNamespaceOptIn(ctx context.Context, c client.Client, nebariApp *app
 func ValidateService(ctx context.Context, c client.Client, nebariApp *appsv1.NebariApp) error {
 	service := &corev1.Service{}
 
+	// Use specified service namespace, or default to NebariApp's namespace
+	serviceNamespace := nebariApp.Spec.Service.Namespace
+	if serviceNamespace == "" {
+		serviceNamespace = nebariApp.Namespace
+	}
+
 	serviceKey := client.ObjectKey{
 		Name:      nebariApp.Spec.Service.Name,
-		Namespace: nebariApp.Namespace,
+		Namespace: serviceNamespace,
 	}
 
 	if err := c.Get(ctx, serviceKey, service); err != nil {
 		if errors.IsNotFound(err) {
 			return fmt.Errorf("service %s not found in namespace %s",
-				nebariApp.Spec.Service.Name, nebariApp.Namespace)
+				nebariApp.Spec.Service.Name, serviceNamespace)
 		}
 		return fmt.Errorf("failed to get service: %w", err)
 	}

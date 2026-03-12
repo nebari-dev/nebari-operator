@@ -193,7 +193,10 @@ spec:
 **Hostname Requirements:**
 - Must be a subdomain of the wildcard certificate (`*.nebari.local`)
 - Must be a valid DNS name
-- Must be unique across all NebariApp resources
+- Must be unique across all NebariApp resources **when using per-app TLS** (`routing.tls.enabled: true`)
+- Can be shared by multiple apps with different path prefixes when using shared wildcard listener (`routing.tls.enabled: false`)
+
+**Note:** If multiple NebariApps share the same hostname with per-app TLS enabled, you'll encounter a `GatewayListenerConflict`. See [troubleshooting guide](../troubleshooting.md#gateway-listener-conflicts) for resolution.
 
 ### Path-Based Routing
 
@@ -350,6 +353,65 @@ backendRefs:
 
 ## TLS Configuration
 
+### Overview: Shared vs Per-App TLS Listeners
+
+The Gateway API allows HTTPRoutes to reference Gateway listeners in two ways. Understanding this distinction is critical for avoiding conflicts when multiple NebariApps share the same hostname.
+
+#### Shared Wildcard Listener (Recommended for Multi-App Hostnames)
+
+**Configuration:** `routing.tls.enabled: false`
+
+**How it works:**
+- All HTTPRoutes reference the Gateway's shared HTTPS listener (configured with wildcard cert `*.nebari.local`)
+- Multiple apps can share the same hostname with different path prefixes
+- Gateway routes traffic based on hostname + path matching
+- TLS termination still happens at the Gateway level
+
+**Use when:**
+- Multiple applications share the same hostname (e.g., frontend at `/`, API at `/api/`)
+- You have complex microservice routing under one domain
+- You want centralized TLS certificate management
+
+**Example:**
+```yaml
+# App 1: Frontend
+spec:
+  hostname: myapp.example.com
+  routing:
+    routes:
+      - pathPrefix: /
+    tls:
+      enabled: false  # Use shared wildcard listener
+---
+# App 2: API (same hostname)
+spec:
+  hostname: myapp.example.com  # Same hostname as frontend
+  routing:
+    routes:
+      - pathPrefix: /api/
+    tls:
+      enabled: false  # Use shared wildcard listener
+```
+
+**Note:** Setting `tls.enabled: false` does NOT disable HTTPS encryption. Traffic is still encrypted via the Gateway's shared HTTPS listener.
+
+#### Per-App TLS Listener (Default for Unique Hostnames)
+
+**Configuration:** `routing.tls.enabled: true` (default)
+
+**How it works:**
+- Each NebariApp creates a dedicated HTTPS listener on the Gateway
+- Listener is specific to the app's hostname (e.g., `myapp.example.com`)
+- Gateway API enforces uniqueness: port + protocol + hostname must be unique
+- Only ONE app can use a specific hostname with this mode
+
+**Use when:**
+- Each application has a unique hostname (e.g., `app1.example.com`, `app2.example.com`)
+- You want listener-level isolation for each application
+- Standard single-app-per-hostname deployments
+
+**Limitation:** If two NebariApps try to use the same hostname with `tls.enabled: true`, the operator will detect a `GatewayListenerConflict` error and set `TLSReady=False`.
+
 ### TLS Termination (Default)
 
 By default, NebariApps use TLS termination with the wildcard certificate provisioned by the foundational infrastructure:
@@ -389,9 +451,11 @@ spec:
 - **NebariApp**: Only controls whether HTTPRoute references HTTPS (`sectionName: https`) or HTTP (`sectionName: http`)
   listeners via the `routing.tls.enabled` field
 
-### Disable TLS (HTTP Only)
+### Disable TLS (HTTP Only - Uncommon)
 
-To disable TLS termination and use HTTP only:
+**Important:** This section describes disabling HTTPS entirely (using plain HTTP on port 80). This is different from the shared wildcard listener approach described above, which still provides HTTPS encryption.
+
+To disable TLS termination and use HTTP only (port 80 with no encryption):
 
 ```yaml
 apiVersion: reconcilers.nebari.dev/v1
@@ -588,6 +652,38 @@ User Request: https://jupyter.nebari.local/
 1. Gateway exists: `kubectl get gateway nebari-gateway -n envoy-gateway-system`
 2. NebariApp events: `kubectl describe nebariapp <name> -n <namespace>`
 3. Controller logs for validation errors
+
+### Gateway Listener Conflicts
+
+**Symptom:** TLSReady condition shows `GatewayListenerConflict` reason, NebariApp stuck in not-ready state.
+
+**Error message:**
+```
+TLSReady=False, Reason=GatewayListenerConflict
+Multiple NebariApps are trying to create HTTPS listeners for the same hostname.
+Gateway API requires port + protocol + hostname combinations to be unique.
+```
+
+**Root cause:** Two or more NebariApps share the same hostname with per-app TLS enabled (`routing.tls.enabled: true`), violating Gateway API's listener uniqueness constraint.
+
+**Solution:** Use shared wildcard listener for all apps sharing the hostname:
+
+```yaml
+routing:
+  tls:
+    enabled: false  # Use Gateway's shared HTTPS listener
+```
+
+**Check for conflicts:**
+```bash
+# Find all NebariApps using the same hostname
+kubectl get nebariapp -A -o jsonpath='{range .items[*]}{.metadata.namespace}{"\t"}{.metadata.name}{"\t"}{.spec.hostname}{"\n"}{end}' | grep your-hostname
+
+# Check Gateway listeners
+kubectl get gateway nebari-gateway -n envoy-gateway-system -o yaml
+```
+
+**See also:** [Troubleshooting Guide - Gateway Listener Conflicts](../troubleshooting.md#gateway-listener-conflicts)
 
 ### Hostname Not Resolving
 

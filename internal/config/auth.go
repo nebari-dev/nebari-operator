@@ -160,8 +160,9 @@ func (c *KeycloakConfig) LoadKeycloakCredentials(ctx context.Context, k8sClient 
 }
 
 // getEnv gets an environment variable or returns a default value.
+// Uses os.LookupEnv so that setting an env var to empty string is a valid override.
 func getEnv(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
+	if value, ok := os.LookupEnv(key); ok {
 		return value
 	}
 	return defaultValue
