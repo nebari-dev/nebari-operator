@@ -40,7 +40,19 @@ func TestKeycloakProvider_GetIssuerURL(t *testing.T) {
 		expectedURL string
 	}{
 		{
-			name: "Default configuration",
+			name: "Default configuration (Keycloak 26+ root context path)",
+			kcConfig: config.KeycloakConfig{
+				URL:                    "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080",
+				Realm:                  "nebari",
+				IssuerServiceName:      "keycloak-keycloakx-http",
+				IssuerServiceNamespace: "keycloak",
+				IssuerServicePort:      8080,
+				IssuerContextPath:      "",
+			},
+			expectedURL: "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/nebari",
+		},
+		{
+			name: "Legacy /auth context path",
 			kcConfig: config.KeycloakConfig{
 				URL:                    "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/auth",
 				Realm:                  "nebari",
@@ -52,7 +64,7 @@ func TestKeycloakProvider_GetIssuerURL(t *testing.T) {
 			expectedURL: "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/auth/realms/nebari",
 		},
 		{
-			name: "Custom realm",
+			name: "Custom realm with /auth context path",
 			kcConfig: config.KeycloakConfig{
 				URL:                    "https://keycloak.example.com",
 				Realm:                  "custom-realm",
