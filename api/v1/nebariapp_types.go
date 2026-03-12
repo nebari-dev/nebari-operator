@@ -370,6 +370,13 @@ type HealthCheckConfig struct {
 	// +optional
 	Path string `json:"path,omitempty"`
 
+	// Port is the port number to use for health checks.
+	// If not specified, defaults to the service port defined in spec.service.port.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	// +optional
+	Port *int32 `json:"port,omitempty"`
+
 	// IntervalSeconds is how often to perform health checks (in seconds).
 	// +kubebuilder:default=30
 	// +kubebuilder:validation:Minimum=10
