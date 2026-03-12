@@ -287,6 +287,14 @@ spec:
                                                     Path is the HTTP path to check for health status.
                                                     Common paths: /health, /healthz, /api/health
                                                 type: string
+                                            port:
+                                                description: |-
+                                                    Port is the port number to use for health checks.
+                                                    If not specified, defaults to the service port defined in spec.service.port.
+                                                format: int32
+                                                maximum: 65535
+                                                minimum: 1
+                                                type: integer
                                             timeoutSeconds:
                                                 default: 5
                                                 description: TimeoutSeconds is the request timeout for health checks (in seconds).
@@ -413,6 +421,14 @@ spec:
                                 properties:
                                     name:
                                         description: Name is the name of the Kubernetes Service in the same namespace.
+                                        minLength: 1
+                                        type: string
+                                    namespace:
+                                        description: |-
+                                            Namespace is the namespace of the Service (if different from the NebariApp).
+                                            If not specified, defaults to the NebariApp's namespace.
+                                            This allows referencing services in other namespaces for centralized service architectures.
+                                            Note: The operator has cluster-scoped permissions to read Services across all namespaces.
                                         minLength: 1
                                         type: string
                                     port:
