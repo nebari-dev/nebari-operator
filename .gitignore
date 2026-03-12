@@ -37,9 +37,11 @@ bin
 # Release artifacts
 dist/
 
-# But keep the helm chart in git
-!dist/chart/
-!dist/chart/**
+# Deploy directory (committed only on release tags)
+/deploy/
+# But keep install.yaml when it exists (for releases)
+!/deploy/install.yaml
+!/deploy/README.md
 
 Dockerfile.cross
 
