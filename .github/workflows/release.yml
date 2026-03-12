@@ -303,4 +303,4 @@ jobs:
         with:
           chart-path: dist/chart
           chart-name: nebari-operator
-          token: ${{ secrets.NEBARI_BOT_TOKEN }}
+          token: ${{ secrets.NEBARI_HELM_REPO_TOKEN }}
