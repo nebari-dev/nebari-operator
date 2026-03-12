@@ -97,9 +97,18 @@ gh release create v1.0.0 \
    - **tests**: Runs unit tests and linter
    - **build-manifests**: Generates the install.yaml
    - **docker-build-push**: Builds and pushes Docker images
-   - **publish-helm-chart**: Packages and publishes the Helm chart
+### Step 4: Monitor the Release Workflow
+
+1. Go to the "Actions" tab in your GitHub repository
+2. Find the "Release" workflow run
+3. Monitor the progress of all jobs:
+   - **tests**: Runs unit tests and linter
+   - **build-manifests**: Generates and uploads install.yaml
+   - **docker-build-push**: Builds Docker images for each architecture
+   - **merge-manifest**: Creates multi-arch manifest and pushes to registry
    - **goreleaser**: Builds Go binaries for multiple platforms
-   - **upload-manifests**: Attaches manifests to the release
+   - **publish-helm-chart**: Packages and uploads Helm chart to release
+   - **sync-helm-repository**: Syncs chart to helm-repository (if enabled)
 
 The workflow typically takes 5-10 minutes to complete.
 
@@ -131,14 +140,20 @@ Platform-specific binaries will be attached to the GitHub Release:
 ### 3. Kubernetes Manifests (GitHub Release)
 
 A consolidated installation file:
-- `install.yaml` - Contains all CRDs, RBAC, and deployment manifests Helm Chart (GitHub Release)
+- `install.yaml` - Contains all CRDs, RBAC, and deployment manifests
+
+### 4. Helm Chart (GitHub Release)
 
 The Helm chart package:
 - `nebari-operator-<version>.tgz` - Helm chart for deploying the operator
 
-### 5.
-### 4. Checksums
-Using Helm (Recommended)
+### 5. Checksums
+
+- `checksums.txt` - SHA256 checksums for all binaries
+
+## Using Released Artifacts
+
+### Using Helm (Recommended)
 
 Install the operator using the Helm chart:
 
@@ -276,21 +291,8 @@ If you need to rollback a release:
 
 ## Manual Release (Emergency)
 
-If the automated workflow fails and you need to release manually: Package Helm Chart
+If the automated workflow fails and you need to release manually:
 
-```bash
-export VERSION=1.0.0  # Note: no 'v' prefix for Helm chart version
-
-# Update Chart.yaml versions
-### 5. Upload to GitHub
-
-Manually upload the files to the GitHub Release:
-- Binaries from `dist/`
-- `dist/install.yaml`
-- `dist/nebari-operator-<version>.tgz`rt --destination dist/
-```
-
-### 4.
 ### 1. Build and Push Docker Image
 
 ```bash
@@ -300,7 +302,7 @@ export IMG=quay.io/nebari/nebari-operator:${VERSION}
 # Login to Quay.io
 docker login quay.io
 
-# Build and push
+# Build multi-arch image
 make docker-buildx IMG=${IMG}
 
 # Also tag as latest
@@ -313,22 +315,35 @@ docker push quay.io/nebari/nebari-operator:latest
 ```bash
 export VERSION=v1.0.0
 export IMG=quay.io/nebari/nebari-operator:${VERSION}
+
+# Generate install.yaml with correct image tag
 make build-installer IMG=${IMG}
 ```
 
-**Note**: The `IMG` parameter is required to update image references in the generated manifests.
-
-### 3. Build Binaries
+### 3. Package Helm Chart
 
 ```bash
+export VERSION=1.0.0  # Note: no 'v' prefix for Helm chart version
+
+# Generate and package chart
+make helm-chart
+make helm-chart-version VERSION=${VERSION} APP_VERSION=v${VERSION}
+make helm-package
+```
+
+### 4. Build Go Binaries
+
+```bash
+# Requires Go and goreleaser installed
 goreleaser release --clean
 ```
 
-### 4. Upload to GitHub
+### 5. Upload to GitHub Release
 
 Manually upload the files to the GitHub Release:
-- Binaries from `dist/`
+- Go binaries from `dist/`
 - `dist/install.yaml`
+- `dist/nebari-operator-<version>.tgz`
 - `checksums.txt`
 
 ## Best Practices

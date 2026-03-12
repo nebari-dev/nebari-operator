@@ -199,43 +199,26 @@ generate-all: ## Generate all artifacts (CRDs + manifests + Helm chart)
 	@echo "✅ All artifacts generated"
 
 .PHONY: prepare-release
-prepare-release: ## Prepare manifests for release (must be on a release tag)
-	@if ! git describe --exact-match --tags HEAD 2>/dev/null; then \
-		echo "❌ Error: Not on a release tag. Create and checkout tag first."; \
-		echo "   Example: git tag v1.2.3 && git checkout v1.2.3"; \
-		exit 1; \
-	fi
-	@TAG=$$(git describe --exact-match --tags HEAD); \
-	echo "📦 Preparing release manifests for $$TAG..."; \
-	echo ""; \
-	echo "1️⃣  Generating CRDs and code..."; \
-	$(MAKE) manifests generate; \
-	echo ""; \
-	echo "2️⃣  Building installer with image tag $$TAG..."; \
-	$(MAKE) build-installer IMG="${REGISTRY}/${IMAGE_NAME}:$$TAG"; \
-	echo ""; \
-	echo "3️⃣  Generating Helm chart..."; \
-	$(MAKE) helm-chart; \
-	echo ""; \
-	echo "4️⃣  Updating Helm chart versions..."; \
-	VERSION="$${TAG#v}" $(MAKE) helm-chart-version VERSION="$${TAG#v}" APP_VERSION="$$TAG"; \
-	echo ""; \
-	echo "5️⃣  Copying install.yaml to deploy/..."; \
-	mkdir -p deploy; \
-	cp dist/install.yaml deploy/install.yaml; \
-	echo ""; \
-	echo "6️⃣  Staging files for commit..."; \
-	git add config/crd/bases/ api/; \
-	git add -f deploy/install.yaml deploy/README.md 2>/dev/null || true; \
-	git add -f dist/chart/ 2>/dev/null || true; \
-	echo ""; \
-	echo "✅ Release manifests prepared for $$TAG"; \
-	echo ""; \
-	echo "Next steps:"; \
-	echo "  1. Review changes: git status && git diff --cached"; \
-	echo "  2. Commit: git commit -m 'chore: prepare manifests for $$TAG'"; \
-	echo "  3. Push tag: git push origin $$TAG"; \
-	echo "  4. Create release via GitHub UI"
+prepare-release: ## [DEPRECATED] Use automated GitHub Actions workflow instead
+	@echo "⚠️  WARNING: This target is deprecated!"
+	@echo ""
+	@echo "The release process is now fully automated via GitHub Actions."
+	@echo "Simply create and push a tag, then create a GitHub release."
+	@echo ""
+	@echo "Recommended workflow:"
+	@echo "  1. git tag v1.2.3"
+	@echo "  2. git push origin v1.2.3"
+	@echo "  3. gh release create v1.2.3 --generate-notes"
+	@echo ""
+	@echo "The CI will automatically:"
+	@echo "  • Generate CRDs and manifests"
+	@echo "  • Build and push Docker images"
+	@echo "  • Package and publish Helm chart"
+	@echo "  • Upload install.yaml to the release"
+	@echo ""
+	@echo "See docs/maintainers/release-process.md for details"
+	@echo ""
+	@exit 1
 	sed -i.bak "s/^appVersion:.*/appVersion: \"$(APP_VERSION)\"/" dist/chart/Chart.yaml
 	rm -f dist/chart/Chart.yaml.bak
 	@echo "✅ Updated chart version to $(VERSION) and appVersion to $(APP_VERSION)"
