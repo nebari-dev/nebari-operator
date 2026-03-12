@@ -82,8 +82,10 @@ const (
 	// DefaultKeycloakServicePort is the HTTP port for Keycloak service
 	DefaultKeycloakServicePort = 8080
 
-	// DefaultKeycloakContextPath is the HTTP context path for Keycloak
-	DefaultKeycloakContextPath = "/auth"
+	// DefaultKeycloakContextPath is the HTTP context path for Keycloak.
+	// Empty string means root path, which is the default for Keycloak 26+.
+	// Set KEYCLOAK_ISSUER_CONTEXT_PATH="/auth" for older Keycloak versions.
+	DefaultKeycloakContextPath = ""
 )
 
 // Secret keys

@@ -40,14 +40,14 @@ func TestLoadAuthConfig(t *testing.T) {
 			expected: AuthConfig{
 				Keycloak: KeycloakConfig{
 					Enabled:                true,
-					URL:                    "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/auth",
+					URL:                    "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080",
 					Realm:                  "nebari",
 					AdminSecretName:        "nebari-realm-admin-credentials",
 					AdminSecretNamespace:   "keycloak",
 					IssuerServiceName:      "keycloak-keycloakx-http",
 					IssuerServiceNamespace: "keycloak",
 					IssuerServicePort:      8080,
-					IssuerContextPath:      "/auth",
+					IssuerContextPath:      "",
 					APITimeout:             30 * time.Second,
 				},
 			},
@@ -71,7 +71,7 @@ func TestLoadAuthConfig(t *testing.T) {
 					IssuerServiceName:      "keycloak-keycloakx-http",
 					IssuerServiceNamespace: "keycloak",
 					IssuerServicePort:      8080,
-					IssuerContextPath:      "/auth",
+					IssuerContextPath:      "",
 					APITimeout:             30 * time.Second,
 				},
 			},
@@ -85,7 +85,7 @@ func TestLoadAuthConfig(t *testing.T) {
 			expected: AuthConfig{
 				Keycloak: KeycloakConfig{
 					Enabled:                true,
-					URL:                    "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/auth",
+					URL:                    "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080",
 					Realm:                  "nebari",
 					AdminSecretName:        "nebari-realm-admin-credentials",
 					AdminSecretNamespace:   "keycloak",
@@ -94,7 +94,7 @@ func TestLoadAuthConfig(t *testing.T) {
 					IssuerServiceName:      "keycloak-keycloakx-http",
 					IssuerServiceNamespace: "keycloak",
 					IssuerServicePort:      8080,
-					IssuerContextPath:      "/auth",
+					IssuerContextPath:      "",
 					APITimeout:             30 * time.Second,
 				},
 			},
@@ -110,7 +110,7 @@ func TestLoadAuthConfig(t *testing.T) {
 			expected: AuthConfig{
 				Keycloak: KeycloakConfig{
 					Enabled:                true,
-					URL:                    "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/auth",
+					URL:                    "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080",
 					Realm:                  "nebari",
 					AdminSecretName:        "nebari-realm-admin-credentials",
 					AdminSecretNamespace:   "keycloak",
@@ -130,14 +130,14 @@ func TestLoadAuthConfig(t *testing.T) {
 			expected: AuthConfig{
 				Keycloak: KeycloakConfig{
 					Enabled:                true,
-					URL:                    "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/auth",
+					URL:                    "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080",
 					Realm:                  "nebari",
 					AdminSecretName:        "nebari-realm-admin-credentials",
 					AdminSecretNamespace:   "keycloak",
 					IssuerServiceName:      "keycloak-keycloakx-http",
 					IssuerServiceNamespace: "keycloak",
 					IssuerServicePort:      8080,
-					IssuerContextPath:      "/auth",
+					IssuerContextPath:      "",
 					APITimeout:             45 * time.Second,
 				},
 			},
@@ -427,4 +427,69 @@ func TestLoadConfig(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestGetEnv(t *testing.T) {
+	tests := []struct {
+		name         string
+		key          string
+		defaultValue string
+		envValue     *string // nil means unset, pointer to string means set (even if empty)
+		expected     string
+	}{
+		{
+			name:         "Unset env var returns default",
+			key:          "TEST_GETENV_UNSET",
+			defaultValue: "default-val",
+			envValue:     nil,
+			expected:     "default-val",
+		},
+		{
+			name:         "Non-empty env var overrides default",
+			key:          "TEST_GETENV_SET",
+			defaultValue: "default-val",
+			envValue:     strPtr("custom-val"),
+			expected:     "custom-val",
+		},
+		{
+			name:         "Empty string env var overrides non-empty default",
+			key:          "TEST_GETENV_EMPTY",
+			defaultValue: "/auth",
+			envValue:     strPtr(""),
+			expected:     "",
+		},
+		{
+			name:         "Empty string env var overrides empty default",
+			key:          "TEST_GETENV_EMPTY_BOTH",
+			defaultValue: "",
+			envValue:     strPtr(""),
+			expected:     "",
+		},
+		{
+			name:         "Unset env var with empty default returns empty",
+			key:          "TEST_GETENV_UNSET_EMPTY_DEFAULT",
+			defaultValue: "",
+			envValue:     nil,
+			expected:     "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_ = os.Unsetenv(tt.key)
+			if tt.envValue != nil {
+				_ = os.Setenv(tt.key, *tt.envValue)
+			}
+			defer func() { _ = os.Unsetenv(tt.key) }()
+
+			result := getEnv(tt.key, tt.defaultValue)
+			if result != tt.expected {
+				t.Errorf("getEnv(%q, %q): expected %q, got %q", tt.key, tt.defaultValue, tt.expected, result)
+			}
+		})
+	}
+}
+
+func strPtr(s string) *string {
+	return &s
 }
