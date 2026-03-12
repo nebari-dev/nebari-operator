@@ -404,6 +404,8 @@ Represents the current state of the NebariApp resource.
 - `ServiceNotFound`: The referenced service doesn't exist
 - `SecretNotFound`: The referenced secret doesn't exist
 - `GatewayNotFound`: The target gateway doesn't exist
+- `CertificateNotReady`: TLS certificate is not yet ready (for TLSReady condition)
+- `GatewayListenerConflict`: Multiple NebariApps share hostname with per-app TLS (for TLSReady condition)
 
 ### hostname
 
@@ -667,4 +669,50 @@ When `auth.enabled: true`:
 - An OIDC provider must be available (Keycloak or generic-oidc)
 - For Keycloak with `provisionClient: true`: Operator needs admin credentials
 - For generic-oidc or `provisionClient: false`: Client secret must exist
+
+### Multiple Apps Sharing a Hostname
+
+**Important:** When deploying multiple NebariApps that share the same hostname (e.g., frontend and API at different paths), you must use the shared wildcard TLS listener to avoid Gateway listener conflicts.
+
+**Problem:** With per-app TLS enabled (the default), each NebariApp tries to create its own HTTPS listener for the hostname. Gateway API requires that port + protocol + hostname combinations be unique, causing a `GatewayListenerConflict` error.
+
+**Solution:** Set `routing.tls.enabled: false` on all apps sharing the hostname:
+
+```yaml
+# Frontend app
+apiVersion: reconcilers.nebari.dev/v1
+kind: NebariApp
+metadata:
+  name: myapp-frontend
+spec:
+  hostname: myapp.example.com  # Shared hostname
+  service:
+    name: frontend-service
+    port: 80
+  routing:
+    routes:
+      - pathPrefix: /
+    tls:
+      enabled: false  # Use shared wildcard listener
+---
+# API app
+apiVersion: reconcilers.nebari.dev/v1
+kind: NebariApp
+metadata:
+  name: myapp-api
+spec:
+  hostname: myapp.example.com  # Same hostname
+  service:
+    name: api-service
+    port: 8080
+  routing:
+    routes:
+      - pathPrefix: /api/
+    tls:
+      enabled: false  # Use shared wildcard listener
+```
+
+**Note:** Setting `tls.enabled: false` does NOT disable HTTPS. It tells the HTTPRoute to use the Gateway's shared HTTPS listener (with wildcard certificate) instead of creating a per-app listener. Traffic is still encrypted via TLS.
+
+For more details, see the [troubleshooting guide](troubleshooting.md#gateway-listener-conflicts).
 - Client secret must contain `client-id` and `client-secret` keys

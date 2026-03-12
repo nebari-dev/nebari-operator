@@ -546,6 +546,9 @@ const (
 
 	// ReasonCertificateNotReady indicates the cert-manager Certificate is not ready
 	ReasonCertificateNotReady = "CertificateNotReady"
+
+	// ReasonGatewayListenerConflict indicates the Gateway listener conflicts with another NebariApp
+	ReasonGatewayListenerConflict = "GatewayListenerConflict"
 )
 
 // Event reasons for recording Kubernetes events
@@ -612,6 +615,9 @@ const (
 
 	// EventReasonGatewayListenerRemoved is used when a per-app listener is removed from the Gateway
 	EventReasonGatewayListenerRemoved = "GatewayListenerRemoved"
+
+	// EventReasonGatewayListenerConflict is used when a listener conflicts with another app
+	EventReasonGatewayListenerConflict = "GatewayListenerConflict"
 )
 
 // +kubebuilder:object:root=true

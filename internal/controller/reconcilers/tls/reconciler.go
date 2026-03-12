@@ -111,8 +111,17 @@ func (r *TLSReconciler) ReconcileTLS(ctx context.Context, nebariApp *appsv1.Neba
 
 	// Step 4: Patch Gateway to add per-app HTTPS listener
 	if err := r.reconcileGatewayListener(ctx, nebariApp); err != nil {
-		conditions.SetCondition(nebariApp, appsv1.ConditionTypeTLSReady, metav1.ConditionFalse,
-			"GatewayListenerFailed", fmt.Sprintf("Failed to reconcile Gateway listener: %v", err))
+		// Check if this is a listener conflict error
+		if containsListenerConflict(err) {
+			conditions.SetCondition(nebariApp, appsv1.ConditionTypeTLSReady, metav1.ConditionFalse,
+				appsv1.ReasonGatewayListenerConflict,
+				fmt.Sprintf("Gateway listener conflict: Multiple NebariApps cannot share hostname %s with per-app TLS. "+
+					"Set routing.tls.enabled=false to use shared wildcard listener, or use unique hostnames.",
+					nebariApp.Spec.Hostname))
+		} else {
+			conditions.SetCondition(nebariApp, appsv1.ConditionTypeTLSReady, metav1.ConditionFalse,
+				"GatewayListenerFailed", fmt.Sprintf("Failed to reconcile Gateway listener: %v", err))
+		}
 		return nil, err
 	}
 
@@ -288,6 +297,15 @@ func (r *TLSReconciler) reconcileGatewayListener(ctx context.Context, nebariApp 
 	}
 
 	if err := r.Client.Update(ctx, gateway); err != nil {
+		// Detect Gateway listener conflicts (duplicate port+protocol+hostname)
+		if apierrors.IsInvalid(err) && containsListenerConflict(err) {
+			msg := fmt.Sprintf("Gateway listener conflict detected. Multiple NebariApps cannot use the same hostname (%s) with per-app TLS listeners. "+
+				"Solutions: 1) Set routing.tls.enabled=false on all apps sharing this hostname to use the shared wildcard HTTPS listener, "+
+				"or 2) Use different hostnames for each app. See https://gateway-api.sigs.k8s.io for Gateway API constraints.",
+				nebariApp.Spec.Hostname)
+			r.Recorder.Event(nebariApp, corev1.EventTypeWarning, appsv1.EventReasonGatewayListenerConflict, msg)
+			return fmt.Errorf("%s: %w", msg, err)
+		}
 		return fmt.Errorf("failed to update Gateway listener: %w", err)
 	}
 
@@ -296,6 +314,51 @@ func (r *TLSReconciler) reconcileGatewayListener(ctx context.Context, nebariApp 
 		fmt.Sprintf("Applied HTTPS listener %s to Gateway %s", listenerName, gatewayName))
 
 	return nil
+}
+
+// containsListenerConflict checks if the error message indicates a Gateway listener conflict.
+// Gateway API validates that port + protocol + hostname combinations are unique.
+func containsListenerConflict(err error) bool {
+	if err == nil {
+		return false
+	}
+	errMsg := err.Error()
+	// Check for the specific validation error from Gateway API
+	return contains(errMsg, "Combination of port, protocol and hostname must be unique") ||
+		contains(errMsg, "listener") && contains(errMsg, "unique")
+}
+
+// contains is a case-insensitive substring check.
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
+		containsHelper(s, substr))
+}
+
+func containsHelper(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if matchesAt(s, substr, i) {
+			return true
+		}
+	}
+	return false
+}
+
+func matchesAt(s, substr string, offset int) bool {
+	for i := 0; i < len(substr); i++ {
+		c1 := s[offset+i]
+		c2 := substr[i]
+		if c1 != c2 && toLower(c1) != toLower(c2) {
+			return false
+		}
+	}
+	return true
+}
+
+func toLower(c byte) byte {
+	if 'A' <= c && c <= 'Z' {
+		return c + ('a' - 'A')
+	}
+	return c
 }
 
 // isCertificateReady checks whether the cert-manager Certificate has a Ready=True condition.
