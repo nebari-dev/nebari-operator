@@ -182,19 +182,24 @@ make install  # Updates CRDs in your current cluster
 make run      # Runs operator locally
 ```
 
-When preparing a release:
+When preparing a release (maintainers only):
 ```bash
-# Ensure you have a clean working directory on the release tag
-git tag v1.0.0
-git checkout v1.0.0
-
-# Generate all release artifacts
-make prepare-release
-
-# Review and commit generated files
-git status
-git commit -m "chore: prepare manifests for v1.0.0"
+# Create and push a tag from main branch
+git checkout main
+git pull origin main
+git tag -a v1.0.0 -m "Release v1.0.0"
 git push origin v1.0.0
+
+# Create the GitHub release (triggers automated workflow)
+gh release create v1.0.0 --generate-notes
+
+# The CI will automatically:
+# • Run tests and linters
+# • Build multi-arch Docker images
+# • Package Helm chart
+# • Generate install.yaml
+# • Build Go binaries
+# • Upload all artifacts to the release
 ```
 
 See [docs/maintainers/release-checklist.md](docs/maintainers/release-checklist.md) for the complete release process.
@@ -247,16 +252,18 @@ kubectl set image deployment/nebari-operator-controller-manager \
 
 ## Releases
 
-Releases are fully automated via GitHub Actions. When a new release is published:
+Releases are fully automated via GitHub Actions. When a new tag is pushed and a release is created:
 
 1. ✅ Tests run automatically
-2. ✅ Docker images built for amd64 and arm64
-3. ✅ Go binaries built for multiple platforms
+2. ✅ Multi-arch Docker images built and pushed to Quay.io (amd64, arm64)
+3. ✅ Go binaries built for multiple platforms (Linux, macOS, Windows)
 4. ✅ Helm chart packaged and published
-5. ✅ Release notes generated
-6. ✅ All artifacts attached to the release
+5. ✅ Kubernetes manifests (install.yaml) generated
+6. ✅ All artifacts attached to the GitHub release
 
-See the [Release Process](docs/release-process.md) for detailed information.
+**For maintainers**: See the [Release Checklist](docs/maintainers/release-checklist.md) for step-by-step instructions.
+
+**For users**: Download artifacts from the [Releases page](https://github.com/nebari-dev/nebari-operator/releases).
 
 ### Latest Release
 
