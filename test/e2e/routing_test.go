@@ -37,16 +37,10 @@ var _ = Describe("NebariApp Routing Schema Variations", Ordered, func() {
 
 	BeforeAll(func() {
 		var err error
-
 		testNamespace = "e2e-test-routing"
 
-		By("installing NebariApp CRDs")
-		cmd := exec.Command("make", "install")
-		_, err = utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to install CRDs")
-
 		By("checking if Gateway exists")
-		cmd = exec.Command("kubectl", "get", "gateway", "nebari-gateway", "-n", "envoy-gateway-system")
+		cmd := exec.Command("kubectl", "get", "gateway", "nebari-gateway", "-n", "envoy-gateway-system")
 		_, err = utils.Run(cmd)
 		if err != nil {
 			Skip("Gateway 'nebari-gateway' not found - run 'make setup' in dev/ first")
@@ -59,109 +53,14 @@ var _ = Describe("NebariApp Routing Schema Variations", Ordered, func() {
 		gatewayIP, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to get Gateway IP")
 		Expect(gatewayIP).NotTo(BeEmpty(), "Gateway IP is empty")
-
 		By(fmt.Sprintf("Gateway IP: %s", gatewayIP))
 
-		By("creating test namespace")
-		cmd = exec.Command("kubectl", "create", "namespace", testNamespace, "--dry-run=client", "-o", "yaml")
-		output, err := utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred())
-
-		cmd = exec.Command("kubectl", "apply", "-f", "-")
-		cmd.Stdin = strings.NewReader(output)
-		_, err = utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to create namespace")
-
-		By("labeling namespace for Operator management")
-		cmd = exec.Command("kubectl", "label", "namespace", testNamespace, "nebari.dev/managed=true", "--overwrite")
-		_, err = utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to label namespace")
-			By("undeploying any existing controller-manager")
-			_, _ = utils.Run(exec.Command("make", "undeploy"))
-		By("waiting for operator namespace to be fully terminated from previous runs")
-		Eventually(func() error {
-			cmd = exec.Command("kubectl", "get", "namespace", "nebari-operator-system")
-			_, err = utils.Run(cmd)
-			return err
-		}, VeryLongTimeout, time.Second).Should(HaveOccurred(),
-			"nebari-operator-system should be absent before deploying")
-
-		By("deploying the controller-manager")
-		cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", projectImage))
-		_, err = utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
-
-		By("waiting for controller-manager to be ready")
-		Eventually(func(g Gomega) {
-			cmd := exec.Command("kubectl", "get", "deployment", "nebari-operator-controller-manager",
-				"-n", "nebari-operator-system", "-o", "jsonpath={.status.availableReplicas}")
-			output, err := utils.Run(cmd)
-			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(output).To(Equal("1"))
-		}, 2*time.Minute, time.Second).Should(Succeed())
-
-		By("creating a test application deployment")
-		appYAML, err := utils.LoadTestDataFile("test-app.yaml", map[string]string{
-			"NAMESPACE_PLACEHOLDER": testNamespace,
-		})
-		Expect(err).NotTo(HaveOccurred(), "Failed to load test-app.yaml")
-
-		cmd = exec.Command("kubectl", "apply", "-f", "-")
-		cmd.Stdin = strings.NewReader(appYAML)
-		_, err = utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to create test application")
-
-		By("waiting for test application to be ready")
-		Eventually(func(g Gomega) {
-			cmd := exec.Command("kubectl", "get", "deployment", "test-app", "-n", testNamespace,
-				"-o", "jsonpath={.status.availableReplicas}")
-			output, err := utils.Run(cmd)
-			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(output).To(Equal("1"))
-		}, 2*time.Minute, time.Second).Should(Succeed(), func() string {
-			// Collect diagnostic information when deployment fails
-			diagnostics := "\n=== Deployment Diagnostic Information ===\n"
-
-			// Get deployment details
-			cmd := exec.Command("kubectl", "get", "deployment", "test-app", "-n", testNamespace, "-o", "yaml")
-			if output, err := utils.Run(cmd); err == nil {
-				diagnostics += "\nDeployment YAML:\n" + output + "\n"
-			}
-
-			// Get pod status
-			cmd = exec.Command("kubectl", "get", "pods", "-n", testNamespace, "-l", "app=test-app")
-			if output, err := utils.Run(cmd); err == nil {
-				diagnostics += "\nPod Status:\n" + output + "\n"
-			}
-
-			// Get pod details
-			cmd = exec.Command("kubectl", "describe", "pods", "-n", testNamespace, "-l", "app=test-app")
-			if output, err := utils.Run(cmd); err == nil {
-				diagnostics += "\nPod Details:\n" + output + "\n"
-			}
-
-			// Get events
-			cmd = exec.Command("kubectl", "get", "events", "-n", testNamespace, "--sort-by=.lastTimestamp")
-			if output, err := utils.Run(cmd); err == nil {
-				diagnostics += "\nNamespace Events:\n" + output + "\n"
-			}
-
-			return diagnostics
-		})
+		SetupTestNamespace(testNamespace)
+		DeployTestApp(testNamespace)
 	})
 
 	AfterAll(func() {
-		By("cleaning up test resources")
-		cmd := exec.Command("kubectl", "delete", "namespace", testNamespace, "--ignore-not-found", "--timeout=60s")
-		_, _ = utils.Run(cmd)
-
-		By("undeploying the controller-manager")
-		cmd = exec.Command("make", "undeploy")
-		_, _ = utils.Run(cmd)
-
-		By("uninstalling CRDs")
-		cmd = exec.Command("make", "uninstall")
-		_, _ = utils.Run(cmd)
+		CleanupTestNamespace(testNamespace)
 	})
 
 	Context("TLS Configuration Variations", func() {

@@ -22,7 +22,6 @@ package e2e
 import (
 	"fmt"
 	"os/exec"
-	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -34,67 +33,36 @@ import (
 var _ = Describe("Manager", Ordered, func() {
 	var controllerPodName string
 
-	// Before running the tests, set up the environment by creating the namespace,
-	// enforce the restricted security policy to the namespace, installing CRDs,
-	// and deploying the controller.
 	BeforeAll(func() {
-		By("undeploying any existing controller-manager")
-		_, _ = utils.Run(exec.Command("make", "undeploy"))
+		By("verifying controller-manager is running (deployed in BeforeSuite)")
+		Eventually(func(g Gomega) {
+			cmd := exec.Command("kubectl", "get", "pods", "-l", "control-plane=controller-manager",
+				"-o", "go-template={{ range .items }}"+
+					"{{ if not .metadata.deletionTimestamp }}"+
+					"{{ .metadata.name }}"+
+					"{{ \"\\n\" }}{{ end }}{{ end }}",
+				"-n", namespace)
+			podOutput, err := utils.Run(cmd)
+			g.Expect(err).NotTo(HaveOccurred())
+			podNames := utils.GetNonEmptyLines(podOutput)
+			g.Expect(podNames).To(HaveLen(1))
+			controllerPodName = podNames[0]
 
-		By("waiting for operator namespace to be fully terminated from previous runs")
-		// Ginkgo randomizes suite execution order, so a prior suite may have left
-		// nebari-operator-system in a terminating state. Wait for it to be gone.
-		Eventually(func() error {
-			cmd := exec.Command("kubectl", "get", "namespace", "nebari-operator-system")
-			_, err := utils.Run(cmd)
-			return err
-		}, VeryLongTimeout, time.Second).Should(HaveOccurred(),
-			"nebari-operator-system should be absent before deploying")
-
-		By("creating manager namespace")
-		cmd := exec.Command("kubectl", "create", "ns", namespace, "--dry-run=client", "-o", "yaml")
-		output, err := utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to generate namespace yaml")
-
-		cmd = exec.Command("kubectl", "apply", "-f", "-")
-		cmd.Stdin = strings.NewReader(output)
-		_, err = utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to create namespace")
-
-		By("labeling the namespace to enforce the restricted security policy")
-		cmd = exec.Command("kubectl", "label", "--overwrite", "ns", namespace,
-			"pod-security.kubernetes.io/enforce=restricted")
-		_, err = utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to label namespace with restricted policy")
-
-		By("installing CRDs")
-		cmd = exec.Command("make", "install")
-		_, err = utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to install CRDs")
-
-		By("deploying the controller-manager")
-		cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", projectImage))
-		_, err = utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
+			cmd = exec.Command("kubectl", "get", "pods", controllerPodName,
+				"-o", "jsonpath={.status.phase}", "-n", namespace)
+			output, err := utils.Run(cmd)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(output).To(Equal("Running"), "Controller pod not yet running")
+		}, 2*time.Minute, time.Second).Should(Succeed())
 	})
 
-	// After all tests have been executed, clean up by undeploying the controller, uninstalling CRDs,
-	// and deleting the namespace.
 	AfterAll(func() {
 		By("cleaning up the curl pod for metrics")
-		cmd := exec.Command("kubectl", "delete", "pod", "curl-metrics", "-n", namespace)
+		cmd := exec.Command("kubectl", "delete", "pod", "curl-metrics", "-n", namespace, "--ignore-not-found")
 		_, _ = utils.Run(cmd)
 
-		By("undeploying the controller-manager")
-		cmd = exec.Command("make", "undeploy")
-		_, _ = utils.Run(cmd)
-
-		By("uninstalling CRDs")
-		cmd = exec.Command("make", "uninstall")
-		_, _ = utils.Run(cmd)
-
-		By("removing manager namespace")
-		cmd = exec.Command("kubectl", "delete", "ns", namespace)
+		By("cleaning up metrics ClusterRoleBinding")
+		cmd = exec.Command("kubectl", "delete", "clusterrolebinding", metricsRoleBindingName, "--ignore-not-found")
 		_, _ = utils.Run(cmd)
 	})
 
