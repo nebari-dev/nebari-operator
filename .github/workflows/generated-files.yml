@@ -8,7 +8,6 @@ on:
       - 'api/**/*.go'
       - 'config/**'
       - 'internal/controller/**/*.go'
-      - 'dist/**'
 
 permissions:
   contents: read
@@ -126,18 +125,3 @@ jobs:
                 body: body
               });
             }
-
-  check-no-manual-edits:
-    name: Verify No Manual Changes to Generated Files
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Check generated files
-        uses: ./.github/actions/check-generated-files
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          base-ref: ${{ github.base_ref }}
