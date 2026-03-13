@@ -38,60 +38,11 @@ var _ = Describe("NebariApp Validation", Ordered, func() {
 	const testNamespace = "e2e-test-validation"
 
 	BeforeAll(func() {
-		var cmd *exec.Cmd
-		var err error
-
-		By("installing NebariApp CRDs")
-		cmd = exec.Command("make", "install")
-		_, err = utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to install CRDs")
-
-		By("creating test namespace")
-		cmd = exec.Command("kubectl", "create", "namespace", testNamespace)
-		_, err = utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to create namespace")
-
-		By("labeling namespace for Operator management")
-		cmd = exec.Command("kubectl", "label", "namespace", testNamespace, "nebari.dev/managed=true")
-		_, err = utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to label namespace")
-			By("undeploying any existing controller-manager")
-			_, _ = utils.Run(exec.Command("make", "undeploy"))
-		By("waiting for operator namespace to be fully terminated from previous runs")
-		Eventually(func() error {
-			cmd = exec.Command("kubectl", "get", "namespace", "nebari-operator-system")
-			_, err = utils.Run(cmd)
-			return err
-		}, VeryLongTimeout, PollInterval).Should(HaveOccurred(),
-			"nebari-operator-system should be absent before deploying")
-
-		By("deploying the controller-manager")
-		cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", projectImage))
-		_, err = utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
-
-		By("waiting for controller-manager to be ready")
-		Eventually(func(g Gomega) {
-			cmd := exec.Command("kubectl", "get", "deployment", "nebari-operator-controller-manager",
-				"-n", "nebari-operator-system", "-o", "jsonpath={.status.availableReplicas}")
-			output, err := utils.Run(cmd)
-			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(output).To(Equal("1"))
-		}, MediumTimeout, PollInterval).Should(Succeed())
+		SetupTestNamespace(testNamespace)
 	})
 
 	AfterAll(func() {
-		By("cleaning up test resources")
-		cmd := exec.Command("kubectl", "delete", "namespace", testNamespace, "--ignore-not-found")
-		_, _ = utils.Run(cmd)
-
-		By("undeploying the controller-manager")
-		cmd = exec.Command("make", "undeploy")
-		_, _ = utils.Run(cmd)
-
-		By("uninstalling CRDs")
-		cmd = exec.Command("make", "uninstall")
-		_, _ = utils.Run(cmd)
+		CleanupTestNamespace(testNamespace)
 	})
 
 	Context("Service Reference Validation", func() {

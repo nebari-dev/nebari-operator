@@ -24,6 +24,7 @@ import (
 	"os"
 	"os/exec"
 	"testing"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -75,10 +76,8 @@ func TestE2E(t *testing.T) {
 	RunSpecs(t, "e2e suite")
 }
 
-var _ = BeforeSuite(func() {
-	if skipSetup {
-		_, _ = fmt.Fprintf(GinkgoWriter, "Skipping all setup, using existing cluster and infrastructure\n")
-	} else {
+var _ = SynchronizedBeforeSuite(func() []byte {
+	if !skipSetup {
 		// Set cluster name for Kind utilities
 		clusterName := os.Getenv("CLUSTER_NAME")
 		if clusterName == "" {
@@ -128,8 +127,58 @@ var _ = BeforeSuite(func() {
 		} else {
 			_, _ = fmt.Fprintf(GinkgoWriter, "Skipping docker build, assuming image is already built and loaded\n")
 		}
+
+		// Install CRDs
+		By("installing CRDs")
+		cmd := exec.Command("make", "install")
+		_, err := utils.Run(cmd)
+		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to install CRDs")
+
+		// Clean up any existing deployment
+		By("undeploying any existing operator")
+		cmd = exec.Command("make", "undeploy")
+		_, _ = utils.Run(cmd) // ignore error if nothing is deployed
+
+		By("waiting for operator namespace to be fully removed")
+		Eventually(func() error {
+			cmd := exec.Command("kubectl", "get", "namespace", "nebari-operator-system")
+			_, err := utils.Run(cmd)
+			return err
+		}, 5*time.Minute, time.Second).Should(HaveOccurred(), "Timed out waiting for nebari-operator-system namespace to be removed")
+
+		// Deploy the operator
+		By("deploying the operator")
+		cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", projectImage))
+		_, err = utils.Run(cmd)
+		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to deploy the operator")
+
+		By("waiting for controller-manager deployment to be available")
+		Eventually(func(g Gomega) {
+			cmd := exec.Command("kubectl", "get", "deployment", "nebari-operator-controller-manager",
+				"-n", "nebari-operator-system",
+				"-o", "jsonpath={.status.availableReplicas}")
+			output, err := utils.Run(cmd)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(output).To(Equal("1"))
+		}, 2*time.Minute, time.Second).Should(Succeed(), "Controller manager deployment did not become available")
+
+		By("verifying operator logs for configuration errors")
+		Eventually(func(g Gomega) {
+			cmd := exec.Command("kubectl", "logs",
+				"deployment/nebari-operator-controller-manager",
+				"-n", "nebari-operator-system",
+				"--tail=100")
+			output, err := utils.Run(cmd)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(output).NotTo(ContainSubstring("failed to load config"))
+			g.Expect(output).NotTo(ContainSubstring("config error"))
+		}, 1*time.Minute, time.Second).Should(Succeed(), "Operator logs contain configuration errors")
+	} else {
+		_, _ = fmt.Fprintf(GinkgoWriter, "Skipping all setup, using existing cluster and infrastructure\n")
 	}
 
+	return nil
+}, func(_ []byte) {
 	By("setting up the k8s client")
 	scheme := runtime.NewScheme()
 	ExpectWithOffset(1, clientgoscheme.AddToScheme(scheme)).To(Succeed())
@@ -140,9 +189,23 @@ var _ = BeforeSuite(func() {
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to create k8s client")
 })
 
-var _ = AfterSuite(func() {
+var _ = SynchronizedAfterSuite(func() {
+	// Nothing to do per-process
+}, func() {
 	if skipSetup {
 		return
+	}
+
+	By("undeploying the operator")
+	cmd := exec.Command("make", "undeploy")
+	if _, err := utils.Run(cmd); err != nil {
+		warnError(err)
+	}
+
+	By("uninstalling CRDs")
+	cmd = exec.Command("make", "uninstall")
+	if _, err := utils.Run(cmd); err != nil {
+		warnError(err)
 	}
 
 	// Teardown via dev scripts if we set things up

@@ -25,6 +25,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -100,4 +102,62 @@ type tokenRequest struct {
 	Status struct {
 		Token string `json:"token"`
 	} `json:"status"`
+}
+
+// SetupTestNamespace creates a namespace with the nebari.dev/managed=true label.
+// It cleans up any existing namespace with the same name first.
+func SetupTestNamespace(namespaceName string) {
+	By(fmt.Sprintf("cleaning up any existing %s namespace", namespaceName))
+	cmd := exec.Command("kubectl", "delete", "namespace", namespaceName, "--ignore-not-found", "--timeout=60s")
+	_, _ = utils.Run(cmd)
+
+	By(fmt.Sprintf("waiting for namespace %s to be fully deleted", namespaceName))
+	Eventually(func() error {
+		cmd := exec.Command("kubectl", "get", "namespace", namespaceName)
+		_, err := utils.Run(cmd)
+		return err
+	}, 2*time.Minute, time.Second).Should(HaveOccurred())
+
+	By(fmt.Sprintf("creating test namespace %s", namespaceName))
+	cmd = exec.Command("kubectl", "create", "namespace", namespaceName)
+	_, err := utils.Run(cmd)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to create namespace")
+
+	By(fmt.Sprintf("labeling namespace %s for Operator management", namespaceName))
+	cmd = exec.Command("kubectl", "label", "namespace", namespaceName, "nebari.dev/managed=true")
+	_, err = utils.Run(cmd)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to label namespace")
+}
+
+// DeployTestApp deploys the standard test-app Deployment+Service into the given namespace
+// and waits for it to be ready.
+func DeployTestApp(namespaceName string) {
+	By("creating a test application deployment")
+	appYAML, err := utils.LoadTestDataFile("test-app.yaml", map[string]string{
+		"NAMESPACE_PLACEHOLDER": namespaceName,
+	})
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load test-app.yaml")
+
+	cmd := exec.Command("kubectl", "apply", "-f", "-")
+	cmd.Stdin = strings.NewReader(appYAML)
+	_, err = utils.Run(cmd)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to create test application")
+
+	By("waiting for test application to be ready")
+	Eventually(func(g Gomega) {
+		cmd := exec.Command("kubectl", "get", "deployment", "test-app", "-n", namespaceName,
+			"-o", "jsonpath={.status.availableReplicas}")
+		output, err := utils.Run(cmd)
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(output).To(Equal("1"))
+	}, 2*time.Minute, time.Second).Should(Succeed(), func() string {
+		return DeploymentDiagnostics(namespaceName, "test-app")
+	})
+}
+
+// CleanupTestNamespace deletes the test namespace.
+func CleanupTestNamespace(namespaceName string) {
+	By(fmt.Sprintf("cleaning up namespace %s", namespaceName))
+	cmd := exec.Command("kubectl", "delete", "namespace", namespaceName, "--ignore-not-found", "--timeout=60s")
+	_, _ = utils.Run(cmd)
 }
