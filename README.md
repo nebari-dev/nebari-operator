@@ -1,45 +1,48 @@
 <p align="center">
   <a href="https://nebari.dev">
-    <img src="https://raw.githubusercontent.com/nebari-dev/nebari/main/docs/_static/images/nebari-logo.svg" alt="Nebari" width="400">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/Nebari-Logo-Horizontal-Lockup-White-text.png">
+      <source media="(prefers-color-scheme: light)" srcset="docs/Nebari-Logo-Horizontal-Lockup.png">
+      <img alt="Nebari" src="docs/Nebari-Logo-Horizontal-Lockup.png" width="300">
+    </picture>
   </a>
 </p>
 
 <h1 align="center">Nebari Operator</h1>
 
 <p align="center">
-  <strong>Self-service application onboarding for GitOps-friendly Kubernetes platforms.</strong><br />
-  One CRD to rule routing, TLS, SSO, and landing-page registration — all continuously reconciled.
+  <strong>Self-service application onboarding for GitOps-friendly Kubernetes platforms.</strong><br /> One CRD to rule
+  routing, TLS, SSO, and landing-page registration — all continuously reconciled.
 </p>
 
 <p align="center">
-  <a href="https://github.com/nebari-dev/nebari-operator/actions/workflows/test.yml"><img
-    src="https://github.com/nebari-dev/nebari-operator/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
-  <a href="https://github.com/nebari-dev/nebari-operator/actions/workflows/build.yml"><img
-    src="https://github.com/nebari-dev/nebari-operator/actions/workflows/build.yml/badge.svg" alt="Build"></a>
-  <a href="https://github.com/nebari-dev/nebari-operator/blob/main/LICENSE"><img
-    src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache 2.0"></a>
-  <a href="https://github.com/nebari-dev/nebari-operator/releases/latest"><img
-    src="https://img.shields.io/github/v/release/nebari-dev/nebari-operator?logo=github&label=release" alt="Latest Release"></a>
-  <a href="https://golang.org"><img
-    src="https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go&logoColor=white" alt="Go 1.25+"></a>
-  <a href="https://kubernetes.io"><img
-    src="https://img.shields.io/badge/Kubernetes-1.28+-326CE5?logo=kubernetes&logoColor=white" alt="Kubernetes 1.28+"></a>
+  <a href="https://github.com/nebari-dev/nebari-operator/actions/workflows/test-chart.yml"><img
+  src="https://github.com/nebari-dev/nebari-operator/actions/workflows/test-chart.yml/badge.svg" alt="Test Chart"></a>
+  <a href="https://github.com/nebari-dev/nebari-operator/actions/workflows/build-pr.yml"><img
+  src="https://github.com/nebari-dev/nebari-operator/actions/workflows/build-pr.yml/badge.svg" alt="PR Checks"></a> <a
+  href="https://github.com/nebari-dev/nebari-operator/actions/workflows/generated-files.yml"><img
+  src="https://github.com/nebari-dev/nebari-operator/actions/workflows/generated-files.yml/badge.svg" alt="Generated
+  Files"></a> <a href="https://github.com/nebari-dev/nebari-operator/actions/workflows/release.yml"></a> <a
+  href="https://github.com/nebari-dev/nebari-operator/blob/main/LICENSE"><img
+  src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache 2.0"></a> <a
+  href="https://github.com/nebari-dev/nebari-operator/releases/latest"><img
+  src="https://img.shields.io/github/v/release/nebari-dev/nebari-operator?logo=github&label=release" alt="Latest
+  Release"></a> <a href="https://golang.org"><img
+  src="https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go&logoColor=white" alt="Go 1.25+"></a> <a
+  href="https://kubernetes.io"></a>
 </p>
 
 <p align="center">
-  <a href="#what-is-nebari-operator">What is it?</a> &middot;
-  <a href="#how-it-works">How it works</a> &middot;
-  <a href="#key-features">Features</a> &middot;
-  <a href="#installation">Installation</a> &middot;
-  <a href="#usage-example">Usage</a> &middot;
-  <a href="#development">Development</a> &middot;
-  <a href="#documentation">Docs</a> &middot;
-  <a href="CONTRIBUTING.md">Contributing</a>
+  <a href="#what-is-nebari-operator">What is it?</a> &middot; <a href="#how-it-works">How it works</a> &middot; <a
+  href="#key-features">Features</a> &middot; <a href="#installation">Installation</a> &middot; <a
+  href="#usage-example">Usage</a> &middot; <a href="#development">Development</a> &middot; <a
+  href="#documentation">Docs</a> &middot; <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
----
 
-> **Status**: Under active development as part of Nebari Infrastructure Core (NIC). APIs and behavior may change without notice.
+
+> **Status**: Under active development as part of Nebari Infrastructure Core (NIC). APIs and behavior may change without
+> notice.
 
 ## What is Nebari Operator?
 
@@ -50,7 +53,8 @@ operator takes care of the rest:
 - **HTTP/HTTPS Routes** — Gateway API `HTTPRoute` created and maintained automatically
 - **TLS Termination** — cert-manager `Certificate` provisioned on demand
 - **SSO Authentication** — OIDC `SecurityPolicy` wired to Keycloak, including automatic client provisioning
-- **Landing Page Registration** — service metadata surfaced to [Nebari Landing](https://github.com/nebari-dev/nebari-landing) with visibility controls
+- **Landing Page Registration** — service metadata surfaced to
+  [Nebari Landing](https://github.com/nebari-dev/nebari-landing) with visibility controls
 
 No more hand-crafting `Gateway`, `HTTPRoute`, `SecurityPolicy`, or Keycloak clients. Declare intent; the operator
 reconciles reality.
@@ -267,7 +271,8 @@ git push origin v1.0.0
 gh release create v1.0.0 --generate-notes
 ```
 
-CI automatically: runs tests · builds multi-arch images · packages the Helm chart · generates `install.yaml` · uploads all artifacts.
+CI automatically: runs tests · builds multi-arch images · packages the Helm chart · generates `install.yaml` · uploads
+all artifacts.
 
 See [docs/maintainers/release-checklist.md](docs/maintainers/release-checklist.md) for the complete process.
 
