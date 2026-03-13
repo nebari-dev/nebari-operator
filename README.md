@@ -1,72 +1,116 @@
-# Nebari Operator
+<p align="center">
+  <a href="https://nebari.dev">
+    <img src="https://raw.githubusercontent.com/nebari-dev/nebari/main/docs/_static/images/nebari-logo.svg" alt="Nebari" width="400">
+  </a>
+</p>
 
-The Nebari Operator enables **self-service application onboarding** in GitOps-friendly Kubernetes platforms. When a new
-app is deployed via Helm or Argo CD, the operator automatically configures:
+<h1 align="center">Nebari Operator</h1>
 
-- **HTTP/HTTPS Routes** (Gateway API HTTPRoute)
-- **TLS Termination** (via cert-manager)
-- **SSO Authentication** (OIDC with Keycloak)
-- **Security Policies** (Envoy Gateway SecurityPolicy)
+<p align="center">
+  <strong>Self-service application onboarding for GitOps-friendly Kubernetes platforms.</strong><br />
+  One CRD to rule routing, TLS, SSO, and landing-page registration — all continuously reconciled.
+</p>
 
-## Quick Start
+<p align="center">
+  <a href="https://github.com/nebari-dev/nebari-operator/actions/workflows/test.yml"><img
+    src="https://github.com/nebari-dev/nebari-operator/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
+  <a href="https://github.com/nebari-dev/nebari-operator/actions/workflows/build.yml"><img
+    src="https://github.com/nebari-dev/nebari-operator/actions/workflows/build.yml/badge.svg" alt="Build"></a>
+  <a href="https://github.com/nebari-dev/nebari-operator/blob/main/LICENSE"><img
+    src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache 2.0"></a>
+  <a href="https://github.com/nebari-dev/nebari-operator/releases/latest"><img
+    src="https://img.shields.io/github/v/release/nebari-dev/nebari-operator?logo=github&label=release" alt="Latest Release"></a>
+  <a href="https://golang.org"><img
+    src="https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go&logoColor=white" alt="Go 1.25+"></a>
+  <a href="https://kubernetes.io"><img
+    src="https://img.shields.io/badge/Kubernetes-1.28+-326CE5?logo=kubernetes&logoColor=white" alt="Kubernetes 1.28+"></a>
+</p>
 
-Get started in 5 minutes! Follow our [Quick Start Guide](docs/quickstart.md) to:
+<p align="center">
+  <a href="#what-is-nebari-operator">What is it?</a> &middot;
+  <a href="#how-it-works">How it works</a> &middot;
+  <a href="#key-features">Features</a> &middot;
+  <a href="#installation">Installation</a> &middot;
+  <a href="#usage-example">Usage</a> &middot;
+  <a href="#development">Development</a> &middot;
+  <a href="#documentation">Docs</a> &middot;
+  <a href="CONTRIBUTING.md">Contributing</a>
+</p>
 
-1. Install the operator
-2. Set up platform prerequisites
-3. Deploy your first application
-4. Enable authentication
+---
 
-**Prerequisites**: Kubernetes cluster with Gateway API support (Envoy Gateway recommended)
+> **Status**: Under active development as part of Nebari Infrastructure Core (NIC). APIs and behavior may change without notice.
 
-## Features
+## What is Nebari Operator?
 
-- ✅ **Declarative Configuration** - Single CRD defines routing, TLS, and auth
-- ✅ **Automatic Route Generation** - HTTPRoute resources created automatically
-- ✅ **TLS Management** - Seamless cert-manager integration
-- ✅ **OIDC Authentication** - Optional SSO with Keycloak
-- ✅ **GitOps Compatible** - Continuously reconciled with desired state
-- ✅ **Multi-Platform** - Works with any Kubernetes (cloud, on-prem, local)
-- ✅ **Namespace Isolation** - Opt-in per namespace with labels
+The Nebari Operator is a Kubernetes controller that enables **self-service application onboarding** in GitOps-friendly
+clusters. When a team deploys an app via Helm or Argo CD, they declare a single `NebariApp` custom resource — the
+operator takes care of the rest:
 
-## Documentation
+- **HTTP/HTTPS Routes** — Gateway API `HTTPRoute` created and maintained automatically
+- **TLS Termination** — cert-manager `Certificate` provisioned on demand
+- **SSO Authentication** — OIDC `SecurityPolicy` wired to Keycloak, including automatic client provisioning
+- **Landing Page Registration** — service metadata surfaced to [Nebari Landing](https://github.com/nebari-dev/nebari-landing) with visibility controls
 
-### Getting Started
-- **[Quick Start Guide](docs/quickstart.md)** - Install and deploy your first app (5 min)
-- **[Platform Setup](docs/platform-setup.md)** - Infrastructure prerequisites and installation
-- **[Configuration Reference](docs/configuration-reference.md)** - Complete NebariApp CRD reference
+No more hand-crafting `Gateway`, `HTTPRoute`, `SecurityPolicy`, or Keycloak clients. Declare intent; the operator
+reconciles reality.
 
-### Architecture
-- **[Reconciler Overview](docs/reconcilers/README.md)** - How the operator works internally
-- **[Validation Reconciler](docs/reconcilers/validation.md)** - Namespace and service validation
-- **[Routing Reconciler](docs/reconcilers/routing.md)** - Gateway API and HTTPRoute management
-- **[Authentication Reconciler](docs/reconcilers/authentication.md)** - OIDC and Keycloak integration
+## How it Works
 
-### Operations
-- **[Makefile Reference](docs/makefile-reference.md)** - Build, test, and deployment commands
-- **[Release Process](docs/maintainers/release-process.md)** - How releases are created and managed
-- **[Release Checklist](docs/maintainers/release-checklist.md)** - Step-by-step release guide
-- **[Release Setup](docs/maintainers/release-setup.md)** - GitHub Actions configuration
+The operator runs a pipeline of focused **reconcilers**, each responsible for one concern:
 
-### Contributing
-- **[Contributing Guide](CONTRIBUTING.md)** - Development workflow and guidelines
-- **[Development Workflow](#development-workflow)** - Quick reference for common tasks
+```
+NebariApp CR
+     │
+     ├─► Validation Reconciler    — namespace opt-in, service existence
+     ├─► Routing Reconciler       — HTTPRoute + TLS Certificate
+     ├─► Auth Reconciler          — OIDC SecurityPolicy + Keycloak client
+     └─► Landing Page Reconciler  — registration in nebari-landing cache
+```
+
+Each reconciler is independent, updates `status.conditions`, and emits Kubernetes Events for full observability. The
+control loop is **continuously reconciled** — drift from desired state is corrected automatically.
+
+**Learn more:** [Reconciler Architecture](docs/reconcilers/README.md)
+
+## Key Features
+
+| Feature | Description |
+| --- | --- |
+| **Declarative Configuration** | One `NebariApp` CRD defines routing, TLS, auth, and landing-page visibility |
+| **Automatic Route Generation** | `HTTPRoute` resources are created and kept in sync automatically |
+| **TLS Management** | Seamless cert-manager integration — certificates provisioned and renewed hands-free |
+| **OIDC Authentication** | Optional SSO via Keycloak, with automatic `SecurityPolicy` and client provisioning |
+| **Public Route Bypass** | Per-path auth bypass for health-check and callback endpoints |
+| **Landing Page Integration** | Surfaces apps to [nebari-landing](https://github.com/nebari-dev/nebari-landing) with category, icon, and visibility controls |
+| **GitOps Compatible** | Continuously reconciled — desired state is always enforced |
+| **Multi-Platform** | Works with any Kubernetes (cloud, on-prem, local kind/minikube) |
+| **Namespace Isolation** | Opt-in per namespace via label — no accidental adoption |
 
 ## Installation
 
 ### Quick Install (Recommended)
 
-Install the latest stable release:
+Install the latest stable release with a single command:
 
 ```bash
 kubectl apply -f https://github.com/nebari-dev/nebari-operator/releases/latest/download/install.yaml
 ```
 
-### Install Specific Version
+### Install a Specific Version
 
 ```bash
 VERSION=v0.1.0
 kubectl apply -f https://github.com/nebari-dev/nebari-operator/releases/download/${VERSION}/install.yaml
+```
+
+### Helm Install
+
+```bash
+helm upgrade --install nebari-operator \
+  oci://ghcr.io/nebari-dev/charts/nebari-operator \
+  --namespace nebari-operator-system \
+  --create-namespace
 ```
 
 ### Verify Installation
@@ -76,36 +120,64 @@ kubectl get pods -n nebari-operator-system
 kubectl logs -n nebari-operator-system -l control-plane=controller-manager
 ```
 
+### Container Images
+
+Multi-arch images (amd64 / arm64) are published to Quay.io on every release:
+
+```
+quay.io/nebari/nebari-operator:latest
+quay.io/nebari/nebari-operator:v0.1.0
+quay.io/nebari/nebari-operator:main
+```
+
 ## Usage Example
 
-Create a NebariApp to expose your service:
+Opt your namespace in and create a `NebariApp` to expose a service:
+
+```bash
+# Opt the namespace into operator management
+kubectl label namespace my-team nebari.dev/managed=true
+```
 
 ```yaml
 apiVersion: reconcilers.nebari.dev/v1
 kind: NebariApp
 metadata:
   name: my-app
-  namespace: default
+  namespace: my-team
 spec:
   hostname: my-app.example.com
   service:
     name: my-service
     port: 8080
   routing:
-    routes:
-      - pathPrefix: /
     tls:
       enabled: true
+    routes:
+      - pathPrefix: /
+    publicRoutes:
+      - pathPrefix: /healthz
+        pathType: Exact
   auth:
     enabled: true
     provider: keycloak
     provisionClient: true
+  landingPage:
+    enabled: true
+    displayName: "My App"
+    description: "A great internal tool"
+    category: "Engineering"
+    icon: "tool"
+    visibility: authenticated
 ```
 
 The operator will automatically create:
-- **HTTPRoute** for routing traffic to your service
-- **SecurityPolicy** for OIDC authentication (if auth enabled)
-- **Keycloak Client** for your application (if configured)
+
+- **`HTTPRoute`** — routes `my-app.example.com` traffic to `my-service:8080`
+- **`Certificate`** — cert-manager certificate for TLS
+- **`SecurityPolicy`** — OIDC authentication enforced at the gateway
+- **Keycloak Client** — OIDC client provisioned in the configured realm
+- **Landing Page Entry** — app surfaced in nebari-landing for authenticated users
 
 See the [Configuration Reference](docs/configuration-reference.md) for all available options.
 
@@ -113,184 +185,134 @@ See the [Configuration Reference](docs/configuration-reference.md) for all avail
 
 ### Prerequisites
 
-- Go 1.24+
-- Docker or Podman
-- kubectl
-- Kubernetes cluster (kind, minikube, or cloud)
-- make
+| Tool | Version | Notes |
+| --- | --- | --- |
+| `go` | 1.25+ | Controller and tests |
+| `docker` or `podman` | 24+ | Image builds |
+| `kubectl` | 1.28+ | Cluster interaction |
+| `make` | any | Build automation |
+| Kubernetes cluster | 1.28+ | kind, minikube, or cloud |
 
-### Quick Development Setup
+### Quick Start
 
 ```bash
-# Install dependencies
+# Regenerate CRDs and deep-copy code after API changes
 make manifests generate
 
-# Run tests
+# Run unit tests
 make test
 
 # Run linter
 make lint
 
-# Run operator locally (against configured cluster)
+# Run the operator locally against your current cluster
 make run
 ```
 
-### Manual Testing with Kind
-
-Use the automated development environment:
+### Local Dev Cluster (Kind)
 
 ```bash
-# Create Kind cluster with full infrastructure
-cd dev
-make setup
+# Create a Kind cluster with the full Nebari infrastructure stack
+cd dev && make setup
 
-# Build and deploy operator
+# Build and load the operator image
 cd ..
 make docker-build IMG=quay.io/nebari/nebari-operator:dev
 kind load docker-image quay.io/nebari/nebari-operator:dev --name nebari-operator-dev
+
+# Install CRDs and deploy
 make install deploy IMG=quay.io/nebari/nebari-operator:dev
 
-# Deploy sample application
-kubectl apply -f dev/sample-app-deployment.yaml
-kubectl apply -f dev/sample-nebariapp-with-routing.yaml
+# Deploy the example app and NebariApp CR
+kubectl apply -f dev/examples/app-deployment.yaml
+kubectl apply -f dev/examples/nebariapp.yaml
 
-# Test changes
+# Iterate: rebuild and roll out
 make docker-build IMG=quay.io/nebari/nebari-operator:dev
 kind load docker-image quay.io/nebari/nebari-operator:dev --name nebari-operator-dev
 kubectl rollout restart deployment nebari-operator-controller-manager -n nebari-operator-system
 
-# Cleanup
-cd dev
-make teardown
+# Tear down
+cd dev && make teardown
 ```
 
-See [dev/README.md](dev/README.md) for detailed development workflows.
-
-## Development Workflow
-
-For complete development guidelines, see [CONTRIBUTING.md](CONTRIBUTING.md).
-
-**Quick Reference:**
-
-When modifying API types (`api/v1/*.go`):
-```bash
-# Regenerate CRDs and code
-make generate-dev
-
-# Test locally
-make install  # Updates CRDs in your current cluster
-make run      # Runs operator locally
-```
-
-When preparing a release (maintainers only):
-```bash
-# Create and push a tag from main branch
-git checkout main
-git pull origin main
-git tag -a v1.0.0 -m "Release v1.0.0"
-git push origin v1.0.0
-
-# Create the GitHub release (triggers automated workflow)
-gh release create v1.0.0 --generate-notes
-
-# The CI will automatically:
-# • Run tests and linters
-# • Build multi-arch Docker images
-# • Package Helm chart
-# • Generate install.yaml
-# • Build Go binaries
-# • Upload all artifacts to the release
-```
-
-See [docs/maintainers/release-checklist.md](docs/maintainers/release-checklist.md) for the complete release process.
+See [dev/README.md](dev/README.md) for the full local development guide.
 
 ### Common Makefile Targets
 
 ```bash
-make help          # Show all available targets
-make fmt           # Format code
-make vet           # Run static analysis
+make help          # List all available targets with descriptions
+make fmt           # Format code (go fmt)
+make vet           # Run static analysis (go vet)
 make test          # Run unit tests
-make lint          # Run linter
-make build         # Build binary
-make docker-build  # Build Docker image
-make deploy        # Deploy to cluster
+make test-e2e      # Run end-to-end tests (requires a live cluster)
+make lint          # Run golangci-lint
+make build         # Build the manager binary
+make docker-build  # Build the Docker image
+make deploy        # Deploy to the current cluster
+make generate-dev  # Shortcut: manifests + generate (after API changes)
 ```
 
-See the [Makefile Reference](docs/makefile-reference.md) for complete documentation.
+See the [Makefile Reference](docs/makefile-reference.md) for the complete target list.
+
+### Releasing (Maintainers)
+
+```bash
+# Tag and push from main
+git checkout main && git pull origin main
+git tag -a v1.0.0 -m "Release v1.0.0"
+git push origin v1.0.0
+
+# Create the GitHub release — CI takes it from here
+gh release create v1.0.0 --generate-notes
+```
+
+CI automatically: runs tests · builds multi-arch images · packages the Helm chart · generates `install.yaml` · uploads all artifacts.
+
+See [docs/maintainers/release-checklist.md](docs/maintainers/release-checklist.md) for the complete process.
+
+## Documentation
+
+### Getting Started
+- **[Quick Start Guide](docs/quickstart.md)** — Install and deploy your first app in 5 minutes
+- **[Configuration Reference](docs/configuration-reference.md)** — Complete `NebariApp` CRD reference
+- **[Troubleshooting](docs/troubleshooting.md)** — Common issues and how to fix them
+
+### Architecture & Internals
+- **[Reconciler Overview](docs/reconcilers/README.md)** — How the operator pipeline works
+- **[Validation Reconciler](docs/reconcilers/validation.md)** — Namespace opt-in and service checks
+- **[Routing Reconciler](docs/reconcilers/routing.md)** — Gateway API and `HTTPRoute` management
+- **[Authentication Reconciler](docs/reconcilers/authentication.md)** — OIDC, Keycloak, and `SecurityPolicy`
+
+### Operations
+- **[Makefile Reference](docs/makefile-reference.md)** — All build, test, and deployment targets
+- **[Release Process](docs/maintainers/release-process.md)** — How releases are created
+- **[Release Checklist](docs/maintainers/release-checklist.md)** — Step-by-step release guide for maintainers
+- **[Release Setup](docs/maintainers/release-setup.md)** — GitHub Actions configuration
 
 ## Contributing
 
-We welcome contributions! Here's how to get started:
+Contributions are welcome! To get started:
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Make your changes
-4. Add tests for new functionality
-5. Run tests and linters:
-   ```bash
-   make fmt vet test lint
-   ```
-6. Commit your changes (`git commit -m 'Add amazing feature'`)
-7. Push to your fork (`git push origin feature/amazing-feature`)
-8. Open a Pull Request
-
-### Pull Request Builds
-
-When you open a PR:
-- ✅ Automated tests run
-- ✅ Code is linted and validated
-- ✅ Multi-arch Docker images are built
-- ✅ A comment with image details is added to your PR
-
-Test your PR image:
 ```bash
-kubectl set image deployment/nebari-operator-controller-manager \
-  manager=quay.io/nebari/nebari-operator:your-branch-name \
-  -n nebari-operator-system
+git clone https://github.com/nebari-dev/nebari-operator.git
+cd nebari-operator
+
+# Make your changes, then:
+make fmt vet test lint
 ```
 
-## Releases
+1. Fork the repo and create a feature branch (`git checkout -b feat/my-feature`)
+2. Add tests for new functionality
+3. Ensure `make fmt vet test lint` passes
+4. Open a Pull Request — CI will build multi-arch images and post image details
 
-Releases are fully automated via GitHub Actions. When a new tag is pushed and a release is created:
+**Documentation**:
+- **[Contributing Guide](CONTRIBUTING.md)** — Development workflow and conventions
+- **[API Reference](docs/api-reference.md)** — Auto-generated CRD field reference
 
-1. ✅ Tests run automatically
-2. ✅ Multi-arch Docker images built and pushed to Quay.io (amd64, arm64)
-3. ✅ Go binaries built for multiple platforms (Linux, macOS, Windows)
-4. ✅ Helm chart packaged and published
-5. ✅ Kubernetes manifests (install.yaml) generated
-6. ✅ All artifacts attached to the GitHub release
-
-**For maintainers**: See the [Release Checklist](docs/maintainers/release-checklist.md) for step-by-step instructions.
-
-**For users**: Download artifacts from the [Releases page](https://github.com/nebari-dev/nebari-operator/releases).
-
-### Latest Release
-
-Check the [Releases page](https://github.com/nebari-dev/nebari-operator/releases) for the latest version.
-
-### Container Images
-
-Images are available at Quay.io:
-```
-quay.io/nebari/nebari-operator:latest
-quay.io/nebari/nebari-operator:v0.1.0
-quay.io/nebari/nebari-operator:main
-```
-
-## Architecture
-
-The operator uses a pipeline of specialized **reconcilers** to transform a simple `NebariApp` resource into a fully
-configured application:
-
-1. **Validation Reconciler** - Ensures prerequisites (namespace opt-in, service exists)
-2. **Routing Reconciler** - Creates HTTPRoute and attaches to Gateway
-3. **Authentication Reconciler** - Configures OIDC authentication (optional)
-
-Each reconciler operates independently, updating status conditions and emitting Kubernetes events for observability.
-
-**Learn more:** [Reconciler Architecture](docs/reconcilers/README.md)
+See our [issue tracker](https://github.com/nebari-dev/nebari-operator/issues) for open issues and ideas.
 
 ## License
 
-Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for details.
+Apache License 2.0 — see [LICENSE](LICENSE) for details.
