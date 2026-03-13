@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://nebari.dev">
-    <img src="https://avatars.githubusercontent.com/u/104418918" alt="Nebari" width="120">
+    <img src="https://github.com/nebari-dev/nebari-design/blob/main/logo-mark/horizontal/Nebari-Logo-Horizontal-Lockup-White-text.svg" alt="Nebari" width="120">
   </a>
 </p>
 
@@ -18,16 +18,14 @@
   src="https://github.com/nebari-dev/nebari-operator/actions/workflows/build-pr.yml/badge.svg" alt="PR Checks"></a> <a
   href="https://github.com/nebari-dev/nebari-operator/actions/workflows/generated-files.yml"><img
   src="https://github.com/nebari-dev/nebari-operator/actions/workflows/generated-files.yml/badge.svg" alt="Generated
-  Files"></a> <a href="https://github.com/nebari-dev/nebari-operator/actions/workflows/release.yml"><img
-  src="https://github.com/nebari-dev/nebari-operator/actions/workflows/release.yml/badge.svg" alt="Release"></a> <a
+  Files"></a> <a href="https://github.com/nebari-dev/nebari-operator/actions/workflows/release.yml"></a> <a
   href="https://github.com/nebari-dev/nebari-operator/blob/main/LICENSE"><img
   src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache 2.0"></a> <a
   href="https://github.com/nebari-dev/nebari-operator/releases/latest"><img
   src="https://img.shields.io/github/v/release/nebari-dev/nebari-operator?logo=github&label=release" alt="Latest
   Release"></a> <a href="https://golang.org"><img
   src="https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go&logoColor=white" alt="Go 1.25+"></a> <a
-  href="https://kubernetes.io"><img
-  src="https://img.shields.io/badge/Kubernetes-1.28+-326CE5?logo=kubernetes&logoColor=white" alt="Kubernetes 1.28+"></a>
+  href="https://kubernetes.io"></a>
 </p>
 
 <p align="center">
