@@ -1,9 +1,9 @@
 <p align="center">
   <a href="https://nebari.dev">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/nebari-dev/nebari-design/refs/heads/main/logo-mark/horizontal/Nebari-Logo-Horizontal-Lockup-White-text.png">
-      <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/nebari-dev/nebari-design/refs/heads/main/logo-mark/horizontal/Nebari-Logo-Horizontal-Lockup.png">
-      <img alt="Nebari" src="https://raw.githubusercontent.com/nebari-dev/nebari-design/refs/heads/main/logo-mark/horizontal/Nebari-Logo-Horizontal-Lockup.png" width="300">
+      <source media="(prefers-color-scheme: dark)" srcset="docs/Nebari-Logo-Horizontal-Lockup-White-text.png">
+      <source media="(prefers-color-scheme: light)" srcset="docs/Nebari-Logo-Horizontal-Lockup.png">
+      <img alt="Nebari" src="docs/Nebari-Logo-Horizontal-Lockup.png" width="300">
     </picture>
   </a>
 </p>
