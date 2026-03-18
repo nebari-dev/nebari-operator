@@ -317,6 +317,190 @@ spec:
 		})
 	})
 
+	Context("Auth config hash guard (issue #29)", func() {
+		// These tests require Keycloak because ProvisionClient must succeed at least
+		// once to populate status.authConfigHash.
+		BeforeAll(func() {
+			By("checking if Keycloak is available")
+			cmd := exec.Command("kubectl", "get", "namespace", keycloakNamespace)
+			_, err := utils.Run(cmd)
+			if err != nil {
+				Skip("Keycloak namespace not found - skipping hash-guard e2e tests")
+			}
+			cmd = exec.Command("kubectl", "get", "secret", "nebari-realm-admin-credentials", "-n", keycloakNamespace)
+			_, err = utils.Run(cmd)
+			if err != nil {
+				Skip("Keycloak admin secret not found - skipping hash-guard e2e tests")
+			}
+		})
+
+		const appName = "test-hash-guard"
+		const hostname = "hash-guard.example.com"
+
+		AfterAll(func() {
+			cmd := exec.Command("kubectl", "delete", "nebariapp", appName, "-n", testNamespace, "--ignore-not-found")
+			_, _ = utils.Run(cmd)
+		})
+
+		It("should populate authConfigHash after first successful provisioning", func() {
+			By("creating a NebariApp with provisionClient=true")
+			nebariAppYAML := `
+apiVersion: reconcilers.nebari.dev/v1
+kind: NebariApp
+metadata:
+  name: ` + appName + `
+  namespace: ` + testNamespace + `
+spec:
+  hostname: ` + hostname + `
+  service:
+    name: test-app
+    port: 80
+  auth:
+    enabled: true
+    provider: keycloak
+    provisionClient: true
+    redirectURI: /oauth2/callback
+    scopes:
+      - openid
+      - profile
+      - email
+`
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(nebariAppYAML)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("waiting for AuthReady=True")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "nebariapp", appName,
+					"-n", testNamespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='AuthReady')].status}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("True"))
+			}, VeryLongTimeout, SlowPollInterval).Should(Succeed())
+
+			By("verifying authConfigHash is non-empty in status")
+			cmd = exec.Command("kubectl", "get", "nebariapp", appName,
+				"-n", testNamespace,
+				"-o", "jsonpath={.status.authConfigHash}")
+			output, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(output).NotTo(BeEmpty(), "authConfigHash must be set after first successful provisioning")
+			// SHA-256 hex string is 64 chars
+			Expect(output).To(HaveLen(64))
+		})
+
+		It("should keep authConfigHash stable across requeue cycles when spec is unchanged", func() {
+			By("reading the current authConfigHash")
+			cmd := exec.Command("kubectl", "get", "nebariapp", appName,
+				"-n", testNamespace,
+				"-o", "jsonpath={.status.authConfigHash}")
+			hashBefore, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(hashBefore).NotTo(BeEmpty())
+
+			By("waiting for two full requeue cycles (~2 minutes) without any spec change")
+			// The controller requeues every 60s; waiting 2.5 minutes guarantees at
+			// least two reconcile passes have occurred.
+			time.Sleep(2*time.Minute + 30*time.Second)
+
+			By("verifying authConfigHash has not changed")
+			cmd = exec.Command("kubectl", "get", "nebariapp", appName,
+				"-n", testNamespace,
+				"-o", "jsonpath={.status.authConfigHash}")
+			hashAfter, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(hashAfter).To(Equal(hashBefore),
+				"authConfigHash must not change when spec is unchanged (provisioning should be skipped)")
+
+			By("verifying controller logs contain skip message")
+			cmd = exec.Command("kubectl", "logs",
+				"-n", namespace,
+				"-l", "control-plane=controller-manager",
+				"--since=180s",
+				"--container=manager")
+			logs, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(logs).To(ContainSubstring("skipping OIDC client provisioning"),
+				"controller log should record that provisioning was skipped")
+		})
+
+		It("should update authConfigHash and re-provision when redirectURI changes", func() {
+			By("reading the current authConfigHash")
+			cmd := exec.Command("kubectl", "get", "nebariapp", appName,
+				"-n", testNamespace,
+				"-o", "jsonpath={.status.authConfigHash}")
+			hashBefore, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(hashBefore).NotTo(BeEmpty())
+
+			By("patching spec.auth.redirectURI to a new value")
+			cmd = exec.Command("kubectl", "patch", "nebariapp", appName,
+				"-n", testNamespace,
+				"--type=merge",
+				`-p={"spec":{"auth":{"redirectURI":"/auth/callback"}}}`)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("waiting for authConfigHash to be updated in status")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "nebariapp", appName,
+					"-n", testNamespace,
+					"-o", "jsonpath={.status.authConfigHash}")
+				hashAfter, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(hashAfter).NotTo(Equal(hashBefore),
+					"authConfigHash must change after spec mutation")
+			}, LongTimeout, SlowPollInterval).Should(Succeed())
+
+			By("verifying AuthReady is still True after re-provisioning")
+			cmd = exec.Command("kubectl", "get", "nebariapp", appName,
+				"-n", testNamespace,
+				"-o", "jsonpath={.status.conditions[?(@.type=='AuthReady')].status}")
+			output, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(output).To(Equal("True"))
+		})
+
+		It("should re-provision when nebari.dev/force-reprovision annotation is set", func() {
+			By("reading the current authConfigHash")
+			cmd := exec.Command("kubectl", "get", "nebariapp", appName,
+				"-n", testNamespace,
+				"-o", "jsonpath={.status.authConfigHash}")
+			hashBefore, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(hashBefore).NotTo(BeEmpty())
+
+			By("annotating the NebariApp with nebari.dev/force-reprovision=true")
+			cmd = exec.Command("kubectl", "annotate", "nebariapp", appName,
+				"-n", testNamespace,
+				"nebari.dev/force-reprovision=true",
+				"--overwrite")
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("waiting for the force-reprovision annotation to be cleared by the controller")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "nebariapp", appName,
+					"-n", testNamespace,
+					"-o", "jsonpath={.metadata.annotations.nebari\\.dev/force-reprovision}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(BeEmpty(),
+					"force-reprovision annotation must be cleared after re-provisioning")
+			}, LongTimeout, SlowPollInterval).Should(Succeed())
+
+			By("verifying AuthReady is still True after forced re-provisioning")
+			cmd = exec.Command("kubectl", "get", "nebariapp", appName,
+				"-n", testNamespace,
+				"-o", "jsonpath={.status.conditions[?(@.type=='AuthReady')].status}")
+			output, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(output).To(Equal("True"))
+		})
+	})
+
 	// 	Context("When using generic OIDC provider", func() {
 	// 		It("should create SecurityPolicy with manually provisioned client", func() {
 	// 			By("creating a client secret manually")
