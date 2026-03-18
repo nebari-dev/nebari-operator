@@ -499,6 +499,16 @@ type NebariAppStatus struct {
 	// +optional
 	ClientSecretRef *ResourceReference `json:"clientSecretRef,omitempty"`
 
+	// AuthConfigHash stores a SHA-256 hash of the last successfully provisioned OIDC
+	// client configuration. When this matches the hash of the current spec, and the
+	// AuthReady condition is True, ProvisionClient is skipped to avoid unnecessary
+	// external API calls on every reconcile cycle.
+	// To force re-provisioning, set the nebari.dev/force-reprovision annotation on
+	// the NebariApp. The annotation is automatically removed after the forced
+	// re-provisioning completes.
+	// +optional
+	AuthConfigHash string `json:"authConfigHash,omitempty"`
+
 	// ServiceDiscovery is the computed service discovery descriptor.
 	// The controller populates this after reconciling spec.landingPage so the
 	// webapi watcher can consume a pre-validated, URL-resolved view via

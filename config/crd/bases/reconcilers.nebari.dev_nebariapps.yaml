@@ -483,6 +483,16 @@ spec:
           status:
             description: status defines the observed state of NebariApp
             properties:
+              authConfigHash:
+                description: |-
+                  AuthConfigHash stores a SHA-256 hash of the last successfully provisioned OIDC
+                  client configuration. When this matches the hash of the current spec, and the
+                  AuthReady condition is True, ProvisionClient is skipped to avoid unnecessary
+                  external API calls on every reconcile cycle.
+                  To force re-provisioning, set the nebari.dev/force-reprovision annotation on
+                  the NebariApp. The annotation is automatically removed after the forced
+                  re-provisioning completes.
+                type: string
               clientSecretRef:
                 description: ClientSecretRef identifies the Secret containing OIDC
                   client credentials.

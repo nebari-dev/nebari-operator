@@ -47,6 +47,7 @@ type mockProvider struct {
 	provisionError       error
 	deleteError          error
 	issuerError          error
+	provisionCount       int // tracks how many times ProvisionClient was called
 }
 
 func (m *mockProvider) GetIssuerURL(ctx context.Context, nebariApp *appsv1.NebariApp) (string, error) {
@@ -68,6 +69,7 @@ func (m *mockProvider) GetClientID(ctx context.Context, nebariApp *appsv1.Nebari
 }
 
 func (m *mockProvider) ProvisionClient(ctx context.Context, nebariApp *appsv1.NebariApp) error {
+	m.provisionCount++
 	return m.provisionError
 }
 
@@ -475,6 +477,8 @@ func TestReconcileAuth(t *testing.T) {
 		existingSecurityPolicy *egv1alpha1.SecurityPolicy
 		provider               *mockProvider
 		expectError            bool
+		// validate runs additional assertions after reconciliation (optional)
+		validate func(*testing.T, *mockProvider, *appsv1.NebariApp)
 	}{
 		{
 			name: "Auth not enabled",
@@ -642,6 +646,179 @@ func TestReconcileAuth(t *testing.T) {
 			},
 			expectError: false,
 		},
+		// --- Hash-guard tests ---
+		{
+			name: "Skip provisioning when hash matches and AuthReady=True",
+			nebariApp: func() *appsv1.NebariApp {
+				app := &appsv1.NebariApp{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "test-app",
+						Namespace: "default",
+					},
+					Spec: appsv1.NebariAppSpec{
+						Hostname: "test.example.com",
+						Auth: &appsv1.AuthConfig{
+							Enabled:         true,
+							Provider:        constants.ProviderKeycloak,
+							ProvisionClient: boolPtr(true),
+						},
+					},
+				}
+				// Pre-set a matching hash and AuthReady=True to trigger the skip path
+				app.Status.AuthConfigHash = computeAuthConfigHash(app)
+				app.Status.Conditions = []metav1.Condition{{
+					Type:               appsv1.ConditionTypeAuthReady,
+					Status:             metav1.ConditionTrue,
+					Reason:             "AuthConfigured",
+					LastTransitionTime: metav1.Now(),
+				}}
+				return app
+			}(),
+			existingSecret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app-oidc-client",
+					Namespace: "default",
+				},
+				Data: map[string][]byte{
+					constants.ClientSecretKey: []byte("test-secret"),
+				},
+			},
+			provider: &mockProvider{
+				issuerURL:            "https://keycloak.example.com/realms/test",
+				clientID:             "test-client",
+				supportsProvisioning: true,
+			},
+			expectError: false,
+			validate: func(t *testing.T, p *mockProvider, app *appsv1.NebariApp) {
+				if p.provisionCount != 0 {
+					t.Errorf("expected ProvisionClient to be skipped, called %d time(s)", p.provisionCount)
+				}
+			},
+		},
+		{
+			name: "Re-provision when spec changes (hash mismatch)",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app",
+					Namespace: "default",
+				},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "test.example.com",
+					Auth: &appsv1.AuthConfig{
+						Enabled:         true,
+						Provider:        constants.ProviderKeycloak,
+						ProvisionClient: boolPtr(true),
+					},
+				},
+				Status: appsv1.NebariAppStatus{
+					AuthConfigHash: "stale-hash-will-not-match",
+					Conditions: []metav1.Condition{{
+						Type:               appsv1.ConditionTypeAuthReady,
+						Status:             metav1.ConditionTrue,
+						Reason:             "AuthConfigured",
+						LastTransitionTime: metav1.Now(),
+					}},
+				},
+			},
+			// No secret pre-created; validateAuthConfig will fail after provisioning
+			provider: &mockProvider{
+				issuerURL:            "https://keycloak.example.com/realms/test",
+				clientID:             "test-client",
+				supportsProvisioning: true,
+			},
+			expectError: true, // validateAuthConfig fails (mock doesn't create the secret)
+			validate: func(t *testing.T, p *mockProvider, app *appsv1.NebariApp) {
+				if p.provisionCount != 1 {
+					t.Errorf("expected ProvisionClient called once, got %d", p.provisionCount)
+				}
+				if app.Status.AuthConfigHash == "stale-hash-will-not-match" {
+					t.Error("expected AuthConfigHash to be updated after provisioning")
+				}
+			},
+		},
+		{
+			name: "Provision on first reconcile (no stored hash, AuthReady unset)",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app",
+					Namespace: "default",
+				},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "test.example.com",
+					Auth: &appsv1.AuthConfig{
+						Enabled:         true,
+						Provider:        constants.ProviderKeycloak,
+						ProvisionClient: boolPtr(true),
+					},
+				},
+			},
+			// No secret; validateAuthConfig will fail but provisioning must run first
+			provider: &mockProvider{
+				issuerURL:            "https://keycloak.example.com/realms/test",
+				clientID:             "test-client",
+				supportsProvisioning: true,
+			},
+			expectError: true,
+			validate: func(t *testing.T, p *mockProvider, app *appsv1.NebariApp) {
+				if p.provisionCount != 1 {
+					t.Errorf("expected ProvisionClient called once on first reconcile, got %d", p.provisionCount)
+				}
+			},
+		},
+		{
+			name: "Force re-provision via annotation overrides matching hash",
+			nebariApp: func() *appsv1.NebariApp {
+				app := &appsv1.NebariApp{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "test-app",
+						Namespace: "default",
+						Annotations: map[string]string{
+							constants.AnnotationForceReprovision: "true",
+						},
+					},
+					Spec: appsv1.NebariAppSpec{
+						Hostname: "test.example.com",
+						Auth: &appsv1.AuthConfig{
+							Enabled:         true,
+							Provider:        constants.ProviderKeycloak,
+							ProvisionClient: boolPtr(true),
+						},
+					},
+				}
+				// Hash matches and AuthReady=True, but annotation forces re-provision
+				app.Status.AuthConfigHash = computeAuthConfigHash(app)
+				app.Status.Conditions = []metav1.Condition{{
+					Type:               appsv1.ConditionTypeAuthReady,
+					Status:             metav1.ConditionTrue,
+					Reason:             "AuthConfigured",
+					LastTransitionTime: metav1.Now(),
+				}}
+				return app
+			}(),
+			existingSecret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app-oidc-client",
+					Namespace: "default",
+				},
+				Data: map[string][]byte{
+					constants.ClientSecretKey: []byte("test-secret"),
+				},
+			},
+			provider: &mockProvider{
+				issuerURL:            "https://keycloak.example.com/realms/test",
+				clientID:             "test-client",
+				supportsProvisioning: true,
+			},
+			expectError: false,
+			validate: func(t *testing.T, p *mockProvider, app *appsv1.NebariApp) {
+				if p.provisionCount != 1 {
+					t.Errorf("expected forced ProvisionClient called once, got %d", p.provisionCount)
+				}
+				if _, ok := app.Annotations[constants.AnnotationForceReprovision]; ok {
+					t.Error("expected force-reprovision annotation to be cleared after reconcile")
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -709,6 +886,11 @@ func TestReconcileAuth(t *testing.T) {
 						t.Error("expected SecurityPolicy to NOT be created when enforceAtGateway=false")
 					}
 				}
+			}
+
+			// Run additional per-test assertions if provided
+			if tt.validate != nil {
+				tt.validate(t, tt.provider, tt.nebariApp)
 			}
 		})
 	}
