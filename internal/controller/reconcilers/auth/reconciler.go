@@ -64,16 +64,16 @@ func shouldProvisionClient(auth *appsv1.AuthConfig) bool {
 // authProvisionState is the subset of NebariApp fields that affect OIDC client
 // provisioning. It is JSON-marshalled and SHA-256 hashed to produce AuthConfigHash.
 type authProvisionState struct {
-	Namespace      string                          `json:"namespace"`
-	Name           string                          `json:"name"`
-	Hostname       string                          `json:"hostname"`
-	Provider       string                          `json:"provider"`
-	RedirectURI    string                          `json:"redirectURI"`
-	IssuerURL      string                          `json:"issuerURL"`
-	Scopes         []string                        `json:"scopes"`
-	Groups         []string                        `json:"groups"`
-	SPAClient      *appsv1.SPAClientConfig         `json:"spaClient,omitempty"`
-	KeycloakConfig *appsv1.KeycloakClientConfig    `json:"keycloakConfig,omitempty"`
+	Namespace      string                       `json:"namespace"`
+	Name           string                       `json:"name"`
+	Hostname       string                       `json:"hostname"`
+	Provider       string                       `json:"provider"`
+	RedirectURI    string                       `json:"redirectURI"`
+	IssuerURL      string                       `json:"issuerURL"`
+	Scopes         []string                     `json:"scopes"`
+	Groups         []string                     `json:"groups"`
+	SPAClient      *appsv1.SPAClientConfig      `json:"spaClient,omitempty"`
+	KeycloakConfig *appsv1.KeycloakClientConfig `json:"keycloakConfig,omitempty"`
 }
 
 // computeAuthConfigHash returns a SHA-256 hex digest of the NebariApp fields that
