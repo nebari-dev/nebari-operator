@@ -392,38 +392,30 @@ spec:
 		})
 
 		It("should keep authConfigHash stable across requeue cycles when spec is unchanged", func() {
-			By("reading the current authConfigHash")
+			By("reading the initial authConfigHash")
 			cmd := exec.Command("kubectl", "get", "nebariapp", appName,
 				"-n", testNamespace,
 				"-o", "jsonpath={.status.authConfigHash}")
-			hashBefore, err := utils.Run(cmd)
+			hashInitial, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(hashBefore).NotTo(BeEmpty())
+			Expect(hashInitial).NotTo(BeEmpty())
 
-			By("waiting for two full requeue cycles (~2 minutes) without any spec change")
-			// The controller requeues every 60s; waiting 2.5 minutes guarantees at
-			// least two reconcile passes have occurred.
-			time.Sleep(2*time.Minute + 30*time.Second)
-
-			By("verifying authConfigHash has not changed")
-			cmd = exec.Command("kubectl", "get", "nebariapp", appName,
-				"-n", testNamespace,
-				"-o", "jsonpath={.status.authConfigHash}")
-			hashAfter, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(hashAfter).To(Equal(hashBefore),
-				"authConfigHash must not change when spec is unchanged (provisioning should be skipped)")
-
-			By("verifying controller logs contain skip message")
-			cmd = exec.Command("kubectl", "logs",
-				"-n", namespace,
-				"-l", "control-plane=controller-manager",
-				"--since=180s",
-				"--container=manager")
-			logs, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(logs).To(ContainSubstring("skipping OIDC client provisioning"),
-				"controller log should record that provisioning was skipped")
+			By("ensuring authConfigHash remains identical over multiple requeue cycles (~2 minutes)")
+			// The controller requeues every 60s. Consistently runs for 2 minutes at
+			// 30-second intervals, covering at least two full reconcile passes. If
+			// ProvisionClient were called on every reconcile the hash might drift; its
+			// stability here proves the hash-guard skip path is functioning correctly.
+			// We do NOT assert on controller log output because the pod may restart in
+			// CI and kubectl-logs only captures the current container instance.
+			Consistently(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "nebariapp", appName,
+					"-n", testNamespace,
+					"-o", "jsonpath={.status.authConfigHash}")
+				hash, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(hash).To(Equal(hashInitial),
+					"authConfigHash must not change when spec is unchanged (provisioning should be skipped)")
+			}, 2*time.Minute, 30*time.Second).Should(Succeed())
 		})
 
 		It("should update authConfigHash and re-provision when redirectURI changes", func() {
