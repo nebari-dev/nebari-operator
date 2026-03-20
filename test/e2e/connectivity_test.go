@@ -307,6 +307,8 @@ spec:
 			}, 3*time.Minute, 5*time.Second).Should(Succeed())
 
 			By("waiting for HTTPRoute to be accepted")
+			// HTTPS routes targeting a TLS-terminating listener take longer for Envoy Gateway
+			// to accept in resource-constrained CI environments; use a generous timeout.
 			Eventually(func(g Gomega) {
 				cmd := exec.Command("kubectl", "get", "httproute", "test-https-connectivity-route",
 					"-n", testNamespace,
@@ -314,7 +316,27 @@ spec:
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(output).To(Equal("True"))
-			}, 3*time.Minute, 5*time.Second).Should(Succeed())
+			}, 5*time.Minute, 5*time.Second).Should(Succeed(),
+				func() string { return ConnectivityDiagnostics(testNamespace, "test-https-connectivity") })
+
+			By("waiting for HTTPRoute to be programmed (ResolvedRefs)")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "httproute", "test-https-connectivity-route",
+					"-n", testNamespace,
+					"-o", "jsonpath={.status.parents[0].conditions[?(@.type=='ResolvedRefs')].status}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("True"))
+			}, 2*time.Minute, 5*time.Second).Should(Succeed())
+
+			By("dumping HTTPRoute details for debugging")
+			cmd = exec.Command("kubectl", "get", "httproute", "test-https-connectivity-route",
+				"-n", testNamespace, "-o", "yaml")
+			routeYAML, _ := utils.Run(cmd)
+			fmt.Fprintf(GinkgoWriter, "HTTPRoute:\n%s\n", routeYAML)
+
+			By("waiting for Envoy configuration to propagate")
+			time.Sleep(10 * time.Second)
 
 			By("testing HTTPS connectivity via Gateway IP")
 			// Try direct access first, fall back to port-forward if needed
