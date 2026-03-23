@@ -486,6 +486,28 @@ func TestReconcileAuth(t *testing.T) {
 			expectError: false,
 		},
 		{
+			name: "Auth disabled with pre-existing SecurityPolicy - deletes it",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app",
+					Namespace: "default",
+				},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "test.example.com",
+					Auth: &appsv1.AuthConfig{
+						Enabled: false,
+					},
+				},
+			},
+			existingSecurityPolicy: &egv1alpha1.SecurityPolicy{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      naming.SecurityPolicyName(&appsv1.NebariApp{ObjectMeta: metav1.ObjectMeta{Name: "test-app", Namespace: "default"}}),
+					Namespace: "default",
+				},
+			},
+			expectError: false,
+		},
+		{
 			name: "Auth enabled with valid config",
 			nebariApp: &appsv1.NebariApp{
 				ObjectMeta: metav1.ObjectMeta{
@@ -649,6 +671,18 @@ func TestReconcileAuth(t *testing.T) {
 			}
 			if !tt.expectError && err != nil {
 				t.Errorf("expected no error, got: %v", err)
+			}
+
+			// If auth is disabled and there was a pre-existing SecurityPolicy, verify it was deleted
+			if !tt.expectError && tt.nebariApp.Spec.Auth != nil && !tt.nebariApp.Spec.Auth.Enabled && tt.existingSecurityPolicy != nil {
+				securityPolicy := &egv1alpha1.SecurityPolicy{}
+				err := client.Get(context.Background(), types.NamespacedName{
+					Name:      naming.SecurityPolicyName(tt.nebariApp),
+					Namespace: tt.nebariApp.Namespace,
+				}, securityPolicy)
+				if err == nil {
+					t.Error("expected SecurityPolicy to be deleted when auth is disabled, but it still exists")
+				}
 			}
 
 			// If auth is enabled and no error, verify SecurityPolicy based on enforceAtGateway setting

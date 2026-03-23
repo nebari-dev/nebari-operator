@@ -72,9 +72,14 @@ func shouldEnforceAtGateway(auth *appsv1.AuthConfig) bool {
 func (r *AuthReconciler) ReconcileAuth(ctx context.Context, nebariApp *appsv1.NebariApp) error {
 	logger := log.FromContext(ctx)
 
-	// Skip if auth is not enabled
+	// Skip if auth is not enabled, but clean up any existing SecurityPolicy first
 	if nebariApp.Spec.Auth == nil || !nebariApp.Spec.Auth.Enabled {
-		logger.Info("Auth not enabled, skipping auth reconciliation")
+		logger.Info("Auth not enabled, cleaning up any existing SecurityPolicy")
+		if err := r.deleteSecurityPolicyIfExists(ctx, nebariApp); err != nil {
+			conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionFalse,
+				"SecurityPolicyCleanupFailed", fmt.Sprintf("Failed to delete existing SecurityPolicy: %v", err))
+			return err
+		}
 		conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionFalse,
 			"AuthDisabled", "Authentication is not enabled for this app")
 		return nil
