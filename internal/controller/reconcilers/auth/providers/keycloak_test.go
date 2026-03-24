@@ -26,10 +26,12 @@ import (
 
 	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
 	"github.com/nebari-dev/nebari-operator/internal/config"
+	"github.com/nebari-dev/nebari-operator/internal/controller/utils/constants"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/naming"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -224,14 +226,19 @@ func TestKeycloakProvider_StoreClientSecret(t *testing.T) {
 	_ = appsv1.AddToScheme(scheme)
 
 	tests := []struct {
-		name           string
-		nebariApp      *appsv1.NebariApp
-		clientSecret   string
-		existingSecret *corev1.Secret
-		expectError    bool
+		name              string
+		nebariApp         *appsv1.NebariApp
+		clientID          string
+		clientSecret      string
+		externalIssuer    string
+		spaClientID       string
+		deviceClientID    string
+		existingSecret    *corev1.Secret
+		expectError       bool
+		expectedSecretLen int // expected number of keys in the secret
 	}{
 		{
-			name: "Create new secret",
+			name: "Create new secret with basic fields",
 			nebariApp: &appsv1.NebariApp{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-app",
@@ -239,9 +246,12 @@ func TestKeycloakProvider_StoreClientSecret(t *testing.T) {
 					UID:       "test-uid",
 				},
 			},
-			clientSecret:   "test-secret-value",
-			existingSecret: nil,
-			expectError:    false,
+			clientID:          "default-test-app",
+			clientSecret:      "test-secret-value",
+			externalIssuer:    "https://keycloak.example.com/realms/nebari",
+			existingSecret:    nil,
+			expectError:       false,
+			expectedSecretLen: 3, // client-id, client-secret, issuer-url
 		},
 		{
 			name: "Update existing secret",
@@ -252,7 +262,9 @@ func TestKeycloakProvider_StoreClientSecret(t *testing.T) {
 					UID:       "test-uid",
 				},
 			},
-			clientSecret: "new-secret-value",
+			clientID:       "default-test-app",
+			clientSecret:   "new-secret-value",
+			externalIssuer: "https://keycloak.example.com/realms/nebari",
 			existingSecret: &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: naming.ClientSecretName(&appsv1.NebariApp{
@@ -267,7 +279,26 @@ func TestKeycloakProvider_StoreClientSecret(t *testing.T) {
 					"client-secret": []byte("old-secret-value"),
 				},
 			},
-			expectError: false,
+			expectError:       false,
+			expectedSecretLen: 3,
+		},
+		{
+			name: "Create secret with all fields including SPA and device client",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app",
+					Namespace: "default",
+					UID:       "test-uid",
+				},
+			},
+			clientID:          "default-test-app",
+			clientSecret:      "test-secret-value",
+			externalIssuer:    "https://keycloak.example.com/realms/nebari",
+			spaClientID:       "default-test-app-spa",
+			deviceClientID:    "default-test-app-device",
+			existingSecret:    nil,
+			expectError:       false,
+			expectedSecretLen: 5, // client-id, client-secret, issuer-url, spa-client-id, device-client-id
 		},
 	}
 
@@ -281,20 +312,60 @@ func TestKeycloakProvider_StoreClientSecret(t *testing.T) {
 				builder = builder.WithObjects(tt.existingSecret)
 			}
 
-			client := builder.Build()
+			k8sClient := builder.Build()
 
 			provider := &KeycloakProvider{
 				Config: config.KeycloakConfig{},
-				Client: client,
+				Client: k8sClient,
 			}
 
-			err := provider.storeClientSecret(context.Background(), tt.nebariApp, tt.clientSecret, "")
+			err := provider.storeClientSecret(context.Background(), tt.nebariApp, tt.clientID, tt.clientSecret, tt.externalIssuer, tt.spaClientID, tt.deviceClientID)
 
 			if tt.expectError && err == nil {
 				t.Error("expected error, got nil")
 			}
 			if !tt.expectError && err != nil {
 				t.Errorf("expected no error, got: %v", err)
+			}
+
+			if !tt.expectError {
+				// Verify the secret was created/updated with correct keys
+				secret := &corev1.Secret{}
+				secretName := naming.ClientSecretName(tt.nebariApp)
+				err := k8sClient.Get(context.Background(), types.NamespacedName{
+					Name:      secretName,
+					Namespace: tt.nebariApp.Namespace,
+				}, secret)
+				if err != nil {
+					t.Fatalf("failed to get secret: %v", err)
+				}
+
+				if len(secret.Data) != tt.expectedSecretLen {
+					t.Errorf("expected %d keys in secret, got %d", tt.expectedSecretLen, len(secret.Data))
+				}
+
+				// Verify required keys
+				if string(secret.Data[constants.ClientIDKey]) != tt.clientID {
+					t.Errorf("expected client-id %q, got %q", tt.clientID, string(secret.Data[constants.ClientIDKey]))
+				}
+				if string(secret.Data[constants.ClientSecretKey]) != tt.clientSecret {
+					t.Errorf("expected client-secret %q, got %q", tt.clientSecret, string(secret.Data[constants.ClientSecretKey]))
+				}
+				if string(secret.Data[constants.IssuerURLKey]) != tt.externalIssuer {
+					t.Errorf("expected issuer-url %q, got %q", tt.externalIssuer, string(secret.Data[constants.IssuerURLKey]))
+				}
+
+				// Verify optional keys
+				if tt.spaClientID != "" {
+					if string(secret.Data[constants.SPAClientIDKey]) != tt.spaClientID {
+						t.Errorf("expected spa-client-id %q, got %q", tt.spaClientID, string(secret.Data[constants.SPAClientIDKey]))
+					}
+				}
+				if tt.deviceClientID != "" {
+					if string(secret.Data[constants.DeviceClientIDKey]) != tt.deviceClientID {
+						t.Errorf("expected device-client-id %q, got %q", tt.deviceClientID, string(secret.Data[constants.DeviceClientIDKey]))
+					}
+				}
 			}
 		})
 	}
@@ -1220,5 +1291,93 @@ func TestKeycloakProvider_ShouldProvisionSPAClient(t *testing.T) {
 				t.Errorf("expected %v, got %v", tt.expected, result)
 			}
 		})
+	}
+}
+
+func TestKeycloakProvider_ShouldProvisionDeviceFlowClient(t *testing.T) {
+	provider := &KeycloakProvider{
+		Config: config.KeycloakConfig{},
+	}
+
+	tests := []struct {
+		name      string
+		nebariApp *appsv1.NebariApp
+		expected  bool
+	}{
+		{
+			name: "Device flow client enabled",
+			nebariApp: &appsv1.NebariApp{
+				Spec: appsv1.NebariAppSpec{
+					Auth: &appsv1.AuthConfig{
+						Enabled: true,
+						DeviceFlowClient: &appsv1.DeviceFlowClientConfig{
+							Enabled: true,
+						},
+					},
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "Device flow client disabled",
+			nebariApp: &appsv1.NebariApp{
+				Spec: appsv1.NebariAppSpec{
+					Auth: &appsv1.AuthConfig{
+						Enabled: true,
+						DeviceFlowClient: &appsv1.DeviceFlowClientConfig{
+							Enabled: false,
+						},
+					},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "Device flow client not configured",
+			nebariApp: &appsv1.NebariApp{
+				Spec: appsv1.NebariAppSpec{
+					Auth: &appsv1.AuthConfig{
+						Enabled: true,
+					},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "Nil auth config",
+			nebariApp: &appsv1.NebariApp{
+				Spec: appsv1.NebariAppSpec{},
+			},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := provider.shouldProvisionDeviceFlowClient(tt.nebariApp)
+			if result != tt.expected {
+				t.Errorf("expected %v, got %v", tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestKeycloakProvider_GetDeviceFlowClientID(t *testing.T) {
+	provider := &KeycloakProvider{
+		Config: config.KeycloakConfig{},
+	}
+
+	nebariApp := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-app",
+			Namespace: "default",
+		},
+	}
+
+	clientID := provider.GetDeviceFlowClientID(context.Background(), nebariApp)
+	expected := "default-test-app-device"
+
+	if clientID != expected {
+		t.Errorf("expected device flow client ID %q, got %q", expected, clientID)
 	}
 }

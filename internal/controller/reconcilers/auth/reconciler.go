@@ -115,6 +115,14 @@ func (r *AuthReconciler) ReconcileAuth(ctx context.Context, nebariApp *appsv1.Ne
 		}
 		logger.Info("OIDC client provisioned successfully")
 		r.Recorder.Event(nebariApp, corev1.EventTypeNormal, "Provisioned", "OIDC client provisioned successfully")
+
+		// Reconcile RBAC for OIDC secret access
+		logger.Info("Reconciling Secret RBAC")
+		if err := r.reconcileSecretRBAC(ctx, nebariApp); err != nil {
+			conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionFalse,
+				"RBACFailed", fmt.Sprintf("Failed to reconcile Secret RBAC: %v", err))
+			return err
+		}
 	}
 
 	// Validate auth configuration (check client secret exists)
