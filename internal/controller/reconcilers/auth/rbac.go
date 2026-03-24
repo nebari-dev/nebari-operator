@@ -23,13 +23,13 @@ import (
 	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/naming"
 	rbacv1 "k8s.io/api/rbac/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
+// reconcileSecretRBAC creates or updates a Role and RoleBinding that scopes
+// read access to the OIDC client Secret to the app's ServiceAccount.
 func (r *AuthReconciler) reconcileSecretRBAC(ctx context.Context, nebariApp *appsv1.NebariApp) error {
 	logger := log.FromContext(ctx)
 
@@ -48,10 +48,7 @@ func (r *AuthReconciler) reconcileSecretRBAC(ctx context.Context, nebariApp *app
 			Namespace: nebariApp.Namespace,
 		},
 	}
-
-	existing := &rbacv1.Role{}
-	err := r.Client.Get(ctx, types.NamespacedName{Name: rbacName, Namespace: nebariApp.Namespace}, existing)
-	if apierrors.IsNotFound(err) {
+	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, role, func() error {
 		role.Rules = []rbacv1.PolicyRule{
 			{
 				APIGroups:     []string{""},
@@ -60,27 +57,9 @@ func (r *AuthReconciler) reconcileSecretRBAC(ctx context.Context, nebariApp *app
 				Verbs:         []string{"get"},
 			},
 		}
-		if err := controllerutil.SetControllerReference(nebariApp, role, r.Client.Scheme()); err != nil {
-			return fmt.Errorf("failed to set owner reference on Role: %w", err)
-		}
-		if err := r.Client.Create(ctx, role); err != nil {
-			return fmt.Errorf("failed to create Role: %w", err)
-		}
-		logger.Info("Created OIDC secret reader Role", "name", rbacName, "serviceAccount", saName)
-	} else if err != nil {
-		return fmt.Errorf("failed to get Role: %w", err)
-	} else {
-		existing.Rules = []rbacv1.PolicyRule{
-			{
-				APIGroups:     []string{""},
-				Resources:     []string{"secrets"},
-				ResourceNames: []string{secretName},
-				Verbs:         []string{"get"},
-			},
-		}
-		if err := r.Client.Update(ctx, existing); err != nil {
-			return fmt.Errorf("failed to update Role: %w", err)
-		}
+		return controllerutil.SetControllerReference(nebariApp, role, r.Client.Scheme())
+	}); err != nil {
+		return fmt.Errorf("failed to reconcile OIDC secret reader Role: %w", err)
 	}
 
 	// Reconcile RoleBinding
@@ -90,10 +69,7 @@ func (r *AuthReconciler) reconcileSecretRBAC(ctx context.Context, nebariApp *app
 			Namespace: nebariApp.Namespace,
 		},
 	}
-
-	existingRB := &rbacv1.RoleBinding{}
-	err = r.Client.Get(ctx, types.NamespacedName{Name: rbacName, Namespace: nebariApp.Namespace}, existingRB)
-	if apierrors.IsNotFound(err) {
+	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, rb, func() error {
 		rb.RoleRef = rbacv1.RoleRef{
 			APIGroup: "rbac.authorization.k8s.io",
 			Kind:     "Role",
@@ -106,27 +82,11 @@ func (r *AuthReconciler) reconcileSecretRBAC(ctx context.Context, nebariApp *app
 				Namespace: nebariApp.Namespace,
 			},
 		}
-		if err := controllerutil.SetControllerReference(nebariApp, rb, r.Client.Scheme()); err != nil {
-			return fmt.Errorf("failed to set owner reference on RoleBinding: %w", err)
-		}
-		if err := r.Client.Create(ctx, rb); err != nil {
-			return fmt.Errorf("failed to create RoleBinding: %w", err)
-		}
-		logger.Info("Created OIDC secret reader RoleBinding", "name", rbacName, "serviceAccount", saName)
-	} else if err != nil {
-		return fmt.Errorf("failed to get RoleBinding: %w", err)
-	} else {
-		existingRB.Subjects = []rbacv1.Subject{
-			{
-				Kind:      "ServiceAccount",
-				Name:      saName,
-				Namespace: nebariApp.Namespace,
-			},
-		}
-		if err := r.Client.Update(ctx, existingRB); err != nil {
-			return fmt.Errorf("failed to update RoleBinding: %w", err)
-		}
+		return controllerutil.SetControllerReference(nebariApp, rb, r.Client.Scheme())
+	}); err != nil {
+		return fmt.Errorf("failed to reconcile OIDC secret reader RoleBinding: %w", err)
 	}
 
+	logger.Info("Reconciled OIDC secret RBAC", "name", rbacName, "serviceAccount", saName)
 	return nil
 }
