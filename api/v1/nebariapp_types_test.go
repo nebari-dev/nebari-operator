@@ -302,6 +302,73 @@ func TestSPAClientConfig_JSONSerialization(t *testing.T) {
 	}
 }
 
+func TestDeviceFlowClientConfig_JSON(t *testing.T) {
+	tests := []struct {
+		name     string
+		json     string
+		expected DeviceFlowClientConfig
+	}{
+		{
+			name:     "enabled true",
+			json:     `{"enabled": true}`,
+			expected: DeviceFlowClientConfig{Enabled: true},
+		},
+		{
+			name:     "enabled false",
+			json:     `{"enabled": false}`,
+			expected: DeviceFlowClientConfig{Enabled: false},
+		},
+		{
+			name:     "empty object",
+			json:     `{}`,
+			expected: DeviceFlowClientConfig{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got DeviceFlowClientConfig
+			if err := json.Unmarshal([]byte(tt.json), &got); err != nil {
+				t.Fatalf("unmarshal error: %v", err)
+			}
+			if got != tt.expected {
+				t.Errorf("got %+v, want %+v", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestNebariAppSpec_ServiceAccountName(t *testing.T) {
+	tests := []struct {
+		name     string
+		json     string
+		expected string
+	}{
+		{
+			name:     "omitted defaults to empty",
+			json:     `{"hostname":"test.example.com","service":{"name":"svc","port":80}}`,
+			expected: "",
+		},
+		{
+			name:     "explicitly set",
+			json:     `{"hostname":"test.example.com","service":{"name":"svc","port":80},"serviceAccountName":"my-sa"}`,
+			expected: "my-sa",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got NebariAppSpec
+			if err := json.Unmarshal([]byte(tt.json), &got); err != nil {
+				t.Fatalf("unmarshal error: %v", err)
+			}
+			if got.ServiceAccountName != tt.expected {
+				t.Errorf("ServiceAccountName = %q, want %q", got.ServiceAccountName, tt.expected)
+			}
+		})
+	}
+}
+
 // boolPtr is a helper function to create a pointer to a bool
 func boolPtr(b bool) *bool {
 	return &b

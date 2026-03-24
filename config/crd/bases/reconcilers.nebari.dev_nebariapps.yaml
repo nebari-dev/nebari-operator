@@ -58,6 +58,25 @@ spec:
                       If not specified and ProvisionClient is enabled, the operator will create
                       a secret named "<nebariapp-name>-oidc-client".
                     type: string
+                  deviceFlowClient:
+                    description: |-
+                      DeviceFlowClient configures a public OIDC client for CLI/native app authentication
+                      using the OAuth2 Device Authorization Grant (RFC 8628).
+                      When enabled, the operator provisions a separate public client configured for device flow.
+                      The device flow client ID is written to the OIDC client Secret under key "device-client-id".
+                      Only supported for provider="keycloak".
+                    properties:
+                      enabled:
+                        default: false
+                        description: |-
+                          Enabled determines whether a public OIDC client should be provisioned for device flow.
+                          When true, the operator creates a Keycloak client configured with:
+                            - publicClient: true (no secret needed for CLI usage)
+                            - OAuth2 Device Authorization Grant enabled
+                            - standardFlowEnabled: false
+                          The device flow client ID is written to the OIDC secret for runtime consumption.
+                        type: boolean
+                    type: object
                   enabled:
                     default: false
                     description: |-
@@ -450,6 +469,13 @@ spec:
                 - name
                 - port
                 type: object
+              serviceAccountName:
+                description: |-
+                  ServiceAccountName is the name of the Kubernetes ServiceAccount used by the
+                  app's pods. Used for RBAC scoping of OIDC secrets so only the app's pods
+                  can read its credentials. Defaults to the NebariApp's name if omitted.
+                minLength: 1
+                type: string
             required:
             - hostname
             - service

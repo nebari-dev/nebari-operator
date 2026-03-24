@@ -50,6 +50,13 @@ type NebariAppSpec struct {
 	// +optional
 	Gateway string `json:"gateway,omitempty"`
 
+	// ServiceAccountName is the name of the Kubernetes ServiceAccount used by the
+	// app's pods. Used for RBAC scoping of OIDC secrets so only the app's pods
+	// can read its credentials. Defaults to the NebariApp's name if omitted.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	ServiceAccountName string `json:"serviceAccountName,omitempty"`
+
 	// LandingPage configures how this service appears on the Nebari landing page.
 	// When enabled, the service will be discoverable through the landing page portal.
 	// +optional
@@ -227,6 +234,14 @@ type AuthConfig struct {
 	// +optional
 	SPAClient *SPAClientConfig `json:"spaClient,omitempty"`
 
+	// DeviceFlowClient configures a public OIDC client for CLI/native app authentication
+	// using the OAuth2 Device Authorization Grant (RFC 8628).
+	// When enabled, the operator provisions a separate public client configured for device flow.
+	// The device flow client ID is written to the OIDC client Secret under key "device-client-id".
+	// Only supported for provider="keycloak".
+	// +optional
+	DeviceFlowClient *DeviceFlowClientConfig `json:"deviceFlowClient,omitempty"`
+
 	// KeycloakConfig provides Keycloak-specific configuration for fine-grained control
 	// over realm resources like groups, client scopes, and protocol mappers.
 	// Only used when provider="keycloak" and provisionClient=true; silently ignored
@@ -308,6 +323,20 @@ type SPAClientConfig struct {
 	// This allows custom client naming for organizational conventions.
 	// +optional
 	ClientID string `json:"clientId,omitempty"`
+}
+
+// DeviceFlowClientConfig specifies configuration for provisioning a public OIDC client
+// for CLI and native application authentication using the OAuth2 Device Authorization Grant.
+type DeviceFlowClientConfig struct {
+	// Enabled determines whether a public OIDC client should be provisioned for device flow.
+	// When true, the operator creates a Keycloak client configured with:
+	//   - publicClient: true (no secret needed for CLI usage)
+	//   - OAuth2 Device Authorization Grant enabled
+	//   - standardFlowEnabled: false
+	// The device flow client ID is written to the OIDC secret for runtime consumption.
+	// +kubebuilder:default=false
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
 }
 
 // LandingPageConfig defines how a service appears on the Nebari landing page.
