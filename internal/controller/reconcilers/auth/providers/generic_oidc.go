@@ -37,6 +37,12 @@ func (p *GenericOIDCProvider) GetIssuerURL(ctx context.Context, nebariApp *appsv
 	return nebariApp.Spec.Auth.IssuerURL, nil
 }
 
+// GetExternalIssuerURL returns the same URL as GetIssuerURL for generic OIDC.
+// Generic OIDC issuer URLs are already externally routable by definition.
+func (p *GenericOIDCProvider) GetExternalIssuerURL(ctx context.Context, nebariApp *appsv1.NebariApp) (string, error) {
+	return p.GetIssuerURL(ctx, nebariApp)
+}
+
 // GetClientID returns the OIDC client ID based on the NebariApp name.
 func (p *GenericOIDCProvider) GetClientID(ctx context.Context, nebariApp *appsv1.NebariApp) string {
 	return naming.ClientID(nebariApp)

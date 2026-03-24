@@ -31,6 +31,11 @@ type OIDCProvider interface {
 	// The URL should be accessible from within the cluster (internal DNS).
 	GetIssuerURL(ctx context.Context, nebariApp *appsv1.NebariApp) (string, error)
 
+	// GetExternalIssuerURL returns the publicly routable OIDC issuer URL.
+	// Written to the client Secret for external consumers (CLIs, frontends).
+	// For Keycloak, uses KEYCLOAK_EXTERNAL_URL. For generic OIDC, same as GetIssuerURL.
+	GetExternalIssuerURL(ctx context.Context, nebariApp *appsv1.NebariApp) (string, error)
+
 	// GetClientID returns the OIDC client ID for the application.
 	// This is typically derived from the NebariApp name/namespace.
 	GetClientID(ctx context.Context, nebariApp *appsv1.NebariApp) string

@@ -1089,6 +1089,79 @@ func TestKeycloakProvider_GetSPAClientID(t *testing.T) {
 	}
 }
 
+func TestKeycloakProvider_GetExternalIssuerURL(t *testing.T) {
+	tests := []struct {
+		name        string
+		config      config.KeycloakConfig
+		nebariApp   *appsv1.NebariApp
+		expected    string
+		expectError bool
+	}{
+		{
+			name: "External URL configured with context path",
+			config: config.KeycloakConfig{
+				ExternalURL: "https://keycloak.example.com/auth",
+				Realm:       "nebari",
+			},
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
+			},
+			expected: "https://keycloak.example.com/auth/realms/nebari",
+		},
+		{
+			name: "External URL without trailing slash",
+			config: config.KeycloakConfig{
+				ExternalURL: "https://keycloak.example.com",
+				Realm:       "myrealm",
+			},
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
+			},
+			expected: "https://keycloak.example.com/realms/myrealm",
+		},
+		{
+			name: "External URL with trailing slash",
+			config: config.KeycloakConfig{
+				ExternalURL: "https://keycloak.example.com/",
+				Realm:       "nebari",
+			},
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
+			},
+			expected: "https://keycloak.example.com/realms/nebari",
+		},
+		{
+			name: "External URL not configured",
+			config: config.KeycloakConfig{
+				Realm: "nebari",
+			},
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
+			},
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := &KeycloakProvider{Config: tt.config}
+			got, err := provider.GetExternalIssuerURL(context.Background(), tt.nebariApp)
+			if tt.expectError {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tt.expected {
+				t.Errorf("got %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}
+
 func TestKeycloakProvider_ShouldProvisionSPAClient(t *testing.T) {
 	provider := &KeycloakProvider{
 		Config: config.KeycloakConfig{},

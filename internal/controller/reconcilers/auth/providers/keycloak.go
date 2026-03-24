@@ -21,6 +21,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Nerzal/gocloak/v13"
@@ -54,6 +55,14 @@ func (p *KeycloakProvider) GetIssuerURL(ctx context.Context, nebariApp *appsv1.N
 		p.Config.IssuerServicePort,
 		p.Config.IssuerContextPath,
 		realm), nil
+}
+
+// GetExternalIssuerURL returns the publicly routable Keycloak issuer URL.
+func (p *KeycloakProvider) GetExternalIssuerURL(ctx context.Context, nebariApp *appsv1.NebariApp) (string, error) {
+	if p.Config.ExternalURL == "" {
+		return "", fmt.Errorf("KEYCLOAK_EXTERNAL_URL not configured; required for external issuer URL")
+	}
+	return fmt.Sprintf("%s/realms/%s", strings.TrimRight(p.Config.ExternalURL, "/"), p.Config.Realm), nil
 }
 
 // GetClientID returns the OIDC client ID for the NebariApp.

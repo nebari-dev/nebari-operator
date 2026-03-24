@@ -76,6 +76,12 @@ type KeycloakConfig struct {
 	// IssuerContextPath is the HTTP context path for Keycloak (e.g., "/auth")
 	IssuerContextPath string
 
+	// ExternalURL is the publicly routable base URL for Keycloak.
+	// Used to build GetExternalIssuerURL for external consumers (CLIs, frontends).
+	// Example: https://keycloak.example.com or https://keycloak.example.com/auth
+	// Set via KEYCLOAK_EXTERNAL_URL environment variable.
+	ExternalURL string
+
 	// APITimeout is the timeout for Keycloak API calls (authentication, client CRUD).
 	// Prevents reconciliation from hanging indefinitely if Keycloak is unresponsive.
 	APITimeout time.Duration
@@ -97,6 +103,7 @@ func LoadAuthConfig() AuthConfig {
 			IssuerServiceNamespace: getEnv("KEYCLOAK_ISSUER_SERVICE_NAMESPACE", constants.DefaultKeycloakNamespace),
 			IssuerServicePort:      getEnvInt("KEYCLOAK_ISSUER_SERVICE_PORT", constants.DefaultKeycloakServicePort),
 			IssuerContextPath:      getEnv("KEYCLOAK_ISSUER_CONTEXT_PATH", constants.DefaultKeycloakContextPath),
+			ExternalURL:            getEnv("KEYCLOAK_EXTERNAL_URL", ""),
 			APITimeout:             getEnvDuration("KEYCLOAK_API_TIMEOUT", 30*time.Second),
 		},
 	}
