@@ -104,6 +104,25 @@ lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
 lint-config: golangci-lint ## Verify golangci-lint linter configuration
 	"$(GOLANGCI_LINT)" config verify
 
+##@ Documentation
+
+CRD_REF_DOCS ?= $(LOCALBIN)/crd-ref-docs
+CRD_REF_DOCS_VERSION ?= v0.3.0
+
+.PHONY: docs
+docs: crd-ref-docs ## Generate API reference documentation from Go types in api/v1/.
+	$(CRD_REF_DOCS) \
+		--source-path=./api/v1 \
+		--config=docs/crd-ref-docs-config.yaml \
+		--renderer=markdown \
+		--templates-dir=docs/templates \
+		--output-path=docs/api-reference.md
+
+.PHONY: crd-ref-docs
+crd-ref-docs: $(CRD_REF_DOCS) ## Download crd-ref-docs locally if necessary.
+$(CRD_REF_DOCS): $(LOCALBIN)
+	$(call go-install-tool,$(CRD_REF_DOCS),github.com/elastic/crd-ref-docs,$(CRD_REF_DOCS_VERSION))
+
 ##@ Build
 
 .PHONY: build
