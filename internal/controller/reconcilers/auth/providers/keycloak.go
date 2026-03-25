@@ -17,10 +17,13 @@ limitations under the License.
 package providers
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -325,21 +328,32 @@ func (p *KeycloakProvider) ConfigureTokenExchange(ctx context.Context, nebariApp
 			logger.Info("Created token exchange policy", "peer", peerID)
 		}
 
-		// Create the token-exchange scoped permission using the scope ID
+		// Create the token-exchange scoped permission.
+		// gocloak's CreatePermission sends scopes as plain strings, but Keycloak's
+		// API expects scope objects [{"id":"..."}]. Use a raw HTTP request instead.
 		permName := fmt.Sprintf("%s-token-exchange-permission", peerID)
-		perm := gocloak.PermissionRepresentation{
-			Name:             gocloak.StringP(permName),
-			Type:             gocloak.StringP("scope"),
-			Scopes:           &[]string{tokenExchangeScopeID},
-			Policies:         &[]string{policyName},
-			DecisionStrategy: gocloak.AFFIRMATIVE,
+		permBody := map[string]interface{}{
+			"name":             permName,
+			"type":             "scope",
+			"scopes":           []map[string]string{{"id": tokenExchangeScopeID}},
+			"policies":         []string{policyName},
+			"decisionStrategy": "AFFIRMATIVE",
 		}
-		_, err = kcClient.CreatePermission(ctx, token.AccessToken, p.Config.Realm, internalID, perm)
+		permJSON, _ := json.Marshal(permBody)
+		permURL := fmt.Sprintf("%s/admin/realms/%s/clients/%s/authz/resource-server/permission/scope",
+			p.Config.URL, p.Config.Realm, internalID)
+		req, _ := http.NewRequestWithContext(ctx, "POST", permURL, bytes.NewReader(permJSON))
+		req.Header.Set("Authorization", "Bearer "+token.AccessToken)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
-			if !strings.Contains(err.Error(), "409") {
-				return fmt.Errorf("failed to create token-exchange permission for peer %s: %w", peerID, err)
-			}
+			return fmt.Errorf("failed to create token-exchange permission for peer %s: %w", peerID, err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode == http.StatusConflict {
 			logger.Info("Token exchange permission already exists", "peer", peerID)
+		} else if resp.StatusCode >= 400 {
+			return fmt.Errorf("failed to create token-exchange permission for peer %s: HTTP %d", peerID, resp.StatusCode)
 		} else {
 			logger.Info("Created token exchange permission", "peer", peerID)
 		}
@@ -1109,9 +1123,9 @@ func (p *KeycloakProvider) provisionDeviceFlowClient(ctx context.Context, kcClie
 
 // generateSecret generates a random secret string of the specified length.
 func generateSecret(length int) (string, error) {
-	bytes := make([]byte, length)
-	if _, err := rand.Read(bytes); err != nil {
+	randBytes := make([]byte, length)
+	if _, err := rand.Read(randBytes); err != nil {
 		return "", err
 	}
-	return base64.URLEncoding.EncodeToString(bytes)[:length], nil
+	return base64.URLEncoding.EncodeToString(randBytes)[:length], nil
 }
