@@ -12,7 +12,11 @@ Resource Definition (CRD).
   - [service](#service)
   - [routing](#routing)
   - [auth](#auth)
+    - [enforceAtGateway](#authenforceatgateway)
+    - [spaClient](#authspaclient)
+    - [keycloakConfig](#authkeycloakconfig)
   - [gateway](#gateway)
+  - [landingPage](#landingpage)
 - [Status Fields](#status-fields)
 - [Complete Examples](#complete-examples)
 
@@ -86,12 +90,24 @@ The port number on the Service to route traffic to.
 - Minimum: 1
 - Maximum: 65535
 
+#### service.namespace
+
+**Type:** `string` (optional)
+
+The namespace of the Service, if different from the NebariApp's namespace. This allows referencing services in other namespaces for centralized service architectures. The operator has cluster-scoped permissions to read Services across all namespaces.
+
+**Default:** The NebariApp's namespace
+
+**Validation:**
+- Minimum length: 1
+
 **Example:**
 ```yaml
 spec:
   service:
-    name: my-backend-service
+    name: shared-api
     port: 8080
+    namespace: shared-services
 ```
 
 
@@ -175,6 +191,22 @@ spec:
         pathType: PathPrefix                   # Explicit prefix match
   auth:
     enabled: true
+```
+
+#### routing.annotations
+
+**Type:** `map[string]string` (optional)
+
+Additional annotations to merge onto the generated HTTPRoute. Useful for tools like ArgoCD that track resources via annotations (e.g., `argocd.argoproj.io/tracking-id`). These annotations are merged with any operator-managed annotations; operator annotations always take precedence to avoid breaking internal behavior.
+
+**Example:**
+```yaml
+spec:
+  routing:
+    routes:
+      - pathPrefix: /
+    annotations:
+      argocd.argoproj.io/tracking-id: my-app:gateway.networking.k8s.io/HTTPRoute:my-ns/my-app
 ```
 
 #### routing.tls
@@ -304,6 +336,28 @@ will create a client (e.g., in Keycloak) and store the credentials in a Secret.
 
 **Default:** `true`
 
+#### auth.enforceAtGateway
+
+**Type:** `boolean` (optional)
+
+Determines whether the operator should create an Envoy Gateway SecurityPolicy to enforce authentication at the gateway level.
+
+When `true` (default), the operator creates a SecurityPolicy that handles the OIDC flow at the gateway before requests reach the application.
+
+When `false`, the operator provisions the OIDC client and stores credentials in a Secret, but does NOT create a SecurityPolicy. The application is expected to handle OAuth natively (e.g., Grafana's built-in `generic_oauth` provider). The app reads the client credentials from the operator-created Secret.
+
+**Default:** `true`
+
+**Example (app-native OAuth):**
+```yaml
+spec:
+  auth:
+    enabled: true
+    provider: keycloak
+    provisionClient: true
+    enforceAtGateway: false    # App handles OAuth itself
+```
+
 #### auth.issuerURL
 
 **Type:** `string` (required when `provider: generic-oidc`)
@@ -316,6 +370,97 @@ ignored for other providers.
 - Azure AD: `https://login.microsoftonline.com/<tenant-id>/v2.0`
 - Okta: `https://<your-domain>.okta.com`
 - Auth0: `https://<your-domain>.auth0.com`
+
+#### auth.spaClient
+
+**Type:** `object` (optional)
+
+Configures a public OIDC client for Single-Page Applications that use browser-based authentication with PKCE (e.g., React apps using keycloak-js). This client is separate from the confidential client used by Envoy Gateway's OIDC filter.
+
+The public client is configured with:
+- `publicClient: true` (no client secret, safe for browser)
+- Redirect URIs: `https://<hostname>/*` and `https://<hostname>`
+- PKCE enforcement with S256 code challenge method
+
+Only supported for `provider: keycloak`.
+
+##### auth.spaClient.enabled
+
+**Type:** `boolean` (optional)
+
+Whether to provision a public OIDC client for SPA use.
+
+**Default:** `false`
+
+##### auth.spaClient.clientId
+
+**Type:** `string` (optional)
+
+Override the generated client ID for the SPA client.
+
+**Default:** `<namespace>-<name>-spa`
+
+**Example:**
+```yaml
+spec:
+  auth:
+    enabled: true
+    provider: keycloak
+    spaClient:
+      enabled: true
+      clientId: my-app-spa
+```
+
+#### auth.keycloakConfig
+
+**Type:** `object` (optional)
+
+Keycloak-specific configuration for fine-grained control over realm resources like groups and protocol mappers. Only used when `provider: keycloak` and `provisionClient: true`; silently ignored for other providers.
+
+##### auth.keycloakConfig.groups
+
+**Type:** `array` (optional)
+
+Keycloak groups to ensure exist in the realm, with optional user membership assignments.
+
+Each entry has:
+- `name` (string, required): Group name to create in Keycloak
+- `members` (array of strings, optional): Keycloak usernames to add to the group. Membership sync is additive-only - users in this list are added, but existing members not in the list are NOT removed. Users that don't exist in Keycloak are logged as warnings but don't cause errors.
+
+##### auth.keycloakConfig.protocolMappers
+
+**Type:** `array` (optional)
+
+Client-level protocol mappers to configure on the OIDC client. These are applied directly to the client (not to shared client scopes), so each NebariApp gets isolated mapper configuration.
+
+When specified, the operator's default mappers (e.g., group-membership) are not auto-created - this configuration takes full control.
+
+Each entry has:
+- `name` (string, required): Name of the protocol mapper
+- `protocolMapper` (string, required): Mapper type identifier (e.g., `oidc-group-membership-mapper`, `oidc-usermodel-attribute-mapper`)
+- `config` (map[string]string, optional): Mapper configuration as key-value pairs
+
+**Example:**
+```yaml
+spec:
+  auth:
+    enabled: true
+    provider: keycloak
+    keycloakConfig:
+      groups:
+        - name: data-science-team
+          members:
+            - alice
+            - bob
+      protocolMappers:
+        - name: group-membership
+          protocolMapper: oidc-group-membership-mapper
+          config:
+            claim.name: groups
+            full.path: "false"
+            id.token.claim: "true"
+            access.token.claim: "true"
+```
 
 **Keycloak Authentication Example:**
 ```yaml
@@ -376,6 +521,142 @@ Specifies which shared Gateway to use for routing.
 ```yaml
 spec:
   gateway: public
+```
+
+
+
+### landingPage
+
+**Type:** `object` (optional)
+
+Configures how this service appears on the Nebari landing page portal. When enabled, the service will be discoverable through the landing page.
+
+#### landingPage.enabled
+
+**Type:** `boolean` (required)
+
+Whether this service appears on the landing page.
+
+**Default:** `false`
+
+#### landingPage.displayName
+
+**Type:** `string` (optional)
+
+Human-readable name shown on the landing page.
+
+**Validation:**
+- Maximum length: 64 characters
+
+#### landingPage.description
+
+**Type:** `string` (optional)
+
+Supplementary text shown on the service card.
+
+**Validation:**
+- Maximum length: 256 characters
+
+#### landingPage.icon
+
+**Type:** `string` (optional)
+
+Icon identifier or URL to a custom icon image. Supported built-in icons: `jupyter`, `grafana`, `prometheus`, `keycloak`, `argocd`, `kubernetes`.
+
+#### landingPage.category
+
+**Type:** `string` (optional)
+
+Groups related services together on the landing page. Common categories: `Development`, `Monitoring`, `Platform`, `Data Science`.
+
+#### landingPage.priority
+
+**Type:** `integer` (optional)
+
+Sort order within a category. Lower number = higher in the list.
+
+**Validation:**
+- Minimum: 0
+- Maximum: 1000
+
+**Default:** `100`
+
+#### landingPage.externalUrl
+
+**Type:** `string` (optional)
+
+Override the default URL derived from the hostname. Use when the service URL differs from `https://<hostname>`.
+
+#### landingPage.healthCheck
+
+**Type:** `object` (optional)
+
+Configures health status monitoring for this service.
+
+##### landingPage.healthCheck.enabled
+
+**Type:** `boolean` (required)
+
+Whether health checks are performed.
+
+**Default:** `false`
+
+##### landingPage.healthCheck.path
+
+**Type:** `string` (optional)
+
+HTTP path to check for health status. Common paths: `/health`, `/healthz`, `/api/health`.
+
+**Default:** `/health`
+
+##### landingPage.healthCheck.port
+
+**Type:** `integer` (optional)
+
+Port for health checks. If not specified, defaults to `spec.service.port`.
+
+**Validation:**
+- Minimum: 1
+- Maximum: 65535
+
+##### landingPage.healthCheck.intervalSeconds
+
+**Type:** `integer` (optional)
+
+How often to perform health checks (in seconds).
+
+**Validation:**
+- Minimum: 10
+- Maximum: 300
+
+**Default:** `30`
+
+##### landingPage.healthCheck.timeoutSeconds
+
+**Type:** `integer` (optional)
+
+Request timeout for health checks (in seconds).
+
+**Validation:**
+- Minimum: 1
+- Maximum: 30
+
+**Default:** `5`
+
+**Example:**
+```yaml
+spec:
+  landingPage:
+    enabled: true
+    displayName: My Data App
+    description: Internal data science toolkit
+    icon: jupyter
+    category: Data Science
+    priority: 10
+    healthCheck:
+      enabled: true
+      path: /api/health
+      intervalSeconds: 60
 ```
 
 
@@ -591,25 +872,69 @@ spec:
   service:
     name: backend-service
     port: 8080
+    namespace: production
   routing:
     routes:
-      - pathPrefix: /app
+      - pathPrefix: /
         pathType: PathPrefix
-      - pathPrefix: /api
+      - pathPrefix: /api/v1
+        pathType: PathPrefix
+    publicRoutes:
+      - pathPrefix: /api/v1/health
+        pathType: Exact
+      - pathPrefix: /api/v1/ready
+        pathType: Exact
+      - pathPrefix: /api/v1/webhooks
         pathType: PathPrefix
     tls:
       enabled: true
+    annotations:
+      argocd.argoproj.io/tracking-id: full-featured-app:gateway.networking.k8s.io/HTTPRoute:production/full-featured-app
   auth:
     enabled: true
     provider: keycloak
     provisionClient: true
-    clientSecretRef: my-oidc-secret
+    enforceAtGateway: true
+    redirectURI: /oauth2/callback
     scopes:
       - openid
       - profile
       - email
       - groups
+    groups:
+      - admin
+      - data-science-team
+    spaClient:
+      enabled: true
+      clientId: my-app-spa
+    keycloakConfig:
+      groups:
+        - name: data-science-team
+          members:
+            - alice
+            - bob
+      protocolMappers:
+        - name: group-membership
+          protocolMapper: oidc-group-membership-mapper
+          config:
+            claim.name: groups
+            full.path: "false"
+            id.token.claim: "true"
+            access.token.claim: "true"
   gateway: public
+  landingPage:
+    enabled: true
+    displayName: My Application
+    description: Full-featured production application
+    icon: jupyter
+    category: Data Science
+    priority: 10
+    healthCheck:
+      enabled: true
+      path: /api/v1/health
+      port: 8080
+      intervalSeconds: 30
+      timeoutSeconds: 5
 ```
 
 
@@ -646,7 +971,7 @@ administrator for namespace requirements.
 
 ### Service Requirements
 
-- The referenced Kubernetes Service must exist in the same namespace as the NebariApp
+- The referenced Kubernetes Service must exist in the same namespace as the NebariApp, unless `service.namespace` is specified to reference a service in a different namespace
 - The Service must be listening on the specified port
 - The Service should be ready to handle traffic before creating the NebariApp
 
