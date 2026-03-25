@@ -364,6 +364,9 @@ func (p *KeycloakProvider) buildRedirectURLs(nebariApp *appsv1.NebariApp) []stri
 	return []string{
 		fmt.Sprintf("https://%s%s", nebariApp.Spec.Hostname, redirectPath),
 		fmt.Sprintf("http://%s%s", nebariApp.Spec.Hostname, redirectPath),
+		// Additional redirect URIs for app-level OIDC (browser and CLI login)
+		fmt.Sprintf("https://%s/api/v1/auth/oidc/callback", nebariApp.Spec.Hostname),
+		fmt.Sprintf("https://%s/api/v1/auth/cli-login/callback", nebariApp.Spec.Hostname),
 	}
 }
 
