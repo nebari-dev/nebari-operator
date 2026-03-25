@@ -236,6 +236,90 @@ func (p *KeycloakProvider) ProvisionClient(ctx context.Context, nebariApp *appsv
 	return p.storeClientSecret(ctx, nebariApp, clientID, clientSecret, externalIssuerURL, spaClientID, deviceClientID)
 }
 
+// ConfigureTokenExchange enables OAuth 2.0 Token Exchange (RFC 8693) on this client.
+// It enables authorization services on the client, then creates a client policy and
+// token-exchange permission for each peer client that should be allowed to exchange.
+func (p *KeycloakProvider) ConfigureTokenExchange(ctx context.Context, nebariApp *appsv1.NebariApp, peerClientIDs []string) error {
+	ctx, cancel := p.withAPITimeout(ctx)
+	defer cancel()
+
+	logger := log.FromContext(ctx)
+	clientID := p.GetClientID(ctx, nebariApp)
+
+	if err := p.loadCredentials(ctx); err != nil {
+		return fmt.Errorf("failed to load Keycloak credentials: %w", err)
+	}
+
+	kcClient, token, err := p.authenticate(ctx)
+	if err != nil {
+		return err
+	}
+
+	// Find this client's internal UUID
+	existingClient, err := p.findClient(ctx, kcClient, token, clientID)
+	if err != nil {
+		return err
+	}
+	if existingClient == nil {
+		return fmt.Errorf("client %s not found, provision it first", clientID)
+	}
+	internalID := gocloak.PString(existingClient.ID)
+
+	// Enable authorization services and service accounts on this client
+	existingClient.AuthorizationServicesEnabled = gocloak.BoolP(true)
+	existingClient.ServiceAccountsEnabled = gocloak.BoolP(true)
+	if err := kcClient.UpdateClient(ctx, token.AccessToken, p.Config.Realm, *existingClient); err != nil {
+		return fmt.Errorf("failed to enable authorization services: %w", err)
+	}
+	logger.Info("Enabled authorization services", "clientID", clientID)
+
+	// For each peer client, create a client policy and token-exchange permission
+	for _, peerID := range peerClientIDs {
+		policyName := fmt.Sprintf("%s-token-exchange", peerID)
+
+		// Create client policy allowing this peer
+		policy := gocloak.PolicyRepresentation{
+			Name:  gocloak.StringP(policyName),
+			Type:  gocloak.StringP("client"),
+			Logic: gocloak.POSITIVE,
+			ClientPolicyRepresentation: gocloak.ClientPolicyRepresentation{
+				Clients: &[]string{peerID},
+			},
+		}
+		_, err := kcClient.CreatePolicy(ctx, token.AccessToken, p.Config.Realm, internalID, policy)
+		if err != nil {
+			// Ignore if already exists
+			if !strings.Contains(err.Error(), "409") {
+				return fmt.Errorf("failed to create token-exchange policy for peer %s: %w", peerID, err)
+			}
+			logger.Info("Token exchange policy already exists", "peer", peerID)
+		} else {
+			logger.Info("Created token exchange policy", "peer", peerID)
+		}
+
+		// Create the token-exchange scoped permission
+		permName := fmt.Sprintf("%s-token-exchange-permission", peerID)
+		perm := gocloak.PermissionRepresentation{
+			Name:             gocloak.StringP(permName),
+			Type:             gocloak.StringP("scope"),
+			Scopes:           &[]string{"token-exchange"},
+			Policies:         &[]string{policyName},
+			DecisionStrategy: gocloak.AFFIRMATIVE,
+		}
+		_, err = kcClient.CreatePermission(ctx, token.AccessToken, p.Config.Realm, internalID, perm)
+		if err != nil {
+			if !strings.Contains(err.Error(), "409") {
+				return fmt.Errorf("failed to create token-exchange permission for peer %s: %w", peerID, err)
+			}
+			logger.Info("Token exchange permission already exists", "peer", peerID)
+		} else {
+			logger.Info("Created token exchange permission", "peer", peerID)
+		}
+	}
+
+	return nil
+}
+
 // DeleteClient removes the Keycloak OIDC client.
 func (p *KeycloakProvider) DeleteClient(ctx context.Context, nebariApp *appsv1.NebariApp) error {
 	ctx, cancel := p.withAPITimeout(ctx)

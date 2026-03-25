@@ -79,6 +79,10 @@ func (m *mockProvider) SupportsProvisioning() bool {
 	return m.supportsProvisioning
 }
 
+func (m *mockProvider) ConfigureTokenExchange(ctx context.Context, nebariApp *appsv1.NebariApp, peerClientIDs []string) error {
+	return nil
+}
+
 func TestGetProvider(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = appsv1.AddToScheme(scheme)

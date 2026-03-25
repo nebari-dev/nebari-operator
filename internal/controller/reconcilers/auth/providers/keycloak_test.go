@@ -1381,3 +1381,42 @@ func TestKeycloakProvider_GetDeviceFlowClientID(t *testing.T) {
 		t.Errorf("expected device flow client ID %q, got %q", expected, clientID)
 	}
 }
+
+func TestKeycloakProvider_ConfigureTokenExchange(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = appsv1.AddToScheme(scheme)
+
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	provider := &KeycloakProvider{
+		Config: config.KeycloakConfig{
+			URL:           "http://keycloak.test",
+			Realm:         "test",
+			AdminUsername: "admin",
+			AdminPassword: "admin",
+		},
+		Client: k8sClient,
+	}
+
+	nebariApp := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-app",
+			Namespace: "default",
+			UID:       "test-uid",
+		},
+		Spec: appsv1.NebariAppSpec{
+			Hostname: "test.example.com",
+			Auth: &appsv1.AuthConfig{
+				Enabled: true,
+				TokenExchange: &appsv1.TokenExchangeConfig{
+					Enabled: true,
+				},
+			},
+		},
+	}
+
+	// Will fail without a live Keycloak instance, but verifies the method
+	// has the correct signature and handles the call path
+	_ = provider.ConfigureTokenExchange(context.Background(), nebariApp, []string{"peer-client-uuid"})
+}

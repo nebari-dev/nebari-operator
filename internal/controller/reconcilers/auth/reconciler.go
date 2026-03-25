@@ -125,6 +125,16 @@ func (r *AuthReconciler) ReconcileAuth(ctx context.Context, nebariApp *appsv1.Ne
 		}
 	}
 
+	// Configure token exchange if requested
+	if nebariApp.Spec.Auth.TokenExchange != nil && nebariApp.Spec.Auth.TokenExchange.Enabled {
+		if err := r.reconcileTokenExchange(ctx, nebariApp, provider); err != nil {
+			conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionFalse,
+				"TokenExchangeFailed", fmt.Sprintf("Failed to configure token exchange: %v", err))
+			return err
+		}
+		logger.Info("Token exchange configured")
+	}
+
 	// Validate auth configuration (check client secret exists)
 	if err := r.validateAuthConfig(ctx, nebariApp); err != nil {
 		conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionFalse,
@@ -360,6 +370,64 @@ func (r *AuthReconciler) buildSecurityPolicySpec(ctx context.Context, nebariApp 
 	}
 
 	return spec, nil
+}
+
+// reconcileTokenExchange discovers all other NebariApp OIDC clients in the same
+// Keycloak realm and configures token exchange permissions on this client.
+func (r *AuthReconciler) reconcileTokenExchange(ctx context.Context, nebariApp *appsv1.NebariApp, provider providers.OIDCProvider) error {
+	logger := log.FromContext(ctx)
+
+	// List all NebariApps across all namespaces
+	var allApps appsv1.NebariAppList
+	if err := r.Client.List(ctx, &allApps); err != nil {
+		return fmt.Errorf("failed to list NebariApps: %w", err)
+	}
+
+	// Collect internal Keycloak client IDs for all peer apps that have auth enabled
+	var peerClientIDs []string
+	for i := range allApps.Items {
+		peer := &allApps.Items[i]
+
+		// Skip self
+		if peer.Namespace == nebariApp.Namespace && peer.Name == nebariApp.Name {
+			continue
+		}
+
+		// Skip peers without auth enabled
+		if peer.Spec.Auth == nil || !peer.Spec.Auth.Enabled {
+			continue
+		}
+
+		// Look up the peer's Keycloak client ID from its OIDC secret
+		peerSecretName := naming.ClientSecretName(peer)
+		var peerSecret corev1.Secret
+		if err := r.Client.Get(ctx, types.NamespacedName{
+			Namespace: peer.Namespace,
+			Name:      peerSecretName,
+		}, &peerSecret); err != nil {
+			if apierrors.IsNotFound(err) {
+				logger.Info("Peer OIDC secret not found, skipping", "peer", peer.Name, "namespace", peer.Namespace)
+				continue
+			}
+			return fmt.Errorf("failed to get peer OIDC secret %s/%s: %w", peer.Namespace, peerSecretName, err)
+		}
+
+		peerClientID := string(peerSecret.Data["client-id"])
+		if peerClientID == "" {
+			logger.Info("Peer OIDC secret has no client-id, skipping", "peer", peer.Name)
+			continue
+		}
+
+		peerClientIDs = append(peerClientIDs, peerClientID)
+		logger.Info("Found peer client for token exchange", "peer", peer.Name, "namespace", peer.Namespace)
+	}
+
+	if len(peerClientIDs) == 0 {
+		logger.Info("No peer clients found for token exchange")
+		return nil
+	}
+
+	return provider.ConfigureTokenExchange(ctx, nebariApp, peerClientIDs)
 }
 
 func ptrTo[T any](v T) *T {

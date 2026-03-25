@@ -53,6 +53,11 @@ func (p *GenericOIDCProvider) SupportsProvisioning() bool {
 	return false
 }
 
+// ConfigureTokenExchange is not supported for generic OIDC providers.
+func (p *GenericOIDCProvider) ConfigureTokenExchange(ctx context.Context, nebariApp *appsv1.NebariApp, peerClientIDs []string) error {
+	return fmt.Errorf("generic-oidc provider does not support token exchange")
+}
+
 // ProvisionClient always returns an error as generic OIDC doesn't support provisioning.
 func (p *GenericOIDCProvider) ProvisionClient(ctx context.Context, nebariApp *appsv1.NebariApp) error {
 	return fmt.Errorf("generic-oidc provider does not support automatic client provisioning")
