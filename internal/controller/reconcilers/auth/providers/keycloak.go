@@ -273,6 +273,35 @@ func (p *KeycloakProvider) ConfigureTokenExchange(ctx context.Context, nebariApp
 	}
 	logger.Info("Enabled authorization services", "clientID", clientID)
 
+	// Look up the "token-exchange" scope on the authorization resource server.
+	// Keycloak creates this scope automatically when authorization services are enabled.
+	scopes, err := kcClient.GetScopes(ctx, token.AccessToken, p.Config.Realm, internalID, gocloak.GetScopeParams{
+		Name: gocloak.StringP("token-exchange"),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list authorization scopes: %w", err)
+	}
+
+	var tokenExchangeScopeID string
+	for _, s := range scopes {
+		if gocloak.PString(s.Name) == "token-exchange" {
+			tokenExchangeScopeID = gocloak.PString(s.ID)
+			break
+		}
+	}
+
+	// Create the scope if it doesn't exist
+	if tokenExchangeScopeID == "" {
+		scope, err := kcClient.CreateScope(ctx, token.AccessToken, p.Config.Realm, internalID, gocloak.ScopeRepresentation{
+			Name: gocloak.StringP("token-exchange"),
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create token-exchange scope: %w", err)
+		}
+		tokenExchangeScopeID = gocloak.PString(scope.ID)
+		logger.Info("Created token-exchange scope", "id", tokenExchangeScopeID)
+	}
+
 	// For each peer client, create a client policy and token-exchange permission
 	for _, peerID := range peerClientIDs {
 		policyName := fmt.Sprintf("%s-token-exchange", peerID)
@@ -288,7 +317,6 @@ func (p *KeycloakProvider) ConfigureTokenExchange(ctx context.Context, nebariApp
 		}
 		_, err := kcClient.CreatePolicy(ctx, token.AccessToken, p.Config.Realm, internalID, policy)
 		if err != nil {
-			// Ignore if already exists
 			if !strings.Contains(err.Error(), "409") {
 				return fmt.Errorf("failed to create token-exchange policy for peer %s: %w", peerID, err)
 			}
@@ -297,12 +325,12 @@ func (p *KeycloakProvider) ConfigureTokenExchange(ctx context.Context, nebariApp
 			logger.Info("Created token exchange policy", "peer", peerID)
 		}
 
-		// Create the token-exchange scoped permission
+		// Create the token-exchange scoped permission using the scope ID
 		permName := fmt.Sprintf("%s-token-exchange-permission", peerID)
 		perm := gocloak.PermissionRepresentation{
 			Name:             gocloak.StringP(permName),
 			Type:             gocloak.StringP("scope"),
-			Scopes:           &[]string{"token-exchange"},
+			Scopes:           &[]string{tokenExchangeScopeID},
 			Policies:         &[]string{policyName},
 			DecisionStrategy: gocloak.AFFIRMATIVE,
 		}
