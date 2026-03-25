@@ -63,6 +63,11 @@ func shouldProvisionClient(auth *appsv1.AuthConfig) bool {
 
 // authProvisionState is the subset of NebariApp fields that affect OIDC client
 // provisioning. It is JSON-marshalled and SHA-256 hashed to produce AuthConfigHash.
+//
+// EnforceAtGateway and ProvisionClient are intentionally excluded: they control
+// operator behaviour (whether to create a SecurityPolicy / call the provider)
+// but do not alter what is actually provisioned inside Keycloak. SecurityPolicy
+// reconciliation runs unconditionally regardless of the hash.
 type authProvisionState struct {
 	Namespace      string                       `json:"namespace"`
 	Name           string                       `json:"name"`
@@ -103,7 +108,13 @@ func computeAuthConfigHash(nebariApp *appsv1.NebariApp) string {
 
 	data, err := json.Marshal(state)
 	if err != nil {
-		// Fallback: use naming to get a stable but less informative hash
+		// json.Marshal should never fail on this struct (all fields are strings or
+		// serialisable nested types), but if it somehow does we fall back to a
+		// name-based value. Log a warning so the unexpected event is not silent:
+		// a fallback hash matching a previously stored real hash would cause a
+		// false skip of provisioning.
+		log.Log.Error(err, "failed to marshal auth provision state; using name-based fallback hash",
+			"namespace", nebariApp.Namespace, "name", nebariApp.Name)
 		data = []byte(naming.ClientSecretName(nebariApp))
 	}
 
@@ -169,13 +180,7 @@ func (r *AuthReconciler) ReconcileAuth(ctx context.Context, nebariApp *appsv1.Ne
 			logger.Info("Auth config unchanged and AuthReady=True, skipping OIDC client provisioning")
 		} else {
 			if forceAnnotation != "" {
-				logger.Info("Force re-provision annotation present, clearing and re-provisioning")
-				if nebariApp.Annotations != nil {
-					delete(nebariApp.Annotations, constants.AnnotationForceReprovision)
-				}
-				if err := r.Client.Update(ctx, nebariApp); err != nil {
-					return fmt.Errorf("failed to clear force-reprovision annotation: %w", err)
-				}
+				logger.Info("Force re-provision annotation present, re-provisioning")
 			}
 
 			logger.Info("Provisioning OIDC client")
@@ -186,6 +191,20 @@ func (r *AuthReconciler) ReconcileAuth(ctx context.Context, nebariApp *appsv1.Ne
 			}
 			logger.Info("OIDC client provisioned successfully")
 			r.Recorder.Event(nebariApp, corev1.EventTypeNormal, "Provisioned", "OIDC client provisioned successfully")
+
+			// Clear the force-reprovision annotation only after provisioning succeeds.
+			// Clearing it before would silently lose the annotation if ProvisionClient
+			// returned an error, leaving the user unaware they need to re-annotate.
+			// Note: Update() modifies the object and triggers an extra reconcile cycle;
+			// this is expected and harmless for an infrequent manual operation.
+			if forceAnnotation != "" {
+				if nebariApp.Annotations != nil {
+					delete(nebariApp.Annotations, constants.AnnotationForceReprovision)
+				}
+				if err := r.Client.Update(ctx, nebariApp); err != nil {
+					return fmt.Errorf("failed to clear force-reprovision annotation: %w", err)
+				}
+			}
 
 			// Store hash so subsequent reconciles can skip provisioning when nothing has changed
 			nebariApp.Status.AuthConfigHash = currentHash
