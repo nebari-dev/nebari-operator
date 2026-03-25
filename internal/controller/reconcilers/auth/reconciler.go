@@ -384,7 +384,7 @@ func (r *AuthReconciler) reconcileTokenExchange(ctx context.Context, nebariApp *
 	}
 
 	// Collect internal Keycloak client IDs for all peer apps that have auth enabled
-	var peerClientIDs []string
+	peerClientIDs := make([]string, 0, len(allApps.Items))
 	for i := range allApps.Items {
 		peer := &allApps.Items[i]
 
