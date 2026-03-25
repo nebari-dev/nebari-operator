@@ -56,6 +56,13 @@ func (m *mockProvider) GetIssuerURL(ctx context.Context, nebariApp *appsv1.Nebar
 	return m.issuerURL, nil
 }
 
+func (m *mockProvider) GetExternalIssuerURL(ctx context.Context, nebariApp *appsv1.NebariApp) (string, error) {
+	if m.issuerError != nil {
+		return "", m.issuerError
+	}
+	return m.issuerURL, nil
+}
+
 func (m *mockProvider) GetClientID(ctx context.Context, nebariApp *appsv1.NebariApp) string {
 	return m.clientID
 }

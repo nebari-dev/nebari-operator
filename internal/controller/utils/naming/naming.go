@@ -78,6 +78,12 @@ func ClientID(nebariApp *appsv1.NebariApp) string {
 	return fmt.Sprintf("%s-%s", nebariApp.Namespace, nebariApp.Name)
 }
 
+// DeviceFlowClientID generates the OIDC device flow client ID for a NebariApp.
+// Pattern: <namespace>-<nebariapp-name>-device
+func DeviceFlowClientID(nebariApp *appsv1.NebariApp) string {
+	return fmt.Sprintf("%s-%s-device", nebariApp.Namespace, nebariApp.Name)
+}
+
 // CertificateName generates the name for a cert-manager Certificate.
 // Includes namespace to avoid collisions since Certificates live in the Gateway namespace.
 // Pattern: <nebariapp-name>-<namespace>-cert

@@ -158,3 +158,25 @@ func TestGenericOIDCProvider_DeleteClient(t *testing.T) {
 		t.Errorf("expected no error when deleting with GenericOIDCProvider, got: %v", err)
 	}
 }
+
+func TestGenericOIDCProvider_GetExternalIssuerURL(t *testing.T) {
+	provider := &GenericOIDCProvider{}
+	app := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
+		Spec: appsv1.NebariAppSpec{
+			Hostname: "test.example.com",
+			Service:  appsv1.ServiceReference{Name: "svc", Port: 80},
+			Auth: &appsv1.AuthConfig{
+				IssuerURL: "https://accounts.google.com",
+			},
+		},
+	}
+
+	got, err := provider.GetExternalIssuerURL(context.Background(), app)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "https://accounts.google.com" {
+		t.Errorf("got %q, want %q", got, "https://accounts.google.com")
+	}
+}

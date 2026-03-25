@@ -21,6 +21,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Nerzal/gocloak/v13"
@@ -54,6 +55,14 @@ func (p *KeycloakProvider) GetIssuerURL(ctx context.Context, nebariApp *appsv1.N
 		p.Config.IssuerServicePort,
 		p.Config.IssuerContextPath,
 		realm), nil
+}
+
+// GetExternalIssuerURL returns the publicly routable Keycloak issuer URL.
+func (p *KeycloakProvider) GetExternalIssuerURL(ctx context.Context, nebariApp *appsv1.NebariApp) (string, error) {
+	if p.Config.ExternalURL == "" {
+		return "", fmt.Errorf("KEYCLOAK_EXTERNAL_URL not configured; required for external issuer URL")
+	}
+	return fmt.Sprintf("%s/realms/%s", strings.TrimRight(p.Config.ExternalURL, "/"), p.Config.Realm), nil
 }
 
 // GetClientID returns the OIDC client ID for the NebariApp.
@@ -204,8 +213,27 @@ func (p *KeycloakProvider) ProvisionClient(ctx context.Context, nebariApp *appsv
 		logger.Info("Provisioned SPA client", "clientID", spaClientID)
 	}
 
-	// Store secret in Kubernetes
-	return p.storeClientSecret(ctx, nebariApp, clientSecret, spaClientID)
+	// Provision device flow client if requested
+	var deviceClientID string
+	if p.shouldProvisionDeviceFlowClient(nebariApp) {
+		deviceClientID, err = p.provisionDeviceFlowClient(ctx, kcClient, token, nebariApp)
+		if err != nil {
+			return fmt.Errorf("failed to provision device flow client: %w", err)
+		}
+		logger.Info("Provisioned device flow client", "clientID", deviceClientID)
+	}
+
+	// Get external issuer URL for the Secret (only needed when external consumers exist)
+	var externalIssuerURL string
+	if p.shouldProvisionDeviceFlowClient(nebariApp) || p.shouldProvisionSPAClient(nebariApp) {
+		externalIssuerURL, err = p.GetExternalIssuerURL(ctx, nebariApp)
+		if err != nil {
+			return fmt.Errorf("failed to get external issuer URL (KEYCLOAK_EXTERNAL_URL must be set when deviceFlowClient or spaClient is enabled): %w", err)
+		}
+	}
+
+	// Store all credentials in Kubernetes Secret
+	return p.storeClientSecret(ctx, nebariApp, clientID, clientSecret, externalIssuerURL, spaClientID, deviceClientID)
 }
 
 // DeleteClient removes the Keycloak OIDC client.
@@ -256,6 +284,22 @@ func (p *KeycloakProvider) DeleteClient(ctx context.Context, nebariApp *appsv1.N
 			}
 			logger.Info("Deleted SPA client", "clientID", spaClientID)
 		}
+	}
+
+	// Delete device flow client if it was provisioned
+	// Always attempt cleanup (don't gate on shouldProvisionDeviceFlowClient)
+	// so that disabling device flow in the spec also cleans up the Keycloak client.
+	deviceFlowClientID := p.GetDeviceFlowClientID(ctx, nebariApp)
+	existingDeviceClient, err := p.findClient(ctx, kcClient, token, deviceFlowClientID)
+	if err != nil {
+		return err
+	}
+	if existingDeviceClient != nil {
+		err = kcClient.DeleteClient(ctx, token.AccessToken, p.Config.Realm, *existingDeviceClient.ID)
+		if err != nil {
+			return fmt.Errorf("failed to delete device flow client: %w", err)
+		}
+		logger.Info("Deleted device flow client", "clientID", deviceFlowClientID)
 	}
 
 	return nil
@@ -367,18 +411,25 @@ func (p *KeycloakProvider) buildRedirectURLs(nebariApp *appsv1.NebariApp) []stri
 	}
 }
 
-// storeClientSecret creates or updates the Kubernetes secret containing the OIDC client secret.
-// If spaClientID is provided, it's also stored in the secret for frontend consumption.
-func (p *KeycloakProvider) storeClientSecret(ctx context.Context, nebariApp *appsv1.NebariApp, clientSecret, spaClientID string) error {
+// storeClientSecret creates or updates the Kubernetes secret containing the OIDC client credentials.
+// Optional fields (spaClientID, deviceClientID) are only written when non-empty.
+func (p *KeycloakProvider) storeClientSecret(ctx context.Context, nebariApp *appsv1.NebariApp, clientID, clientSecret, externalIssuerURL, spaClientID, deviceClientID string) error {
 	secretName := naming.ClientSecretName(nebariApp)
 
 	secretData := map[string][]byte{
+		constants.ClientIDKey:     []byte(clientID),
 		constants.ClientSecretKey: []byte(clientSecret),
+		constants.IssuerURLKey:    []byte(externalIssuerURL),
 	}
 
 	// Add SPA client ID if present
 	if spaClientID != "" {
 		secretData[constants.SPAClientIDKey] = []byte(spaClientID)
+	}
+
+	// Add device flow client ID if present
+	if deviceClientID != "" {
+		secretData[constants.DeviceClientIDKey] = []byte(deviceClientID)
 	}
 
 	secret := &corev1.Secret{
@@ -814,6 +865,134 @@ func (p *KeycloakProvider) provisionSPAClient(ctx context.Context, kcClient *goc
 	}
 
 	return spaClientID, nil
+}
+
+// shouldProvisionDeviceFlowClient returns true if the operator should provision a public device flow client.
+func (p *KeycloakProvider) shouldProvisionDeviceFlowClient(nebariApp *appsv1.NebariApp) bool {
+	return nebariApp.Spec.Auth != nil &&
+		nebariApp.Spec.Auth.DeviceFlowClient != nil &&
+		nebariApp.Spec.Auth.DeviceFlowClient.Enabled
+}
+
+// GetDeviceFlowClientID returns the device flow client ID for the NebariApp.
+func (p *KeycloakProvider) GetDeviceFlowClientID(ctx context.Context, nebariApp *appsv1.NebariApp) string {
+	return naming.DeviceFlowClientID(nebariApp)
+}
+
+// provisionDeviceFlowClient creates or updates a public OIDC client with device authorization grant enabled.
+// The device flow client is configured with:
+// - publicClient: true (no secret, safe for CLI/native apps)
+// - standardFlowEnabled: false (device flow only)
+// - directAccessGrantsEnabled: false
+// - oauth2.device.authorization.grant.enabled: true
+// - An audience mapper that includes the confidential client's ID in the aud claim
+// Returns the device flow client ID.
+func (p *KeycloakProvider) provisionDeviceFlowClient(ctx context.Context, kcClient *gocloak.GoCloak, token *gocloak.JWT, nebariApp *appsv1.NebariApp) (string, error) {
+	logger := log.FromContext(ctx)
+	realm := p.Config.Realm
+	deviceClientID := p.GetDeviceFlowClientID(ctx, nebariApp)
+	confidentialClientID := p.GetClientID(ctx, nebariApp)
+
+	// Check if device flow client exists
+	existingClient, err := p.findClient(ctx, kcClient, token, deviceClientID)
+	if err != nil {
+		return "", fmt.Errorf("failed to query for device flow client: %w", err)
+	}
+
+	var internalID string
+
+	if existingClient != nil {
+		// Update existing device flow client
+		existingClient.PublicClient = gocloak.BoolP(true)
+		existingClient.StandardFlowEnabled = gocloak.BoolP(false)
+		existingClient.DirectAccessGrantsEnabled = gocloak.BoolP(false)
+
+		if existingClient.Attributes == nil {
+			existingClient.Attributes = &map[string]string{}
+		}
+		(*existingClient.Attributes)["oauth2.device.authorization.grant.enabled"] = "true"
+
+		err = kcClient.UpdateClient(ctx, token.AccessToken, realm, *existingClient)
+		if err != nil {
+			return "", fmt.Errorf("failed to update device flow client: %w", err)
+		}
+		internalID = *existingClient.ID
+		logger.Info("Updated existing device flow client", "clientID", deviceClientID)
+	} else {
+		// Create new device flow client
+		newClient := gocloak.Client{
+			ClientID:                  gocloak.StringP(deviceClientID),
+			Name:                      gocloak.StringP(fmt.Sprintf("%s Device Flow Client", nebariApp.Name)),
+			PublicClient:              gocloak.BoolP(true),
+			StandardFlowEnabled:       gocloak.BoolP(false),
+			DirectAccessGrantsEnabled: gocloak.BoolP(false),
+			Protocol:                  gocloak.StringP("openid-connect"),
+			Enabled:                   gocloak.BoolP(true),
+			Attributes: &map[string]string{
+				"oauth2.device.authorization.grant.enabled": "true",
+			},
+		}
+
+		internalID, err = kcClient.CreateClient(ctx, token.AccessToken, realm, newClient)
+		if err != nil {
+			return "", fmt.Errorf("failed to create device flow client: %w", err)
+		}
+		logger.Info("Created new device flow client", "clientID", deviceClientID)
+	}
+
+	// Sync scopes from spec to the device flow client
+	if err := p.syncClientScopes(ctx, kcClient, token, internalID, nebariApp); err != nil {
+		return "", fmt.Errorf("failed to sync device flow client scopes: %w", err)
+	}
+
+	// Add audience mapper so tokens include the confidential client's ID in aud claim.
+	// Fetch the client to read existing protocol mappers.
+	deviceClient, err := kcClient.GetClient(ctx, token.AccessToken, realm, internalID)
+	if err != nil {
+		return "", fmt.Errorf("failed to get device flow client: %w", err)
+	}
+
+	audienceMapperName := "audience-confidential-client"
+	audienceMapper := gocloak.ProtocolMapperRepresentation{
+		Name:           gocloak.StringP(audienceMapperName),
+		Protocol:       gocloak.StringP("openid-connect"),
+		ProtocolMapper: gocloak.StringP("oidc-audience-mapper"),
+		Config: &map[string]string{
+			"included.client.audience": confidentialClientID,
+			"id.token.claim":           "true",
+			"access.token.claim":       "true",
+		},
+	}
+
+	// Check if the audience mapper already exists
+	var existingMapperID *string
+	if deviceClient.ProtocolMappers != nil {
+		for _, m := range *deviceClient.ProtocolMappers {
+			if m.Name != nil && *m.Name == audienceMapperName {
+				existingMapperID = m.ID
+				break
+			}
+		}
+	}
+
+	if existingMapperID != nil {
+		// Update existing mapper
+		audienceMapper.ID = existingMapperID
+		err = kcClient.UpdateClientProtocolMapper(ctx, token.AccessToken, realm, internalID, *existingMapperID, audienceMapper)
+		if err != nil {
+			return "", fmt.Errorf("failed to update audience mapper on device flow client: %w", err)
+		}
+		logger.Info("Updated audience mapper on device flow client", "clientID", deviceClientID)
+	} else {
+		// Create new mapper
+		_, err = kcClient.CreateClientProtocolMapper(ctx, token.AccessToken, realm, internalID, audienceMapper)
+		if err != nil {
+			return "", fmt.Errorf("failed to create audience mapper on device flow client: %w", err)
+		}
+		logger.Info("Created audience mapper on device flow client", "clientID", deviceClientID)
+	}
+
+	return deviceClientID, nil
 }
 
 // generateSecret generates a random secret string of the specified length.

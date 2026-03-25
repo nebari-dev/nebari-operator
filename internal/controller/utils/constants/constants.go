@@ -96,6 +96,15 @@ const (
 	// SPAClientIDKey is the key name for SPA client ID data
 	// Used to store the public client ID for browser-based SPAs
 	SPAClientIDKey = "spa-client-id"
+
+	// ClientIDKey is the key name for the OIDC client ID
+	ClientIDKey = "client-id"
+
+	// DeviceClientIDKey is the key name for device flow client ID data
+	DeviceClientIDKey = "device-client-id"
+
+	// IssuerURLKey is the key name for the external OIDC issuer URL
+	IssuerURLKey = "issuer-url"
 )
 
 // Finalizers
