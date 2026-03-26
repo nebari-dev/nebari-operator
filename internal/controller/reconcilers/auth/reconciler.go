@@ -412,7 +412,7 @@ func (r *AuthReconciler) reconcileTokenExchange(ctx context.Context, nebariApp *
 			return fmt.Errorf("failed to get peer OIDC secret %s/%s: %w", peer.Namespace, peerSecretName, err)
 		}
 
-		peerClientID := string(peerSecret.Data["client-id"])
+		peerClientID := string(peerSecret.Data[constants.ClientIDKey])
 		if peerClientID == "" {
 			logger.Info("Peer OIDC secret has no client-id, skipping", "peer", peer.Name)
 			continue

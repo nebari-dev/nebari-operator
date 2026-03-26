@@ -17,6 +17,7 @@ limitations under the License.
 package providers
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -272,22 +273,28 @@ func (p *KeycloakProvider) ConfigureTokenExchange(ctx context.Context, nebariApp
 	// scope permissions (including token-exchange) on the realm-management client.
 	mgmtPermURL := fmt.Sprintf("%s/admin/realms/%s/clients/%s/management/permissions",
 		p.Config.URL, p.Config.Realm, internalID)
-	mgmtReq, _ := http.NewRequestWithContext(ctx, "PUT", mgmtPermURL,
+	mgmtReq, err := http.NewRequestWithContext(ctx, "PUT", mgmtPermURL,
 		strings.NewReader(`{"enabled":true}`))
+	if err != nil {
+		return fmt.Errorf("failed to build management permissions request: %w", err)
+	}
 	mgmtReq.Header.Set("Authorization", "Bearer "+token.AccessToken)
 	mgmtReq.Header.Set("Content-Type", "application/json")
 	mgmtResp, err := http.DefaultClient.Do(mgmtReq)
 	if err != nil {
 		return fmt.Errorf("failed to enable management permissions: %w", err)
 	}
-	defer func() { _ = mgmtResp.Body.Close() }()
-
 	var mgmtPerms struct {
 		Resource         string            `json:"resource"`
 		ScopePermissions map[string]string `json:"scopePermissions"`
 	}
-	if err := json.NewDecoder(mgmtResp.Body).Decode(&mgmtPerms); err != nil {
-		return fmt.Errorf("failed to parse management permissions response: %w", err)
+	decodeErr := json.NewDecoder(mgmtResp.Body).Decode(&mgmtPerms)
+	_ = mgmtResp.Body.Close()
+	if mgmtResp.StatusCode >= 400 {
+		return fmt.Errorf("failed to enable management permissions: HTTP %d", mgmtResp.StatusCode)
+	}
+	if decodeErr != nil {
+		return fmt.Errorf("failed to parse management permissions response: %w", decodeErr)
 	}
 
 	tokenExchangePermID := mgmtPerms.ScopePermissions["token-exchange"]
@@ -360,15 +367,25 @@ func (p *KeycloakProvider) ConfigureTokenExchange(ctx context.Context, nebariApp
 
 	// Step 5: Update the token-exchange permission on realm-management to link
 	// the policies, scope, and resource.
-	permBody := fmt.Sprintf(
-		`{"id":"%s","name":"token-exchange.permission.client.%s","type":"scope","decisionStrategy":"UNANIMOUS","scopes":["%s"],"policies":[%s],"resources":["%s"]}`,
-		tokenExchangePermID, internalID, tokenExchangeScopeID,
-		`"`+strings.Join(policyIDs, `","`)+`"`,
-		mgmtPerms.Resource,
-	)
+	permPayload := map[string]interface{}{
+		"id":               tokenExchangePermID,
+		"name":             fmt.Sprintf("token-exchange.permission.client.%s", internalID),
+		"type":             "scope",
+		"decisionStrategy": "UNANIMOUS",
+		"scopes":           []string{tokenExchangeScopeID},
+		"policies":         policyIDs,
+		"resources":        []string{mgmtPerms.Resource},
+	}
+	permBytes, err := json.Marshal(permPayload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal token-exchange permission: %w", err)
+	}
 	permURL := fmt.Sprintf("%s/admin/realms/%s/clients/%s/authz/resource-server/permission/scope/%s",
 		p.Config.URL, p.Config.Realm, realmMgmtID, tokenExchangePermID)
-	permReq, _ := http.NewRequestWithContext(ctx, "PUT", permURL, strings.NewReader(permBody))
+	permReq, err := http.NewRequestWithContext(ctx, "PUT", permURL, bytes.NewReader(permBytes))
+	if err != nil {
+		return fmt.Errorf("failed to build token-exchange permission request: %w", err)
+	}
 	permReq.Header.Set("Authorization", "Bearer "+token.AccessToken)
 	permReq.Header.Set("Content-Type", "application/json")
 	permResp, err := http.DefaultClient.Do(permReq)
