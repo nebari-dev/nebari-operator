@@ -402,8 +402,15 @@ func (r *AuthReconciler) reconcileTokenExchange(ctx context.Context, nebariApp *
 			continue
 		}
 
-		// Skip peers without auth enabled
+		// Skip peers without auth enabled or using a different provider
 		if peer.Spec.Auth == nil || !peer.Spec.Auth.Enabled {
+			continue
+		}
+		peerProvider := peer.Spec.Auth.Provider
+		if peerProvider == "" {
+			peerProvider = constants.ProviderKeycloak
+		}
+		if peerProvider != constants.ProviderKeycloak {
 			continue
 		}
 

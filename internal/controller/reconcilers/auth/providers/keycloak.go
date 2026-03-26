@@ -23,6 +23,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -348,8 +349,11 @@ func (p *KeycloakProvider) ConfigureTokenExchange(ctx context.Context, nebariApp
 			policies, lookupErr := kcClient.GetPolicies(ctx, token.AccessToken, p.Config.Realm, realmMgmtID, gocloak.GetPolicyParams{
 				Name: gocloak.StringP(policyName),
 			})
-			if lookupErr != nil || len(policies) == 0 {
+			if lookupErr != nil {
 				return fmt.Errorf("failed to look up existing policy %s: %w", policyName, lookupErr)
+			}
+			if len(policies) == 0 {
+				return fmt.Errorf("policy %s reported as existing (409) but not found on lookup", policyName)
 			}
 			policyID = gocloak.PString(policies[0].ID)
 		} else {
@@ -390,9 +394,10 @@ func (p *KeycloakProvider) ConfigureTokenExchange(ctx context.Context, nebariApp
 	if err != nil {
 		return fmt.Errorf("failed to update token-exchange permission: %w", err)
 	}
+	respBody, _ := io.ReadAll(io.LimitReader(permResp.Body, 1024))
 	_ = permResp.Body.Close()
 	if permResp.StatusCode >= 400 {
-		return fmt.Errorf("failed to update token-exchange permission: HTTP %d", permResp.StatusCode)
+		return fmt.Errorf("failed to update token-exchange permission: HTTP %d: %s", permResp.StatusCode, string(respBody))
 	}
 	logger.Info("Token exchange permission configured", "clientID", clientID, "peers", len(peerClientIDs))
 
