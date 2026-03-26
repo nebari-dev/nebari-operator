@@ -357,6 +357,17 @@ func (p *KeycloakProvider) updateExistingClient(ctx context.Context, kcClient *g
 	existingClient.WebOrigins = &[]string{"*"}
 	existingClient.StandardFlowEnabled = gocloak.BoolP(true)
 
+	// Ensure post-logout redirect URIs are set (preserving any existing attributes)
+	postLogoutAttr := map[string]string{"post.logout.redirect.uris": p.buildPostLogoutRedirectURIs(nebariApp)}
+	if existingClient.Attributes != nil {
+		for k, v := range *existingClient.Attributes {
+			if k != "post.logout.redirect.uris" {
+				postLogoutAttr[k] = v
+			}
+		}
+	}
+	existingClient.Attributes = &postLogoutAttr
+
 	err = kcClient.UpdateClient(ctx, token.AccessToken, p.Config.Realm, *existingClient)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to update client: %w", err)
@@ -383,6 +394,7 @@ func (p *KeycloakProvider) createNewClient(ctx context.Context, kcClient *gocloa
 		Secret:                    gocloak.StringP(clientSecret),
 		RedirectURIs:              &redirectURIs,
 		WebOrigins:                &[]string{"*"},
+		Attributes:                &map[string]string{"post.logout.redirect.uris": p.buildPostLogoutRedirectURIs(nebariApp)},
 		PublicClient:              gocloak.BoolP(false),
 		StandardFlowEnabled:       gocloak.BoolP(true),
 		DirectAccessGrantsEnabled: gocloak.BoolP(false),
@@ -409,6 +421,16 @@ func (p *KeycloakProvider) buildRedirectURLs(nebariApp *appsv1.NebariApp) []stri
 		fmt.Sprintf("https://%s%s", nebariApp.Spec.Hostname, redirectPath),
 		fmt.Sprintf("http://%s%s", nebariApp.Spec.Hostname, redirectPath),
 	}
+}
+
+// buildPostLogoutRedirectURIs constructs the Keycloak post.logout.redirect.uris attribute value.
+// Keycloak stores multiple URIs as "##"-delimited strings in this client attribute.
+// Envoy Gateway sends the app's base URL as post_logout_redirect_uri when hitting /logout.
+func (p *KeycloakProvider) buildPostLogoutRedirectURIs(nebariApp *appsv1.NebariApp) string {
+	return strings.Join([]string{
+		fmt.Sprintf("https://%s/*", nebariApp.Spec.Hostname),
+		fmt.Sprintf("http://%s/*", nebariApp.Spec.Hostname),
+	}, "##")
 }
 
 // storeClientSecret creates or updates the Kubernetes secret containing the OIDC client credentials.
