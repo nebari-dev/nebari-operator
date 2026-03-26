@@ -17,13 +17,10 @@ limitations under the License.
 package providers
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
 
@@ -318,42 +315,42 @@ func (p *KeycloakProvider) ConfigureTokenExchange(ctx context.Context, nebariApp
 				Clients: &[]string{peerID},
 			},
 		}
-		_, err := kcClient.CreatePolicy(ctx, token.AccessToken, p.Config.Realm, internalID, policy)
+		createdPolicy, err := kcClient.CreatePolicy(ctx, token.AccessToken, p.Config.Realm, internalID, policy)
+		var policyID string
 		if err != nil {
 			if !strings.Contains(err.Error(), "409") {
 				return fmt.Errorf("failed to create token-exchange policy for peer %s: %w", peerID, err)
 			}
+			// Policy exists — look up its ID
 			logger.Info("Token exchange policy already exists", "peer", peerID)
+			policies, lookupErr := kcClient.GetPolicies(ctx, token.AccessToken, p.Config.Realm, internalID, gocloak.GetPolicyParams{
+				Name: gocloak.StringP(policyName),
+			})
+			if lookupErr != nil || len(policies) == 0 {
+				return fmt.Errorf("failed to look up existing policy %s: %w", policyName, lookupErr)
+			}
+			policyID = gocloak.PString(policies[0].ID)
 		} else {
-			logger.Info("Created token exchange policy", "peer", peerID)
+			policyID = gocloak.PString(createdPolicy.ID)
+			logger.Info("Created token exchange policy", "peer", peerID, "policyID", policyID)
 		}
 
 		// Create the token-exchange scoped permission.
-		// gocloak's CreatePermission sends scopes as plain strings, but Keycloak's
-		// API expects scope objects [{"id":"..."}]. Use a raw HTTP request instead.
+		// Keycloak expects scopes and policies as plain string arrays of IDs.
 		permName := fmt.Sprintf("%s-token-exchange-permission", peerID)
-		permBody := map[string]interface{}{
-			"name":             permName,
-			"type":             "scope",
-			"scopes":           []map[string]string{{"id": tokenExchangeScopeID}},
-			"policies":         []string{policyName},
-			"decisionStrategy": "AFFIRMATIVE",
+		perm := gocloak.PermissionRepresentation{
+			Name:             gocloak.StringP(permName),
+			Type:             gocloak.StringP("scope"),
+			Scopes:           &[]string{tokenExchangeScopeID},
+			Policies:         &[]string{policyID},
+			DecisionStrategy: gocloak.AFFIRMATIVE,
 		}
-		permJSON, _ := json.Marshal(permBody)
-		permURL := fmt.Sprintf("%s/admin/realms/%s/clients/%s/authz/resource-server/permission/scope",
-			p.Config.URL, p.Config.Realm, internalID)
-		req, _ := http.NewRequestWithContext(ctx, "POST", permURL, bytes.NewReader(permJSON))
-		req.Header.Set("Authorization", "Bearer "+token.AccessToken)
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := http.DefaultClient.Do(req)
+		_, err = kcClient.CreatePermission(ctx, token.AccessToken, p.Config.Realm, internalID, perm)
 		if err != nil {
-			return fmt.Errorf("failed to create token-exchange permission for peer %s: %w", peerID, err)
-		}
-		_ = resp.Body.Close()
-		if resp.StatusCode == http.StatusConflict {
+			if !strings.Contains(err.Error(), "409") {
+				return fmt.Errorf("failed to create token-exchange permission for peer %s: %w", peerID, err)
+			}
 			logger.Info("Token exchange permission already exists", "peer", peerID)
-		} else if resp.StatusCode >= 400 {
-			return fmt.Errorf("failed to create token-exchange permission for peer %s: HTTP %d", peerID, resp.StatusCode)
 		} else {
 			logger.Info("Created token exchange permission", "peer", peerID)
 		}
