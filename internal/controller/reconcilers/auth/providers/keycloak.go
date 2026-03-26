@@ -20,6 +20,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -266,48 +267,68 @@ func (p *KeycloakProvider) ConfigureTokenExchange(ctx context.Context, nebariApp
 	}
 	internalID := gocloak.PString(existingClient.ID)
 
-	// Enable authorization services and service accounts on this client
-	existingClient.AuthorizationServicesEnabled = gocloak.BoolP(true)
-	existingClient.ServiceAccountsEnabled = gocloak.BoolP(true)
-	if err := kcClient.UpdateClient(ctx, token.AccessToken, p.Config.Realm, *existingClient); err != nil {
-		return fmt.Errorf("failed to enable authorization services: %w", err)
+	// Step 1: Enable management permissions on the target client.
+	// This uses Keycloak's V2 management permissions API, which creates
+	// scope permissions (including token-exchange) on the realm-management client.
+	mgmtPermURL := fmt.Sprintf("%s/admin/realms/%s/clients/%s/management/permissions",
+		p.Config.URL, p.Config.Realm, internalID)
+	mgmtReq, _ := http.NewRequestWithContext(ctx, "PUT", mgmtPermURL,
+		strings.NewReader(`{"enabled":true}`))
+	mgmtReq.Header.Set("Authorization", "Bearer "+token.AccessToken)
+	mgmtReq.Header.Set("Content-Type", "application/json")
+	mgmtResp, err := http.DefaultClient.Do(mgmtReq)
+	if err != nil {
+		return fmt.Errorf("failed to enable management permissions: %w", err)
 	}
-	logger.Info("Enabled authorization services", "clientID", clientID)
+	defer func() { _ = mgmtResp.Body.Close() }()
 
-	// Look up the "token-exchange" scope on the authorization resource server.
-	// Keycloak creates this scope automatically when authorization services are enabled.
-	scopes, err := kcClient.GetScopes(ctx, token.AccessToken, p.Config.Realm, internalID, gocloak.GetScopeParams{
+	var mgmtPerms struct {
+		Resource         string            `json:"resource"`
+		ScopePermissions map[string]string `json:"scopePermissions"`
+	}
+	if err := json.NewDecoder(mgmtResp.Body).Decode(&mgmtPerms); err != nil {
+		return fmt.Errorf("failed to parse management permissions response: %w", err)
+	}
+
+	tokenExchangePermID := mgmtPerms.ScopePermissions["token-exchange"]
+	if tokenExchangePermID == "" {
+		return fmt.Errorf("no token-exchange permission found in management permissions")
+	}
+	logger.Info("Management permissions enabled", "clientID", clientID, "tokenExchangePermID", tokenExchangePermID)
+
+	// Step 2: Find the realm-management client (where the permissions live).
+	realmMgmtClient, err := p.findClient(ctx, kcClient, token, "realm-management")
+	if err != nil {
+		return fmt.Errorf("failed to find realm-management client: %w", err)
+	}
+	if realmMgmtClient == nil {
+		return fmt.Errorf("realm-management client not found")
+	}
+	realmMgmtID := gocloak.PString(realmMgmtClient.ID)
+
+	// Step 3: Find the token-exchange scope on realm-management's authz.
+	rmScopes, err := kcClient.GetScopes(ctx, token.AccessToken, p.Config.Realm, realmMgmtID, gocloak.GetScopeParams{
 		Name: gocloak.StringP("token-exchange"),
 	})
 	if err != nil {
-		return fmt.Errorf("failed to list authorization scopes: %w", err)
+		return fmt.Errorf("failed to list realm-management scopes: %w", err)
 	}
-
 	var tokenExchangeScopeID string
-	for _, s := range scopes {
+	for _, s := range rmScopes {
 		if gocloak.PString(s.Name) == "token-exchange" {
 			tokenExchangeScopeID = gocloak.PString(s.ID)
 			break
 		}
 	}
-
-	// Create the scope if it doesn't exist
 	if tokenExchangeScopeID == "" {
-		scope, err := kcClient.CreateScope(ctx, token.AccessToken, p.Config.Realm, internalID, gocloak.ScopeRepresentation{
-			Name: gocloak.StringP("token-exchange"),
-		})
-		if err != nil {
-			return fmt.Errorf("failed to create token-exchange scope: %w", err)
-		}
-		tokenExchangeScopeID = gocloak.PString(scope.ID)
-		logger.Info("Created token-exchange scope", "id", tokenExchangeScopeID)
+		return fmt.Errorf("token-exchange scope not found on realm-management")
 	}
 
-	// For each peer client, create a client policy and token-exchange permission
+	// Step 4: For each peer client, create a client policy on realm-management.
+	policyIDs := make([]string, 0, len(peerClientIDs))
 	for _, peerID := range peerClientIDs {
 		policyName := fmt.Sprintf("%s-token-exchange", peerID)
 
-		// Create client policy allowing this peer
 		policy := gocloak.PolicyRepresentation{
 			Name:  gocloak.StringP(policyName),
 			Type:  gocloak.StringP("client"),
@@ -316,15 +337,14 @@ func (p *KeycloakProvider) ConfigureTokenExchange(ctx context.Context, nebariApp
 				Clients: &[]string{peerID},
 			},
 		}
-		createdPolicy, err := kcClient.CreatePolicy(ctx, token.AccessToken, p.Config.Realm, internalID, policy)
+		createdPolicy, err := kcClient.CreatePolicy(ctx, token.AccessToken, p.Config.Realm, realmMgmtID, policy)
 		var policyID string
 		if err != nil {
 			if !strings.Contains(err.Error(), "409") {
 				return fmt.Errorf("failed to create token-exchange policy for peer %s: %w", peerID, err)
 			}
-			// Policy exists — look up its ID
 			logger.Info("Token exchange policy already exists", "peer", peerID)
-			policies, lookupErr := kcClient.GetPolicies(ctx, token.AccessToken, p.Config.Realm, internalID, gocloak.GetPolicyParams{
+			policies, lookupErr := kcClient.GetPolicies(ctx, token.AccessToken, p.Config.Realm, realmMgmtID, gocloak.GetPolicyParams{
 				Name: gocloak.StringP(policyName),
 			})
 			if lookupErr != nil || len(policies) == 0 {
@@ -335,38 +355,31 @@ func (p *KeycloakProvider) ConfigureTokenExchange(ctx context.Context, nebariApp
 			policyID = gocloak.PString(createdPolicy.ID)
 			logger.Info("Created token exchange policy", "peer", peerID, "policyID", policyID)
 		}
-
-		// Create the token-exchange scoped permission via raw HTTP.
-		// gocloak's CreatePermission doesn't properly link scopes/policies in the
-		// request body. Keycloak expects plain string arrays of IDs.
-		permName := fmt.Sprintf("%s-token-exchange-permission", peerID)
-		permBody := fmt.Sprintf(
-			`{"name":"%s","type":"scope","decisionStrategy":"AFFIRMATIVE","scopes":["%s"],"policies":["%s"]}`,
-			permName, tokenExchangeScopeID, policyID,
-		)
-		permURL := fmt.Sprintf("%s/admin/realms/%s/clients/%s/authz/resource-server/permission/scope",
-			p.Config.URL, p.Config.Realm, internalID)
-		req, reqErr := http.NewRequestWithContext(ctx, "POST", permURL, strings.NewReader(permBody))
-		if reqErr != nil {
-			return fmt.Errorf("failed to build permission request: %w", reqErr)
-		}
-		req.Header.Set("Authorization", "Bearer "+token.AccessToken)
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			return fmt.Errorf("failed to create token-exchange permission for peer %s: %w", peerID, err)
-		}
-		_ = resp.Body.Close()
-		if resp.StatusCode == http.StatusConflict || resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusOK {
-			if resp.StatusCode == http.StatusConflict {
-				logger.Info("Token exchange permission already exists", "peer", peerID)
-			} else {
-				logger.Info("Created token exchange permission", "peer", peerID)
-			}
-		} else {
-			return fmt.Errorf("failed to create token-exchange permission for peer %s: HTTP %d", peerID, resp.StatusCode)
-		}
+		policyIDs = append(policyIDs, policyID)
 	}
+
+	// Step 5: Update the token-exchange permission on realm-management to link
+	// the policies, scope, and resource.
+	permBody := fmt.Sprintf(
+		`{"id":"%s","name":"token-exchange.permission.client.%s","type":"scope","decisionStrategy":"UNANIMOUS","scopes":["%s"],"policies":[%s],"resources":["%s"]}`,
+		tokenExchangePermID, internalID, tokenExchangeScopeID,
+		`"`+strings.Join(policyIDs, `","`)+`"`,
+		mgmtPerms.Resource,
+	)
+	permURL := fmt.Sprintf("%s/admin/realms/%s/clients/%s/authz/resource-server/permission/scope/%s",
+		p.Config.URL, p.Config.Realm, realmMgmtID, tokenExchangePermID)
+	permReq, _ := http.NewRequestWithContext(ctx, "PUT", permURL, strings.NewReader(permBody))
+	permReq.Header.Set("Authorization", "Bearer "+token.AccessToken)
+	permReq.Header.Set("Content-Type", "application/json")
+	permResp, err := http.DefaultClient.Do(permReq)
+	if err != nil {
+		return fmt.Errorf("failed to update token-exchange permission: %w", err)
+	}
+	_ = permResp.Body.Close()
+	if permResp.StatusCode >= 400 {
+		return fmt.Errorf("failed to update token-exchange permission: HTTP %d", permResp.StatusCode)
+	}
+	logger.Info("Token exchange permission configured", "clientID", clientID, "peers", len(peerClientIDs))
 
 	return nil
 }
