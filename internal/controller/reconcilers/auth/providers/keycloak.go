@@ -21,6 +21,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -335,24 +336,35 @@ func (p *KeycloakProvider) ConfigureTokenExchange(ctx context.Context, nebariApp
 			logger.Info("Created token exchange policy", "peer", peerID, "policyID", policyID)
 		}
 
-		// Create the token-exchange scoped permission.
-		// Keycloak expects scopes and policies as plain string arrays of IDs.
+		// Create the token-exchange scoped permission via raw HTTP.
+		// gocloak's CreatePermission doesn't properly link scopes/policies in the
+		// request body. Keycloak expects plain string arrays of IDs.
 		permName := fmt.Sprintf("%s-token-exchange-permission", peerID)
-		perm := gocloak.PermissionRepresentation{
-			Name:             gocloak.StringP(permName),
-			Type:             gocloak.StringP("scope"),
-			Scopes:           &[]string{tokenExchangeScopeID},
-			Policies:         &[]string{policyID},
-			DecisionStrategy: gocloak.AFFIRMATIVE,
+		permBody := fmt.Sprintf(
+			`{"name":"%s","type":"scope","decisionStrategy":"AFFIRMATIVE","scopes":["%s"],"policies":["%s"]}`,
+			permName, tokenExchangeScopeID, policyID,
+		)
+		permURL := fmt.Sprintf("%s/admin/realms/%s/clients/%s/authz/resource-server/permission/scope",
+			p.Config.URL, p.Config.Realm, internalID)
+		req, reqErr := http.NewRequestWithContext(ctx, "POST", permURL, strings.NewReader(permBody))
+		if reqErr != nil {
+			return fmt.Errorf("failed to build permission request: %w", reqErr)
 		}
-		_, err = kcClient.CreatePermission(ctx, token.AccessToken, p.Config.Realm, internalID, perm)
+		req.Header.Set("Authorization", "Bearer "+token.AccessToken)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
-			if !strings.Contains(err.Error(), "409") {
-				return fmt.Errorf("failed to create token-exchange permission for peer %s: %w", peerID, err)
+			return fmt.Errorf("failed to create token-exchange permission for peer %s: %w", peerID, err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode == http.StatusConflict || resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusOK {
+			if resp.StatusCode == http.StatusConflict {
+				logger.Info("Token exchange permission already exists", "peer", peerID)
+			} else {
+				logger.Info("Created token exchange permission", "peer", peerID)
 			}
-			logger.Info("Token exchange permission already exists", "peer", peerID)
 		} else {
-			logger.Info("Created token exchange permission", "peer", peerID)
+			return fmt.Errorf("failed to create token-exchange permission for peer %s: HTTP %d", peerID, resp.StatusCode)
 		}
 	}
 
