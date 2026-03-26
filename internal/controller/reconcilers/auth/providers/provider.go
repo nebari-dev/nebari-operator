@@ -51,4 +51,15 @@ type OIDCProvider interface {
 
 	// SupportsProvisioning returns true if this provider supports automatic client provisioning.
 	SupportsProvisioning() bool
+
+	// ConfigureTokenExchange sets up OAuth 2.0 Token Exchange (RFC 8693) on this
+	// client, allowing the specified peer clients to exchange their access tokens
+	// for tokens with this client's audience.
+	// peerClientIDs are Keycloak clientId strings (not internal UUIDs).
+	ConfigureTokenExchange(ctx context.Context, nebariApp *appsv1.NebariApp, peerClientIDs []string) error
+
+	// CleanupTokenExchange removes token exchange permissions for this client.
+	// For Keycloak, this disables management permissions on the client, which
+	// causes Keycloak to automatically remove the auto-created permission.
+	CleanupTokenExchange(ctx context.Context, nebariApp *appsv1.NebariApp) error
 }
