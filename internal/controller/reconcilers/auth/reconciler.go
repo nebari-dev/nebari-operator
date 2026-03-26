@@ -180,6 +180,15 @@ func (r *AuthReconciler) CleanupAuth(ctx context.Context, nebariApp *appsv1.Neba
 	if err != nil {
 		logger.Error(err, "Failed to get provider for cleanup, continuing anyway")
 	} else if shouldProvisionClient(nebariApp.Spec.Auth) && provider.SupportsProvisioning() {
+		// Clean up token exchange resources before deleting the client
+		if nebariApp.Spec.Auth.TokenExchange != nil && nebariApp.Spec.Auth.TokenExchange.Enabled {
+			if err := provider.CleanupTokenExchange(ctx, nebariApp); err != nil {
+				logger.Error(err, "Failed to clean up token exchange (continuing with client deletion)")
+			} else {
+				logger.Info("Token exchange resources cleaned up")
+			}
+		}
+
 		// Delete the provisioned client
 		logger.Info("Deleting provisioned OIDC client")
 		if err := provider.DeleteClient(ctx, nebariApp); err != nil {

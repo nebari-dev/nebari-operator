@@ -58,6 +58,11 @@ func (p *GenericOIDCProvider) ConfigureTokenExchange(ctx context.Context, nebari
 	return fmt.Errorf("generic-oidc provider does not support token exchange")
 }
 
+// CleanupTokenExchange is a no-op for generic OIDC providers.
+func (p *GenericOIDCProvider) CleanupTokenExchange(ctx context.Context, nebariApp *appsv1.NebariApp) error {
+	return nil
+}
+
 // ProvisionClient always returns an error as generic OIDC doesn't support provisioning.
 func (p *GenericOIDCProvider) ProvisionClient(ctx context.Context, nebariApp *appsv1.NebariApp) error {
 	return fmt.Errorf("generic-oidc provider does not support automatic client provisioning")

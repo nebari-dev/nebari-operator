@@ -83,6 +83,10 @@ func (m *mockProvider) ConfigureTokenExchange(ctx context.Context, nebariApp *ap
 	return nil
 }
 
+func (m *mockProvider) CleanupTokenExchange(ctx context.Context, nebariApp *appsv1.NebariApp) error {
+	return nil
+}
+
 func TestGetProvider(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = appsv1.AddToScheme(scheme)
