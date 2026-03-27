@@ -18,7 +18,11 @@ package auth
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"sort"
 
 	egv1alpha1 "github.com/envoyproxy/gateway/api/v1alpha1"
 	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
@@ -55,6 +59,67 @@ func shouldProvisionClient(auth *appsv1.AuthConfig) bool {
 		return true // default
 	}
 	return *auth.ProvisionClient
+}
+
+// authProvisionState is the subset of NebariApp fields that affect OIDC client
+// provisioning. It is JSON-marshalled and SHA-256 hashed to produce AuthConfigHash.
+//
+// EnforceAtGateway and ProvisionClient are intentionally excluded: they control
+// operator behaviour (whether to create a SecurityPolicy / call the provider)
+// but do not alter what is actually provisioned inside Keycloak. SecurityPolicy
+// reconciliation runs unconditionally regardless of the hash.
+type authProvisionState struct {
+	Namespace      string                       `json:"namespace"`
+	Name           string                       `json:"name"`
+	Hostname       string                       `json:"hostname"`
+	Provider       string                       `json:"provider"`
+	RedirectURI    string                       `json:"redirectURI"`
+	IssuerURL      string                       `json:"issuerURL"`
+	Scopes         []string                     `json:"scopes"`
+	Groups         []string                     `json:"groups"`
+	SPAClient      *appsv1.SPAClientConfig      `json:"spaClient,omitempty"`
+	KeycloakConfig *appsv1.KeycloakClientConfig `json:"keycloakConfig,omitempty"`
+}
+
+// computeAuthConfigHash returns a SHA-256 hex digest of the NebariApp fields that
+// influence OIDC client provisioning. Slices are sorted before hashing to produce
+// a stable result regardless of field ordering in the spec.
+func computeAuthConfigHash(nebariApp *appsv1.NebariApp) string {
+	auth := nebariApp.Spec.Auth
+
+	scopes := append([]string(nil), auth.Scopes...)
+	sort.Strings(scopes)
+
+	groups := append([]string(nil), auth.Groups...)
+	sort.Strings(groups)
+
+	state := authProvisionState{
+		Namespace:      nebariApp.Namespace,
+		Name:           nebariApp.Name,
+		Hostname:       nebariApp.Spec.Hostname,
+		Provider:       auth.Provider,
+		RedirectURI:    auth.RedirectURI,
+		IssuerURL:      auth.IssuerURL,
+		Scopes:         scopes,
+		Groups:         groups,
+		SPAClient:      auth.SPAClient,
+		KeycloakConfig: auth.KeycloakConfig,
+	}
+
+	data, err := json.Marshal(state)
+	if err != nil {
+		// json.Marshal should never fail on this struct (all fields are strings or
+		// serialisable nested types), but if it somehow does we fall back to a
+		// name-based value. Log a warning so the unexpected event is not silent:
+		// a fallback hash matching a previously stored real hash would cause a
+		// false skip of provisioning.
+		log.Log.Error(err, "failed to marshal auth provision state; using name-based fallback hash",
+			"namespace", nebariApp.Namespace, "name", nebariApp.Name)
+		data = []byte(naming.ClientSecretName(nebariApp))
+	}
+
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 // shouldEnforceAtGateway returns true if the operator should create an Envoy SecurityPolicy.
@@ -107,16 +172,46 @@ func (r *AuthReconciler) ReconcileAuth(ctx context.Context, nebariApp *appsv1.Ne
 			return err
 		}
 
-		logger.Info("Provisioning OIDC client")
-		if err := provider.ProvisionClient(ctx, nebariApp); err != nil {
-			conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionFalse,
-				"ProvisioningFailed", fmt.Sprintf("Failed to provision OIDC client: %v", err))
-			return err
-		}
-		logger.Info("OIDC client provisioned successfully")
-		r.Recorder.Event(nebariApp, corev1.EventTypeNormal, "Provisioned", "OIDC client provisioned successfully")
+		currentHash := computeAuthConfigHash(nebariApp)
+		forceAnnotation := nebariApp.Annotations[constants.AnnotationForceReprovision]
+		authReady := conditions.IsConditionTrue(nebariApp, appsv1.ConditionTypeAuthReady)
 
-		// Reconcile RBAC for OIDC secret access
+		if authReady && nebariApp.Status.AuthConfigHash == currentHash && forceAnnotation == "" {
+			logger.Info("Auth config unchanged and AuthReady=True, skipping OIDC client provisioning")
+		} else {
+			if forceAnnotation != "" {
+				logger.Info("Force re-provision annotation present, re-provisioning")
+			}
+
+			logger.Info("Provisioning OIDC client")
+			if err := provider.ProvisionClient(ctx, nebariApp); err != nil {
+				conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionFalse,
+					"ProvisioningFailed", fmt.Sprintf("Failed to provision OIDC client: %v", err))
+				return err
+			}
+			logger.Info("OIDC client provisioned successfully")
+			r.Recorder.Event(nebariApp, corev1.EventTypeNormal, "Provisioned", "OIDC client provisioned successfully")
+
+			// Clear the force-reprovision annotation only after provisioning succeeds.
+			// Clearing it before would silently lose the annotation if ProvisionClient
+			// returned an error, leaving the user unaware they need to re-annotate.
+			// Note: Update() modifies the object and triggers an extra reconcile cycle;
+			// this is expected and harmless for an infrequent manual operation.
+			if forceAnnotation != "" {
+				if nebariApp.Annotations != nil {
+					delete(nebariApp.Annotations, constants.AnnotationForceReprovision)
+				}
+				if err := r.Client.Update(ctx, nebariApp); err != nil {
+					return fmt.Errorf("failed to clear force-reprovision annotation: %w", err)
+				}
+			}
+
+			// Store hash so subsequent reconciles can skip provisioning when nothing has changed
+			nebariApp.Status.AuthConfigHash = currentHash
+		}
+
+		// Reconcile RBAC for OIDC secret access (runs unconditionally so externally-deleted
+		// RBAC resources are always restored).
 		logger.Info("Reconciling Secret RBAC")
 		if err := r.reconcileSecretRBAC(ctx, nebariApp); err != nil {
 			conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionFalse,

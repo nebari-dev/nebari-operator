@@ -58,6 +58,15 @@ const (
 	ClientSecretSuffix = "oidc-client"
 )
 
+// Annotation constants
+const (
+	// AnnotationForceReprovision can be set on a NebariApp to force OIDC client
+	// re-provisioning on the next reconcile cycle, even when the auth config hash
+	// is unchanged. The annotation is automatically removed once re-provisioning
+	// completes. Any non-empty value triggers a forced reprovision.
+	AnnotationForceReprovision = "nebari.dev/force-reprovision"
+)
+
 // Auth/OIDC provider constants
 const (
 	// ProviderKeycloak identifies the Keycloak OIDC provider

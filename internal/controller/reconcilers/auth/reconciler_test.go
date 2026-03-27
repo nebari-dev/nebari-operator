@@ -47,6 +47,7 @@ type mockProvider struct {
 	provisionError       error
 	deleteError          error
 	issuerError          error
+	provisionCount       int // tracks how many times ProvisionClient was called
 }
 
 func (m *mockProvider) GetIssuerURL(ctx context.Context, nebariApp *appsv1.NebariApp) (string, error) {
@@ -68,6 +69,7 @@ func (m *mockProvider) GetClientID(ctx context.Context, nebariApp *appsv1.Nebari
 }
 
 func (m *mockProvider) ProvisionClient(ctx context.Context, nebariApp *appsv1.NebariApp) error {
+	m.provisionCount++
 	return m.provisionError
 }
 
@@ -483,6 +485,8 @@ func TestReconcileAuth(t *testing.T) {
 		existingSecurityPolicy *egv1alpha1.SecurityPolicy
 		provider               *mockProvider
 		expectError            bool
+		// validate runs additional assertions after reconciliation (optional)
+		validate func(*testing.T, *mockProvider, *appsv1.NebariApp)
 	}{
 		{
 			name: "Auth not enabled",
@@ -650,6 +654,179 @@ func TestReconcileAuth(t *testing.T) {
 			},
 			expectError: false,
 		},
+		// --- Hash-guard tests ---
+		{
+			name: "Skip provisioning when hash matches and AuthReady=True",
+			nebariApp: func() *appsv1.NebariApp {
+				app := &appsv1.NebariApp{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "test-app",
+						Namespace: "default",
+					},
+					Spec: appsv1.NebariAppSpec{
+						Hostname: "test.example.com",
+						Auth: &appsv1.AuthConfig{
+							Enabled:         true,
+							Provider:        constants.ProviderKeycloak,
+							ProvisionClient: boolPtr(true),
+						},
+					},
+				}
+				// Pre-set a matching hash and AuthReady=True to trigger the skip path
+				app.Status.AuthConfigHash = computeAuthConfigHash(app)
+				app.Status.Conditions = []metav1.Condition{{
+					Type:               appsv1.ConditionTypeAuthReady,
+					Status:             metav1.ConditionTrue,
+					Reason:             "AuthConfigured",
+					LastTransitionTime: metav1.Now(),
+				}}
+				return app
+			}(),
+			existingSecret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app-oidc-client",
+					Namespace: "default",
+				},
+				Data: map[string][]byte{
+					constants.ClientSecretKey: []byte("test-secret"),
+				},
+			},
+			provider: &mockProvider{
+				issuerURL:            "https://keycloak.example.com/realms/test",
+				clientID:             "test-client",
+				supportsProvisioning: true,
+			},
+			expectError: false,
+			validate: func(t *testing.T, p *mockProvider, app *appsv1.NebariApp) {
+				if p.provisionCount != 0 {
+					t.Errorf("expected ProvisionClient to be skipped, called %d time(s)", p.provisionCount)
+				}
+			},
+		},
+		{
+			name: "Re-provision when spec changes (hash mismatch)",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app",
+					Namespace: "default",
+				},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "test.example.com",
+					Auth: &appsv1.AuthConfig{
+						Enabled:         true,
+						Provider:        constants.ProviderKeycloak,
+						ProvisionClient: boolPtr(true),
+					},
+				},
+				Status: appsv1.NebariAppStatus{
+					AuthConfigHash: "stale-hash-will-not-match",
+					Conditions: []metav1.Condition{{
+						Type:               appsv1.ConditionTypeAuthReady,
+						Status:             metav1.ConditionTrue,
+						Reason:             "AuthConfigured",
+						LastTransitionTime: metav1.Now(),
+					}},
+				},
+			},
+			// No secret pre-created; validateAuthConfig will fail after provisioning
+			provider: &mockProvider{
+				issuerURL:            "https://keycloak.example.com/realms/test",
+				clientID:             "test-client",
+				supportsProvisioning: true,
+			},
+			expectError: true, // validateAuthConfig fails (mock doesn't create the secret)
+			validate: func(t *testing.T, p *mockProvider, app *appsv1.NebariApp) {
+				if p.provisionCount != 1 {
+					t.Errorf("expected ProvisionClient called once, got %d", p.provisionCount)
+				}
+				if app.Status.AuthConfigHash == "stale-hash-will-not-match" {
+					t.Error("expected AuthConfigHash to be updated after provisioning")
+				}
+			},
+		},
+		{
+			name: "Provision on first reconcile (no stored hash, AuthReady unset)",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app",
+					Namespace: "default",
+				},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "test.example.com",
+					Auth: &appsv1.AuthConfig{
+						Enabled:         true,
+						Provider:        constants.ProviderKeycloak,
+						ProvisionClient: boolPtr(true),
+					},
+				},
+			},
+			// No secret; validateAuthConfig will fail but provisioning must run first
+			provider: &mockProvider{
+				issuerURL:            "https://keycloak.example.com/realms/test",
+				clientID:             "test-client",
+				supportsProvisioning: true,
+			},
+			expectError: true,
+			validate: func(t *testing.T, p *mockProvider, app *appsv1.NebariApp) {
+				if p.provisionCount != 1 {
+					t.Errorf("expected ProvisionClient called once on first reconcile, got %d", p.provisionCount)
+				}
+			},
+		},
+		{
+			name: "Force re-provision via annotation overrides matching hash",
+			nebariApp: func() *appsv1.NebariApp {
+				app := &appsv1.NebariApp{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "test-app",
+						Namespace: "default",
+						Annotations: map[string]string{
+							constants.AnnotationForceReprovision: "true",
+						},
+					},
+					Spec: appsv1.NebariAppSpec{
+						Hostname: "test.example.com",
+						Auth: &appsv1.AuthConfig{
+							Enabled:         true,
+							Provider:        constants.ProviderKeycloak,
+							ProvisionClient: boolPtr(true),
+						},
+					},
+				}
+				// Hash matches and AuthReady=True, but annotation forces re-provision
+				app.Status.AuthConfigHash = computeAuthConfigHash(app)
+				app.Status.Conditions = []metav1.Condition{{
+					Type:               appsv1.ConditionTypeAuthReady,
+					Status:             metav1.ConditionTrue,
+					Reason:             "AuthConfigured",
+					LastTransitionTime: metav1.Now(),
+				}}
+				return app
+			}(),
+			existingSecret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app-oidc-client",
+					Namespace: "default",
+				},
+				Data: map[string][]byte{
+					constants.ClientSecretKey: []byte("test-secret"),
+				},
+			},
+			provider: &mockProvider{
+				issuerURL:            "https://keycloak.example.com/realms/test",
+				clientID:             "test-client",
+				supportsProvisioning: true,
+			},
+			expectError: false,
+			validate: func(t *testing.T, p *mockProvider, app *appsv1.NebariApp) {
+				if p.provisionCount != 1 {
+					t.Errorf("expected forced ProvisionClient called once, got %d", p.provisionCount)
+				}
+				if _, ok := app.Annotations[constants.AnnotationForceReprovision]; ok {
+					t.Error("expected force-reprovision annotation to be cleared after reconcile")
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -717,6 +894,11 @@ func TestReconcileAuth(t *testing.T) {
 						t.Error("expected SecurityPolicy to NOT be created when enforceAtGateway=false")
 					}
 				}
+			}
+
+			// Run additional per-test assertions if provided
+			if tt.validate != nil {
+				tt.validate(t, tt.provider, tt.nebariApp)
 			}
 		})
 	}
@@ -817,6 +999,268 @@ func TestCleanupAuth(t *testing.T) {
 			}
 			if !tt.expectError && err != nil {
 				t.Errorf("expected no error, got: %v", err)
+			}
+		})
+	}
+}
+
+// TestComputeAuthConfigHash verifies the hash function's sensitivity and stability.
+// Each relevant spec field must produce a distinct hash when changed, and the hash
+// must be stable (same input → same output regardless of slice ordering).
+func TestComputeAuthConfigHash(t *testing.T) {
+	base := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "default"},
+		Spec: appsv1.NebariAppSpec{
+			Hostname: "app.example.com",
+			Auth: &appsv1.AuthConfig{
+				Provider:    constants.ProviderKeycloak,
+				RedirectURI: "/oauth2/callback",
+				Scopes:      []string{"openid", "profile"},
+				Groups:      []string{"admins"},
+			},
+		},
+	}
+
+	baseHash := computeAuthConfigHash(base)
+
+	t.Run("same spec produces same hash", func(t *testing.T) {
+		same := base.DeepCopy()
+		if computeAuthConfigHash(same) != baseHash {
+			t.Error("expected identical spec to produce the same hash")
+		}
+	})
+
+	t.Run("scope order does not change hash", func(t *testing.T) {
+		reordered := base.DeepCopy()
+		reordered.Spec.Auth.Scopes = []string{"profile", "openid"} // reversed
+		if computeAuthConfigHash(reordered) != baseHash {
+			t.Error("expected scope reordering to produce the same hash")
+		}
+	})
+
+	t.Run("group order does not change hash", func(t *testing.T) {
+		app := base.DeepCopy()
+		app.Spec.Auth.Groups = []string{"viewers", "admins"}
+		base2 := base.DeepCopy()
+		base2.Spec.Auth.Groups = []string{"admins", "viewers"}
+		if computeAuthConfigHash(app) != computeAuthConfigHash(base2) {
+			t.Error("expected group reordering to produce the same hash")
+		}
+	})
+
+	t.Run("different redirect URI changes hash", func(t *testing.T) {
+		changed := base.DeepCopy()
+		changed.Spec.Auth.RedirectURI = "/auth/callback"
+		if computeAuthConfigHash(changed) == baseHash {
+			t.Error("expected different redirectURI to produce a different hash")
+		}
+	})
+
+	t.Run("adding a group changes hash", func(t *testing.T) {
+		changed := base.DeepCopy()
+		changed.Spec.Auth.Groups = append(changed.Spec.Auth.Groups, "data-scientists")
+		if computeAuthConfigHash(changed) == baseHash {
+			t.Error("expected added group to produce a different hash")
+		}
+	})
+
+	t.Run("adding a scope changes hash", func(t *testing.T) {
+		changed := base.DeepCopy()
+		changed.Spec.Auth.Scopes = append(changed.Spec.Auth.Scopes, "groups")
+		if computeAuthConfigHash(changed) == baseHash {
+			t.Error("expected added scope to produce a different hash")
+		}
+	})
+
+	t.Run("different hostname changes hash", func(t *testing.T) {
+		changed := base.DeepCopy()
+		changed.Spec.Hostname = "other.example.com"
+		if computeAuthConfigHash(changed) == baseHash {
+			t.Error("expected different hostname to produce a different hash")
+		}
+	})
+
+	t.Run("different namespace changes hash", func(t *testing.T) {
+		changed := base.DeepCopy()
+		changed.Namespace = "production"
+		if computeAuthConfigHash(changed) == baseHash {
+			t.Error("expected different namespace to produce a different hash")
+		}
+	})
+
+	t.Run("different provider changes hash", func(t *testing.T) {
+		changed := base.DeepCopy()
+		changed.Spec.Auth.Provider = constants.ProviderGenericOIDC
+		if computeAuthConfigHash(changed) == baseHash {
+			t.Error("expected different provider to produce a different hash")
+		}
+	})
+
+	t.Run("adding keycloakConfig group changes hash", func(t *testing.T) {
+		changed := base.DeepCopy()
+		changed.Spec.Auth.KeycloakConfig = &appsv1.KeycloakClientConfig{
+			Groups: []appsv1.KeycloakGroup{{Name: "admins", Members: []string{"alice"}}},
+		}
+		if computeAuthConfigHash(changed) == baseHash {
+			t.Error("expected keycloakConfig change to produce a different hash")
+		}
+	})
+
+	t.Run("issuerURL change (generic-oidc) changes hash", func(t *testing.T) {
+		changed := base.DeepCopy()
+		changed.Spec.Auth.IssuerURL = "https://accounts.google.com"
+		if computeAuthConfigHash(changed) == baseHash {
+			t.Error("expected different issuerURL to produce a different hash")
+		}
+	})
+}
+
+// TestReconcileAuth_SpecChangeCycle simulates a realistic reconcile lifecycle:
+//  1. First reconcile: no stored hash, provisions and records the hash.
+//  2. Second reconcile: spec unchanged, provisioning is skipped.
+//  3. Spec mutation (redirect URI / group / scope): hash mismatches, provisions again.
+//
+// This validates the end-to-end guard behaviour for the changes described in #29.
+func TestReconcileAuth_SpecChangeCycle(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = appsv1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+	_ = egv1alpha1.AddToScheme(scheme)
+
+	// Helper: build a reconciler with a pre-populated fake client secret so
+	// validateAuthConfig passes after the mock ProvisionClient returns nil.
+	newReconcilerWithSecret := func(app *appsv1.NebariApp) (*AuthReconciler, *mockProvider) {
+		secret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      naming.ClientSecretName(app),
+				Namespace: app.Namespace,
+			},
+			Data: map[string][]byte{constants.ClientSecretKey: []byte("s3cr3t")},
+		}
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(app, secret).
+			WithStatusSubresource(app).
+			Build()
+		provider := &mockProvider{
+			issuerURL:            "https://keycloak.example.com/realms/test",
+			clientID:             "test-app",
+			supportsProvisioning: true,
+		}
+		return &AuthReconciler{
+			Client:    fakeClient,
+			Scheme:    scheme,
+			Recorder:  record.NewFakeRecorder(32),
+			Providers: map[string]providers.OIDCProvider{constants.ProviderKeycloak: provider},
+		}, provider
+	}
+
+	tests := []struct {
+		name    string
+		initial appsv1.AuthConfig
+		mutate  func(*appsv1.AuthConfig)
+	}{
+		{
+			name: "redirect URI change triggers re-provisioning",
+			initial: appsv1.AuthConfig{
+				Enabled:         true,
+				Provider:        constants.ProviderKeycloak,
+				ProvisionClient: boolPtr(true),
+				RedirectURI:     "/oauth2/callback",
+			},
+			mutate: func(a *appsv1.AuthConfig) { a.RedirectURI = "/auth/callback" },
+		},
+		{
+			name: "adding a group triggers re-provisioning",
+			initial: appsv1.AuthConfig{
+				Enabled:         true,
+				Provider:        constants.ProviderKeycloak,
+				ProvisionClient: boolPtr(true),
+				Groups:          []string{"admins"},
+			},
+			mutate: func(a *appsv1.AuthConfig) {
+				a.Groups = append(a.Groups, "data-scientists")
+			},
+		},
+		{
+			name: "adding a scope triggers re-provisioning",
+			initial: appsv1.AuthConfig{
+				Enabled:         true,
+				Provider:        constants.ProviderKeycloak,
+				ProvisionClient: boolPtr(true),
+				Scopes:          []string{"openid", "profile"},
+			},
+			mutate: func(a *appsv1.AuthConfig) {
+				a.Scopes = append(a.Scopes, "groups")
+			},
+		},
+		{
+			name: "adding a keycloakConfig group member triggers re-provisioning",
+			initial: appsv1.AuthConfig{
+				Enabled:         true,
+				Provider:        constants.ProviderKeycloak,
+				ProvisionClient: boolPtr(true),
+				KeycloakConfig: &appsv1.KeycloakClientConfig{
+					Groups: []appsv1.KeycloakGroup{{Name: "admins", Members: []string{"alice"}}},
+				},
+			},
+			mutate: func(a *appsv1.AuthConfig) {
+				a.KeycloakConfig.Groups[0].Members = append(a.KeycloakConfig.Groups[0].Members, "bob")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-app", Namespace: "default"},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "test.example.com",
+					Auth:     tt.initial.DeepCopy(),
+				},
+			}
+			reconciler, provider := newReconcilerWithSecret(app)
+
+			// --- Reconcile 1: first time, no stored hash ---
+			if err := reconciler.ReconcileAuth(context.Background(), app); err != nil {
+				t.Fatalf("reconcile 1 failed: %v", err)
+			}
+			if provider.provisionCount != 1 {
+				t.Fatalf("reconcile 1: expected ProvisionClient called once, got %d", provider.provisionCount)
+			}
+			hashAfterFirst := app.Status.AuthConfigHash
+			if hashAfterFirst == "" {
+				t.Fatal("reconcile 1: expected AuthConfigHash to be set after provisioning")
+			}
+
+			// --- Reconcile 2: same spec, AuthReady=True → must skip ---
+			if err := reconciler.ReconcileAuth(context.Background(), app); err != nil {
+				t.Fatalf("reconcile 2 failed: %v", err)
+			}
+			if provider.provisionCount != 1 {
+				t.Errorf("reconcile 2: expected provisioning to be skipped (count=1), got %d", provider.provisionCount)
+			}
+
+			// --- Spec mutation ---
+			tt.mutate(app.Spec.Auth)
+
+			// --- Reconcile 3: spec changed, hash mismatch → must re-provision ---
+			if err := reconciler.ReconcileAuth(context.Background(), app); err != nil {
+				t.Fatalf("reconcile 3 failed: %v", err)
+			}
+			if provider.provisionCount != 2 {
+				t.Errorf("reconcile 3: expected ProvisionClient called again (count=2), got %d", provider.provisionCount)
+			}
+			if app.Status.AuthConfigHash == hashAfterFirst {
+				t.Error("reconcile 3: expected AuthConfigHash to be updated after spec change")
+			}
+
+			// --- Reconcile 4: spec stable again → skip ---
+			if err := reconciler.ReconcileAuth(context.Background(), app); err != nil {
+				t.Fatalf("reconcile 4 failed: %v", err)
+			}
+			if provider.provisionCount != 2 {
+				t.Errorf("reconcile 4: expected provisioning to be skipped again (count=2), got %d", provider.provisionCount)
 			}
 		})
 	}
