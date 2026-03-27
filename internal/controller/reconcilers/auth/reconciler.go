@@ -125,6 +125,16 @@ func (r *AuthReconciler) ReconcileAuth(ctx context.Context, nebariApp *appsv1.Ne
 		}
 	}
 
+	// Configure token exchange if requested
+	if nebariApp.Spec.Auth.TokenExchange != nil && nebariApp.Spec.Auth.TokenExchange.Enabled {
+		if err := r.reconcileTokenExchange(ctx, nebariApp, provider); err != nil {
+			conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionFalse,
+				"TokenExchangeFailed", fmt.Sprintf("Failed to configure token exchange: %v", err))
+			return err
+		}
+		logger.Info("Token exchange configured")
+	}
+
 	// Validate auth configuration (check client secret exists)
 	if err := r.validateAuthConfig(ctx, nebariApp); err != nil {
 		conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionFalse,
@@ -170,6 +180,15 @@ func (r *AuthReconciler) CleanupAuth(ctx context.Context, nebariApp *appsv1.Neba
 	if err != nil {
 		logger.Error(err, "Failed to get provider for cleanup, continuing anyway")
 	} else if shouldProvisionClient(nebariApp.Spec.Auth) && provider.SupportsProvisioning() {
+		// Clean up token exchange resources before deleting the client
+		if nebariApp.Spec.Auth.TokenExchange != nil && nebariApp.Spec.Auth.TokenExchange.Enabled {
+			if err := provider.CleanupTokenExchange(ctx, nebariApp); err != nil {
+				logger.Error(err, "Failed to clean up token exchange (continuing with client deletion)")
+			} else {
+				logger.Info("Token exchange resources cleaned up")
+			}
+		}
+
 		// Delete the provisioned client
 		logger.Info("Deleting provisioned OIDC client")
 		if err := provider.DeleteClient(ctx, nebariApp); err != nil {
@@ -360,6 +379,71 @@ func (r *AuthReconciler) buildSecurityPolicySpec(ctx context.Context, nebariApp 
 	}
 
 	return spec, nil
+}
+
+// reconcileTokenExchange discovers all other NebariApp OIDC clients in the same
+// Keycloak realm and configures token exchange permissions on this client.
+func (r *AuthReconciler) reconcileTokenExchange(ctx context.Context, nebariApp *appsv1.NebariApp, provider providers.OIDCProvider) error {
+	logger := log.FromContext(ctx)
+
+	// List all NebariApps across all namespaces
+	var allApps appsv1.NebariAppList
+	if err := r.Client.List(ctx, &allApps); err != nil {
+		return fmt.Errorf("failed to list NebariApps: %w", err)
+	}
+
+	// Collect internal Keycloak client IDs for all peer apps that have auth enabled
+	peerClientIDs := make([]string, 0, len(allApps.Items))
+	for i := range allApps.Items {
+		peer := &allApps.Items[i]
+
+		// Skip self
+		if peer.Namespace == nebariApp.Namespace && peer.Name == nebariApp.Name {
+			continue
+		}
+
+		// Skip peers without auth enabled or using a different provider
+		if peer.Spec.Auth == nil || !peer.Spec.Auth.Enabled {
+			continue
+		}
+		peerProvider := peer.Spec.Auth.Provider
+		if peerProvider == "" {
+			peerProvider = constants.ProviderKeycloak
+		}
+		if peerProvider != constants.ProviderKeycloak {
+			continue
+		}
+
+		// Look up the peer's Keycloak client ID from its OIDC secret
+		peerSecretName := naming.ClientSecretName(peer)
+		var peerSecret corev1.Secret
+		if err := r.Client.Get(ctx, types.NamespacedName{
+			Namespace: peer.Namespace,
+			Name:      peerSecretName,
+		}, &peerSecret); err != nil {
+			if apierrors.IsNotFound(err) {
+				logger.Info("Peer OIDC secret not found, skipping", "peer", peer.Name, "namespace", peer.Namespace)
+				continue
+			}
+			return fmt.Errorf("failed to get peer OIDC secret %s/%s: %w", peer.Namespace, peerSecretName, err)
+		}
+
+		peerClientID := string(peerSecret.Data[constants.ClientIDKey])
+		if peerClientID == "" {
+			logger.Info("Peer OIDC secret has no client-id, skipping", "peer", peer.Name)
+			continue
+		}
+
+		peerClientIDs = append(peerClientIDs, peerClientID)
+		logger.Info("Found peer client for token exchange", "peer", peer.Name, "namespace", peer.Namespace)
+	}
+
+	if len(peerClientIDs) == 0 {
+		logger.Info("No peer clients found for token exchange")
+		return nil
+	}
+
+	return provider.ConfigureTokenExchange(ctx, nebariApp, peerClientIDs)
 }
 
 func ptrTo[T any](v T) *T {

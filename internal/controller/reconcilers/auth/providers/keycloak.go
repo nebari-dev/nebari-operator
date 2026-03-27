@@ -17,10 +17,14 @@ limitations under the License.
 package providers
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"time"
 
@@ -234,6 +238,209 @@ func (p *KeycloakProvider) ProvisionClient(ctx context.Context, nebariApp *appsv
 
 	// Store all credentials in Kubernetes Secret
 	return p.storeClientSecret(ctx, nebariApp, clientID, clientSecret, externalIssuerURL, spaClientID, deviceClientID)
+}
+
+// ConfigureTokenExchange enables OAuth 2.0 Token Exchange (RFC 8693) on this client
+// using Keycloak's V2 management permissions API.
+//
+// The V2 approach (Keycloak 26+):
+//  1. Enable management permissions on the target client — Keycloak auto-creates
+//     scope permissions (including token-exchange) on the realm-management client.
+//  2. Create client policies on realm-management for each peer allowed to exchange.
+//  3. Update the auto-created token-exchange permission to link the policies.
+//
+// peerClientIDs are Keycloak clientId strings (e.g. "jupyterhub-my-app"), not
+// internal UUIDs. Keycloak's policy API resolves clientId strings to UUIDs
+// server-side when creating client policies.
+func (p *KeycloakProvider) ConfigureTokenExchange(ctx context.Context, nebariApp *appsv1.NebariApp, peerClientIDs []string) error {
+	ctx, cancel := p.withAPITimeout(ctx)
+	defer cancel()
+
+	logger := log.FromContext(ctx)
+	clientID := p.GetClientID(ctx, nebariApp)
+
+	if err := p.loadCredentials(ctx); err != nil {
+		return fmt.Errorf("failed to load Keycloak credentials: %w", err)
+	}
+
+	kcClient, token, err := p.authenticate(ctx)
+	if err != nil {
+		return err
+	}
+
+	// Find this client's internal UUID
+	existingClient, err := p.findClient(ctx, kcClient, token, clientID)
+	if err != nil {
+		return err
+	}
+	if existingClient == nil {
+		return fmt.Errorf("client %s not found, provision it first", clientID)
+	}
+	internalID := gocloak.PString(existingClient.ID)
+
+	// Step 1: Enable management permissions on the target client.
+	// Keycloak auto-creates scope permissions (including token-exchange) on
+	// the realm-management client's authorization resource server.
+	mgmtPerms, err := kcClient.UpdateClientManagementPermissions(ctx, token.AccessToken, p.Config.Realm, internalID,
+		gocloak.ManagementPermissionRepresentation{Enabled: gocloak.BoolP(true)})
+	if err != nil {
+		return fmt.Errorf("failed to enable management permissions: %w", err)
+	}
+
+	if mgmtPerms.ScopePermissions == nil {
+		return fmt.Errorf("management permissions response missing scopePermissions")
+	}
+	tokenExchangePermID := (*mgmtPerms.ScopePermissions)["token-exchange"]
+	if tokenExchangePermID == "" {
+		return fmt.Errorf("no token-exchange permission found in management permissions")
+	}
+	logger.Info("Management permissions enabled", "clientID", clientID, "tokenExchangePermID", tokenExchangePermID)
+
+	// Step 2: Find the realm-management client (where the permissions live).
+	realmMgmtClient, err := p.findClient(ctx, kcClient, token, "realm-management")
+	if err != nil {
+		return fmt.Errorf("failed to find realm-management client: %w", err)
+	}
+	if realmMgmtClient == nil {
+		return fmt.Errorf("realm-management client not found")
+	}
+	realmMgmtID := gocloak.PString(realmMgmtClient.ID)
+
+	// Step 3: Find the token-exchange scope on realm-management's authz.
+	rmScopes, err := kcClient.GetScopes(ctx, token.AccessToken, p.Config.Realm, realmMgmtID, gocloak.GetScopeParams{
+		Name: gocloak.StringP("token-exchange"),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list realm-management scopes: %w", err)
+	}
+	var tokenExchangeScopeID string
+	for _, s := range rmScopes {
+		if gocloak.PString(s.Name) == "token-exchange" {
+			tokenExchangeScopeID = gocloak.PString(s.ID)
+			break
+		}
+	}
+	if tokenExchangeScopeID == "" {
+		return fmt.Errorf("token-exchange scope not found on realm-management")
+	}
+
+	// Step 4: For each peer client, create a client policy on realm-management.
+	// The Clients field takes clientId strings — Keycloak resolves them to
+	// internal UUIDs server-side.
+	policyIDs := make([]string, 0, len(peerClientIDs))
+	for _, peerID := range peerClientIDs {
+		policyName := fmt.Sprintf("%s-token-exchange", peerID)
+
+		policy := gocloak.PolicyRepresentation{
+			Name:  gocloak.StringP(policyName),
+			Type:  gocloak.StringP("client"),
+			Logic: gocloak.POSITIVE,
+			ClientPolicyRepresentation: gocloak.ClientPolicyRepresentation{
+				Clients: &[]string{peerID},
+			},
+		}
+		createdPolicy, err := kcClient.CreatePolicy(ctx, token.AccessToken, p.Config.Realm, realmMgmtID, policy)
+		var policyID string
+		if err != nil {
+			if !strings.Contains(err.Error(), "409") {
+				return fmt.Errorf("failed to create token-exchange policy for peer %s: %w", peerID, err)
+			}
+			logger.Info("Token exchange policy already exists", "peer", peerID)
+			policies, lookupErr := kcClient.GetPolicies(ctx, token.AccessToken, p.Config.Realm, realmMgmtID, gocloak.GetPolicyParams{
+				Name: gocloak.StringP(policyName),
+			})
+			if lookupErr != nil {
+				return fmt.Errorf("failed to look up existing policy %s: %w", policyName, lookupErr)
+			}
+			if len(policies) == 0 {
+				return fmt.Errorf("policy %s reported as existing (409) but not found on lookup", policyName)
+			}
+			policyID = gocloak.PString(policies[0].ID)
+		} else {
+			policyID = gocloak.PString(createdPolicy.ID)
+			logger.Info("Created token exchange policy", "peer", peerID, "policyID", policyID)
+		}
+		policyIDs = append(policyIDs, policyID)
+	}
+
+	// Step 5: Update the auto-created token-exchange permission to link the
+	// peer policies, scope, and resource.
+	//
+	// We use raw HTTP here because gocloak's permission methods don't serialize
+	// scopes, policies, and resources as plain string ID arrays — Keycloak
+	// expects flat arrays like ["id1","id2"] but gocloak sends nested objects.
+	permPayload := map[string]interface{}{
+		"id":               tokenExchangePermID,
+		"name":             fmt.Sprintf("token-exchange.permission.client.%s", internalID),
+		"type":             "scope",
+		"decisionStrategy": "UNANIMOUS",
+		"scopes":           []string{tokenExchangeScopeID},
+		"policies":         policyIDs,
+		"resources":        []string{gocloak.PString(mgmtPerms.Resource)},
+	}
+	permBytes, err := json.Marshal(permPayload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal token-exchange permission: %w", err)
+	}
+	permURL := fmt.Sprintf("%s/admin/realms/%s/clients/%s/authz/resource-server/permission/scope/%s",
+		p.Config.URL, p.Config.Realm, realmMgmtID, tokenExchangePermID)
+	permReq, err := http.NewRequestWithContext(ctx, "PUT", permURL, bytes.NewReader(permBytes))
+	if err != nil {
+		return fmt.Errorf("failed to build token-exchange permission request: %w", err)
+	}
+	permReq.Header.Set("Authorization", "Bearer "+token.AccessToken)
+	permReq.Header.Set("Content-Type", "application/json")
+	permResp, err := http.DefaultClient.Do(permReq)
+	if err != nil {
+		return fmt.Errorf("failed to update token-exchange permission: %w", err)
+	}
+	respBody, _ := io.ReadAll(io.LimitReader(permResp.Body, 1024))
+	_ = permResp.Body.Close()
+	if permResp.StatusCode >= 400 {
+		return fmt.Errorf("failed to update token-exchange permission: HTTP %d: %s", permResp.StatusCode, string(respBody))
+	}
+	logger.Info("Token exchange permission configured", "clientID", clientID, "peers", len(peerClientIDs))
+
+	return nil
+}
+
+// CleanupTokenExchange disables management permissions on the client, which
+// causes Keycloak to automatically remove the auto-created scope permissions
+// (including token-exchange) from realm-management. Peer client policies are
+// left in place — without a referencing permission they have no effect.
+func (p *KeycloakProvider) CleanupTokenExchange(ctx context.Context, nebariApp *appsv1.NebariApp) error {
+	ctx, cancel := p.withAPITimeout(ctx)
+	defer cancel()
+
+	logger := log.FromContext(ctx)
+	clientID := p.GetClientID(ctx, nebariApp)
+
+	if err := p.loadCredentials(ctx); err != nil {
+		return fmt.Errorf("failed to load Keycloak credentials: %w", err)
+	}
+
+	kcClient, token, err := p.authenticate(ctx)
+	if err != nil {
+		return err
+	}
+
+	existingClient, err := p.findClient(ctx, kcClient, token, clientID)
+	if err != nil {
+		return err
+	}
+	if existingClient == nil {
+		return nil // Client already deleted, nothing to clean up
+	}
+	internalID := gocloak.PString(existingClient.ID)
+
+	_, err = kcClient.UpdateClientManagementPermissions(ctx, token.AccessToken, p.Config.Realm, internalID,
+		gocloak.ManagementPermissionRepresentation{Enabled: gocloak.BoolP(false)})
+	if err != nil {
+		return fmt.Errorf("failed to disable management permissions: %w", err)
+	}
+
+	logger.Info("Disabled management permissions (token exchange cleaned up)", "clientID", clientID)
+	return nil
 }
 
 // DeleteClient removes the Keycloak OIDC client.
@@ -1019,9 +1226,9 @@ func (p *KeycloakProvider) provisionDeviceFlowClient(ctx context.Context, kcClie
 
 // generateSecret generates a random secret string of the specified length.
 func generateSecret(length int) (string, error) {
-	bytes := make([]byte, length)
-	if _, err := rand.Read(bytes); err != nil {
+	randBytes := make([]byte, length)
+	if _, err := rand.Read(randBytes); err != nil {
 		return "", err
 	}
-	return base64.URLEncoding.EncodeToString(bytes)[:length], nil
+	return base64.URLEncoding.EncodeToString(randBytes)[:length], nil
 }

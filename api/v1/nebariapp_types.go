@@ -248,6 +248,25 @@ type AuthConfig struct {
 	// for other providers (e.g., generic-oidc).
 	// +optional
 	KeycloakConfig *KeycloakClientConfig `json:"keycloakConfig,omitempty"`
+
+	// TokenExchange configures OAuth 2.0 Token Exchange (RFC 8693) for this client.
+	// When enabled, other NebariApp OIDC clients in the same Keycloak realm can
+	// exchange their access tokens for tokens with this client's audience.
+	// Requires KC_FEATURES=token-exchange on the Keycloak server.
+	// Only supported for provider="keycloak".
+	// +optional
+	TokenExchange *TokenExchangeConfig `json:"tokenExchange,omitempty"`
+}
+
+// TokenExchangeConfig controls OAuth 2.0 Token Exchange (RFC 8693) for this client.
+type TokenExchangeConfig struct {
+	// Enabled determines whether token exchange should be configured for this client.
+	// When true, the operator enables authorization services on the Keycloak client
+	// and creates policies allowing all other NebariApp clients in the same realm
+	// to exchange tokens for this client's audience.
+	// +kubebuilder:default=false
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
 }
 
 // KeycloakClientConfig provides Keycloak-specific configuration for managing
