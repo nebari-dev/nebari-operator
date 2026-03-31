@@ -247,7 +247,7 @@ func TestBuildHTTPRoute(t *testing.T) {
 					if string(backend.Name) != tt.nebariApp.Spec.Service.Name {
 						t.Errorf("rule %d: expected backend name=%s, got=%s", i, tt.nebariApp.Spec.Service.Name, backend.Name)
 					}
-					if *backend.Port != gatewayv1.PortNumber(tt.expectedBackendPort) {
+					if *backend.Port != tt.expectedBackendPort {
 						t.Errorf("rule %d: expected backend port=%d, got=%d", i, tt.expectedBackendPort, *backend.Port)
 					}
 				}
@@ -1048,7 +1048,7 @@ func TestBuildBackendRefs(t *testing.T) {
 			}
 
 			// Check port
-			expectedPort := gatewayv1.PortNumber(tt.nebariApp.Spec.Service.Port)
+			expectedPort := tt.nebariApp.Spec.Service.Port
 			if *backendRef.Port != expectedPort {
 				t.Errorf("expected port=%d, got=%d", expectedPort, *backendRef.Port)
 			}

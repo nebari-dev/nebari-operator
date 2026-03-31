@@ -477,7 +477,7 @@ func (r *AuthReconciler) buildSecurityPolicySpec(ctx context.Context, nebariApp 
 			header.Name = h.Name
 			if h.Type != "" {
 				matchType := egv1alpha1.StringMatchType(h.Type)
-				header.StringMatch.Type = &matchType
+				header.Type = &matchType
 			}
 			headers = append(headers, header)
 		}
