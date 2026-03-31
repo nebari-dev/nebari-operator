@@ -216,6 +216,16 @@ type AuthConfig struct {
 	// +optional
 	EnforceAtGateway *bool `json:"enforceAtGateway,omitempty"`
 
+	// DenyRedirect configures headers that, when matched, prevent the OIDC filter
+	// from redirecting to the identity provider. Instead, matching requests receive
+	// a 401 response. This prevents PKCE race conditions when SPAs fire multiple
+	// requests on page load (e.g., the main page and AJAX calls simultaneously),
+	// each of which would otherwise start a separate OAuth flow and overwrite
+	// each other's state cookies.
+	// Only applies when enforceAtGateway is true.
+	// +optional
+	DenyRedirect []DenyRedirectHeader `json:"denyRedirect,omitempty"`
+
 	// IssuerURL specifies the OIDC issuer URL for generic-oidc provider.
 	// Required when provider="generic-oidc", ignored for other providers.
 	// Example: https://accounts.google.com, https://login.microsoftonline.com/<tenant>/v2.0
@@ -356,6 +366,28 @@ type DeviceFlowClientConfig struct {
 	// +kubebuilder:default=false
 	// +optional
 	Enabled bool `json:"enabled,omitempty"`
+}
+
+// DenyRedirectHeader defines a header match rule for preventing OIDC redirects.
+// Requests matching any of these headers will receive a 401 instead of being
+// redirected to the identity provider.
+type DenyRedirectHeader struct {
+	// Name is the header name to match against.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+
+	// Type specifies how to match the header value.
+	// Valid values: Exact, Prefix, Suffix, RegularExpression
+	// +kubebuilder:validation:Enum=Exact;Prefix;Suffix;RegularExpression
+	// +kubebuilder:default=Exact
+	// +optional
+	Type string `json:"type,omitempty"`
+
+	// Value is the header value to match.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Value string `json:"value"`
 }
 
 // LandingPageConfig defines how a service appears on the Nebari landing page.
