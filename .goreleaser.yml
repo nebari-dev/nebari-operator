@@ -5,9 +5,11 @@ version: 2
 
 before:
   hooks:
-    # Clean up ignored files that may be in the git tree from release commits
-    - git checkout -- dist/ || true
-    - git clean -fd dist/ || true
+    # Clean up ignored files that may be in the git tree from release commits.
+    # Note: hooks are NOT run through a shell by default in GoReleaser v2, so
+    # shell operators like || must be wrapped explicitly with sh -c.
+    - sh -c "git checkout -- dist/ 2>/dev/null || true"
+    - sh -c "git clean -fd dist/ 2>/dev/null || true"
     # Ensure dependencies are up to date
     - go mod tidy
     # Generate code
@@ -85,7 +87,13 @@ release:
     kubectl apply -f https://github.com/nebari-dev/nebari-operator/releases/download/{{ .Tag }}/install.yaml
     ```
 
-    Or use the Docker image:
+    Or via Helm (OCI):
+    ```bash
+    helm install nebari-operator oci://quay.io/nebari/charts/nebari-operator --version {{ trimPrefix "v" .Tag }} \
+      --create-namespace --namespace nebari-operator-system
+    ```
+
+    Or use the Docker image directly:
     ```
     quay.io/nebari/nebari-operator:{{ .Tag }}
     ```
