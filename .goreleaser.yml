@@ -107,13 +107,13 @@ dockers_v2:
     platforms:
       - linux/amd64
       - linux/arm64
-    build_flag_templates:
-      - "--label=org.opencontainers.image.created={{.Date}}"
-      - "--label=org.opencontainers.image.title=nebari-operator"
-      - "--label=org.opencontainers.image.version={{.Version}}"
-      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
-      - "--label=org.opencontainers.image.source=https://github.com/nebari-dev/nebari-operator"
-      - "--label=org.opencontainers.image.licenses=Apache-2.0"
+    labels:
+      "org.opencontainers.image.created": "{{.Date}}"
+      "org.opencontainers.image.title": "nebari-operator"
+      "org.opencontainers.image.version": "{{.Version}}"
+      "org.opencontainers.image.revision": "{{.FullCommit}}"
+      "org.opencontainers.image.source": "https://github.com/nebari-dev/nebari-operator"
+      "org.opencontainers.image.licenses": "Apache-2.0"
 
 # Announcements (optional)
 announce:
