@@ -5,12 +5,7 @@ version: 2
 
 before:
   hooks:
-    # Clean up ignored files that may be in the git tree from release commits
-    - git checkout -- dist/ || true
-    - git clean -fd dist/ || true
-    # Ensure dependencies are up to date
     - go mod tidy
-    # Generate code
     - make generate
 
 builds:
@@ -96,6 +91,29 @@ release:
 
     - [Documentation](https://github.com/nebari-dev/nebari-operator/tree/{{ .Tag }}/docs)
     - [Report Issues](https://github.com/nebari-dev/nebari-operator/issues)
+
+dockers_v2:
+  - id: nebari-operator
+    dockerfile: Dockerfile.goreleaser
+    ids:
+      - manager
+    images:
+      - "quay.io/nebari/nebari-operator"
+    tags:
+      - "{{ .Tag }}"
+      - "{{ .Version }}"
+      - "sha-{{ .ShortCommit }}"
+      - "latest"
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    build_flag_templates:
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title=nebari-operator"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.source=https://github.com/nebari-dev/nebari-operator"
+      - "--label=org.opencontainers.image.licenses=Apache-2.0"
 
 # Announcements (optional)
 announce:
