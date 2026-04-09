@@ -227,10 +227,11 @@ func (p *KeycloakProvider) ProvisionClient(ctx context.Context, nebariApp *appsv
 		logger.Info("Provisioned device flow client", "clientID", deviceClientID)
 	}
 
-	// Get external issuer URL for the Secret
+	// Get external issuer URL for the Secret (best-effort: empty if KEYCLOAK_EXTERNAL_URL not set)
 	externalIssuerURL, err := p.GetExternalIssuerURL(ctx, nebariApp)
 	if err != nil {
-		return fmt.Errorf("failed to get external issuer URL: %w", err)
+		logger.Info("External issuer URL not available, issuer-url will be empty in Secret", "reason", err.Error())
+		externalIssuerURL = ""
 	}
 
 	// Store all credentials in Kubernetes Secret
