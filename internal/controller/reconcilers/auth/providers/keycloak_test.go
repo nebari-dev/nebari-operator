@@ -300,6 +300,22 @@ func TestKeycloakProvider_StoreClientSecret(t *testing.T) {
 			expectError:       false,
 			expectedSecretLen: 5, // client-id, client-secret, issuer-url, spa-client-id, device-client-id
 		},
+		{
+			name: "Create secret with empty issuer URL stores empty value",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app",
+					Namespace: "default",
+					UID:       "test-uid",
+				},
+			},
+			clientID:          "default-test-app",
+			clientSecret:      "test-secret-value",
+			externalIssuer:    "",
+			existingSecret:    nil,
+			expectError:       false,
+			expectedSecretLen: 3, // client-id, client-secret, issuer-url (even when empty)
+		},
 	}
 
 	for _, tt := range tests {
