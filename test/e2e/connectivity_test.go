@@ -159,6 +159,8 @@ spec:
 			}, 3*time.Minute, 5*time.Second).Should(Succeed())
 
 			By("waiting for HTTPRoute to be accepted")
+			// Envoy Gateway can be slow to reconcile HTTPRoutes in resource-constrained
+			// CI environments; use a generous timeout matching the HTTPS test.
 			Eventually(func(g Gomega) {
 				cmd := exec.Command("kubectl", "get", "httproute", "test-http-connectivity-route",
 					"-n", testNamespace,
@@ -166,7 +168,7 @@ spec:
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(output).To(Equal("True"))
-			}, 2*time.Minute, 5*time.Second).Should(Succeed())
+			}, 5*time.Minute, 5*time.Second).Should(Succeed())
 
 			By("waiting for HTTPRoute to be programmed (ResolvedRefs)")
 			Eventually(func(g Gomega) {
@@ -176,7 +178,7 @@ spec:
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(output).To(Equal("True"))
-			}, 2*time.Minute, 5*time.Second).Should(Succeed())
+			}, 5*time.Minute, 5*time.Second).Should(Succeed())
 
 			By("dumping HTTPRoute details for debugging")
 			cmd = exec.Command("kubectl", "get", "httproute", "test-http-connectivity-route",
