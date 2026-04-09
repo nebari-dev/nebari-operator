@@ -227,13 +227,10 @@ func (p *KeycloakProvider) ProvisionClient(ctx context.Context, nebariApp *appsv
 		logger.Info("Provisioned device flow client", "clientID", deviceClientID)
 	}
 
-	// Get external issuer URL for the Secret (only needed when external consumers exist)
-	var externalIssuerURL string
-	if p.shouldProvisionDeviceFlowClient(nebariApp) || p.shouldProvisionSPAClient(nebariApp) {
-		externalIssuerURL, err = p.GetExternalIssuerURL(ctx, nebariApp)
-		if err != nil {
-			return fmt.Errorf("failed to get external issuer URL (KEYCLOAK_EXTERNAL_URL must be set when deviceFlowClient or spaClient is enabled): %w", err)
-		}
+	// Get external issuer URL for the Secret
+	externalIssuerURL, err := p.GetExternalIssuerURL(ctx, nebariApp)
+	if err != nil {
+		return fmt.Errorf("failed to get external issuer URL: %w", err)
 	}
 
 	// Store all credentials in Kubernetes Secret
