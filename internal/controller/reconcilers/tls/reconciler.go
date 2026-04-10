@@ -247,7 +247,7 @@ func (r *TLSReconciler) reconcileGatewayListener(ctx context.Context, nebariApp 
 		Hostname: &hostname,
 		Port:     443,
 		Protocol: gatewayv1.HTTPSProtocolType,
-		TLS: &gatewayv1.GatewayTLSConfig{
+		TLS: &gatewayv1.ListenerTLSConfig{
 			Mode: &tlsMode,
 			CertificateRefs: []gatewayv1.SecretObjectReference{
 				{

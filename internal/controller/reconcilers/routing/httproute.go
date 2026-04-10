@@ -257,7 +257,7 @@ func (r *RoutingReconciler) buildBackendRefs(nebariApp *appsv1.NebariApp) []gate
 	// 	weight = *nebariApp.Spec.Service.Weight
 	// }
 
-	port := gatewayv1.PortNumber(nebariApp.Spec.Service.Port)
+	port := nebariApp.Spec.Service.Port
 
 	// Use specified service namespace, or default to NebariApp's namespace
 	serviceNamespace := nebariApp.Spec.Service.Namespace

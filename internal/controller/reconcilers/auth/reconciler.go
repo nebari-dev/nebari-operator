@@ -40,7 +40,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
-	gwapiv1a2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
 )
 
 // AuthReconciler reconciles authentication resources for NebariApps.
@@ -430,8 +429,8 @@ func (r *AuthReconciler) buildSecurityPolicySpec(ctx context.Context, nebariApp 
 	group := gwapiv1.Group("gateway.networking.k8s.io")
 	kind := gwapiv1.Kind("HTTPRoute")
 	routeName := gwapiv1.ObjectName(naming.HTTPRouteName(nebariApp))
-	httpRouteRef := gwapiv1a2.LocalPolicyTargetReferenceWithSectionName{
-		LocalPolicyTargetReference: gwapiv1a2.LocalPolicyTargetReference{
+	httpRouteRef := gwapiv1.LocalPolicyTargetReferenceWithSectionName{
+		LocalPolicyTargetReference: gwapiv1.LocalPolicyTargetReference{
 			Group: group,
 			Kind:  kind,
 			Name:  routeName,
@@ -448,7 +447,7 @@ func (r *AuthReconciler) buildSecurityPolicySpec(ctx context.Context, nebariApp 
 		Provider: egv1alpha1.OIDCProvider{
 			Issuer: issuerURL,
 		},
-		ClientID: clientID,
+		ClientID: ptrTo(clientID),
 		ClientSecret: gwapiv1.SecretObjectReference{
 			Group:     &secretGroup,
 			Kind:      &secretKind,
@@ -466,9 +465,30 @@ func (r *AuthReconciler) buildSecurityPolicySpec(ctx context.Context, nebariApp 
 		oidcConfig.Scopes = []string{"openid", "profile", "email"}
 	}
 
+	// Set DenyRedirect headers to prevent PKCE race conditions from concurrent requests
+	if len(nebariApp.Spec.Auth.DenyRedirect) > 0 {
+		headers := make([]egv1alpha1.OIDCDenyRedirectHeader, 0, len(nebariApp.Spec.Auth.DenyRedirect))
+		for _, h := range nebariApp.Spec.Auth.DenyRedirect {
+			header := egv1alpha1.OIDCDenyRedirectHeader{
+				StringMatch: egv1alpha1.StringMatch{
+					Value: h.Value,
+				},
+			}
+			header.Name = h.Name
+			if h.Type != "" {
+				matchType := egv1alpha1.StringMatchType(h.Type)
+				header.Type = &matchType
+			}
+			headers = append(headers, header)
+		}
+		oidcConfig.DenyRedirect = &egv1alpha1.OIDCDenyRedirect{
+			Headers: headers,
+		}
+	}
+
 	spec := egv1alpha1.SecurityPolicySpec{
 		PolicyTargetReferences: egv1alpha1.PolicyTargetReferences{
-			TargetRefs: []gwapiv1a2.LocalPolicyTargetReferenceWithSectionName{httpRouteRef},
+			TargetRefs: []gwapiv1.LocalPolicyTargetReferenceWithSectionName{httpRouteRef},
 		},
 		OIDC: oidcConfig,
 	}

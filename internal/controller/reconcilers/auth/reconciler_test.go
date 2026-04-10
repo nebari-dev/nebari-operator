@@ -27,6 +27,7 @@ import (
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/constants"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/naming"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -346,8 +347,8 @@ func TestBuildSecurityPolicySpec(t *testing.T) {
 				if spec.OIDC.Provider.Issuer != "https://keycloak.example.com/realms/test" {
 					t.Errorf("expected issuer https://keycloak.example.com/realms/test, got %s", spec.OIDC.Provider.Issuer)
 				}
-				if spec.OIDC.ClientID != "test-client" {
-					t.Errorf("expected clientID test-client, got %s", spec.OIDC.ClientID)
+				if spec.OIDC.ClientID == nil || *spec.OIDC.ClientID != "test-client" {
+					t.Errorf("expected clientID test-client, got %v", spec.OIDC.ClientID)
 				}
 				if *spec.OIDC.RedirectURL != "https://test.example.com/oauth2/callback" {
 					t.Errorf("expected redirectURL https://test.example.com/oauth2/callback, got %s", *spec.OIDC.RedirectURL)
@@ -420,6 +421,88 @@ func TestBuildSecurityPolicySpec(t *testing.T) {
 			},
 		},
 		{
+			name: "DenyRedirect headers",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app",
+					Namespace: "default",
+				},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "test.example.com",
+					Auth: &appsv1.AuthConfig{
+						Enabled:  true,
+						Provider: constants.ProviderKeycloak,
+						DenyRedirect: []appsv1.DenyRedirectHeader{
+							{
+								Name:  "X-Requested-With",
+								Type:  "Exact",
+								Value: "XMLHttpRequest",
+							},
+						},
+					},
+				},
+			},
+			provider: &mockProvider{
+				issuerURL: "https://keycloak.example.com/realms/test",
+				clientID:  "test-client",
+			},
+			expectError: false,
+			validateSpec: func(t *testing.T, spec egv1alpha1.SecurityPolicySpec) {
+				if spec.OIDC == nil {
+					t.Error("OIDC config is nil")
+					return
+				}
+				if spec.OIDC.DenyRedirect == nil {
+					t.Error("DenyRedirect is nil")
+					return
+				}
+				if len(spec.OIDC.DenyRedirect.Headers) != 1 {
+					t.Errorf("expected 1 DenyRedirect header, got %d", len(spec.OIDC.DenyRedirect.Headers))
+					return
+				}
+				h := spec.OIDC.DenyRedirect.Headers[0]
+				if h.Name != "X-Requested-With" {
+					t.Errorf("expected header name X-Requested-With, got %s", h.Name)
+				}
+				if h.Value != "XMLHttpRequest" {
+					t.Errorf("expected header value XMLHttpRequest, got %s", h.Value)
+				}
+				if h.Type == nil || *h.Type != egv1alpha1.StringMatchExact {
+					t.Errorf("expected match type Exact, got %v", h.Type)
+				}
+			},
+		},
+		{
+			name: "No DenyRedirect when not configured",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app",
+					Namespace: "default",
+				},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "test.example.com",
+					Auth: &appsv1.AuthConfig{
+						Enabled:  true,
+						Provider: constants.ProviderKeycloak,
+					},
+				},
+			},
+			provider: &mockProvider{
+				issuerURL: "https://keycloak.example.com/realms/test",
+				clientID:  "test-client",
+			},
+			expectError: false,
+			validateSpec: func(t *testing.T, spec egv1alpha1.SecurityPolicySpec) {
+				if spec.OIDC == nil {
+					t.Error("OIDC config is nil")
+					return
+				}
+				if spec.OIDC.DenyRedirect != nil {
+					t.Error("expected DenyRedirect to be nil when not configured")
+				}
+			},
+		},
+		{
 			name: "Provider returns error",
 			nebariApp: &appsv1.NebariApp{
 				ObjectMeta: metav1.ObjectMeta{
@@ -476,6 +559,7 @@ func TestReconcileAuth(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = appsv1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
+	_ = rbacv1.AddToScheme(scheme)
 	_ = egv1alpha1.AddToScheme(scheme)
 
 	tests := []struct {
@@ -1125,6 +1209,7 @@ func TestReconcileAuth_SpecChangeCycle(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = appsv1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
+	_ = rbacv1.AddToScheme(scheme)
 	_ = egv1alpha1.AddToScheme(scheme)
 
 	// Helper: build a reconciler with a pre-populated fake client secret so
