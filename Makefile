@@ -81,16 +81,16 @@ test-unit-html: test-unit ## Generate HTML coverage report for unit tests.
 	@xdg-open unit-coverage.html 2>/dev/null || open unit-coverage.html 2>/dev/null || echo "Open unit-coverage.html in your browser"
 
 .PHONY: test-e2e
-test-e2e: manifests generate fmt vet ginkgo ## Run all e2e tests (parallel by default).
-	USE_EXISTING_CLUSTER=$(USE_EXISTING_CLUSTER) IMG=$(IMG) "$(GINKGO)" -v --procs=4 --tags=e2e --timeout=30m ./test/e2e/
+test-e2e: manifests generate fmt vet ## Run all e2e tests.
+	USE_EXISTING_CLUSTER=$(USE_EXISTING_CLUSTER) IMG=$(IMG) go test ./test/e2e -v -ginkgo.v -tags=e2e -timeout=30m
 
-.PHONY: test-e2e-serial
-test-e2e-serial: manifests generate fmt vet ginkgo ## Run e2e tests serially (for debugging).
-	USE_EXISTING_CLUSTER=$(USE_EXISTING_CLUSTER) IMG=$(IMG) "$(GINKGO)" -v --tags=e2e --timeout=30m ./test/e2e/
+.PHONY: test-e2e-parallel
+test-e2e-parallel: manifests generate fmt vet ## Run e2e tests in parallel (faster).
+	USE_EXISTING_CLUSTER=$(USE_EXISTING_CLUSTER) go test ./test/e2e -v -ginkgo.v -ginkgo.procs=4 -tags=e2e -timeout=30m
 
 .PHONY: test-e2e-smoke
-test-e2e-smoke: manifests generate fmt vet ginkgo ## Run quick smoke tests only.
-	USE_EXISTING_CLUSTER=$(USE_EXISTING_CLUSTER) IMG=$(IMG) "$(GINKGO)" -v --tags=e2e --timeout=10m --focus="should reconcile a NebariApp" ./test/e2e/
+test-e2e-smoke: manifests generate fmt vet ## Run quick smoke tests only.
+	USE_EXISTING_CLUSTER=$(USE_EXISTING_CLUSTER) go test ./test/e2e -v -ginkgo.v -ginkgo.focus="should reconcile a NebariApp" -tags=e2e -timeout=10m
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
@@ -219,9 +219,6 @@ prepare-release: ## [DEPRECATED] Use automated GitHub Actions workflow instead
 	@echo "See docs/maintainers/release-process.md for details"
 	@echo ""
 	@exit 1
-	sed -i.bak "s/^appVersion:.*/appVersion: \"$(APP_VERSION)\"/" dist/chart/Chart.yaml
-	rm -f dist/chart/Chart.yaml.bak
-	@echo "✅ Updated chart version to $(VERSION) and appVersion to $(APP_VERSION)"
 
 ##@ Deployment
 
@@ -262,7 +259,6 @@ KUSTOMIZE ?= $(LOCALBIN)/kustomize
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 ENVTEST ?= $(LOCALBIN)/setup-envtest
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
-GINKGO = $(LOCALBIN)/ginkgo
 
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5.7.1
@@ -279,7 +275,6 @@ ENVTEST_K8S_VERSION ?= $(shell v='$(call gomodver,k8s.io/api)'; \
   printf '%s\n' "$$v" | sed -E 's/^v?[0-9]+\.([0-9]+).*/1.\1/')
 
 GOLANGCI_LINT_VERSION ?= v2.5.0
-GINKGO_VERSION ?= $(shell go list -m -f '{{.Version}}' github.com/onsi/ginkgo/v2 2>/dev/null)
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
 $(KUSTOMIZE): $(LOCALBIN)
@@ -307,11 +302,6 @@ $(ENVTEST): $(LOCALBIN)
 golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
 $(GOLANGCI_LINT): $(LOCALBIN)
 	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
-
-.PHONY: ginkgo
-ginkgo: $(GINKGO) ## Download ginkgo CLI locally if necessary.
-$(GINKGO): $(LOCALBIN)
-	$(call go-install-tool,$(GINKGO),github.com/onsi/ginkgo/v2/ginkgo,$(GINKGO_VERSION))
 
 # go-install-tool will 'go install' any package with custom target and name of binary, if it doesn't exist
 # $1 - target path with name of binary

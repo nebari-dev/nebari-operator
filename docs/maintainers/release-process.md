@@ -95,14 +95,6 @@ gh release create v1.0.0 \
 2. Find the "Release" workflow run
 3. Monitor the progress of all jobs:
    - **tests**: Runs unit tests and linter
-   - **build-manifests**: Generates the install.yaml
-   - **docker-build-push**: Builds and pushes Docker images
-### Step 4: Monitor the Release Workflow
-
-1. Go to the "Actions" tab in your GitHub repository
-2. Find the "Release" workflow run
-3. Monitor the progress of all jobs:
-   - **tests**: Runs unit tests and linter
    - **build-manifests**: Generates and uploads install.yaml
    - **docker-build-push**: Builds Docker images for each architecture
    - **merge-manifest**: Creates multi-arch manifest and pushes to registry
@@ -155,19 +147,16 @@ The Helm chart package:
 
 ### Using Helm (Recommended)
 
-Install the operator using the Helm chart:
+Install the operator using the Helm chart from the OCI registry:
 
 ```bash
-# Add the release as a Helm repository (download the chart first)
-curl -LO https://github.com/nebari-dev/nebari-operator/releases/download/v1.0.0/nebari-operator-1.0.0.tgz
-
-# Install the chart
-helm install nebari-operator nebari-operator-1.0.0.tgz \
+helm install nebari-operator oci://quay.io/nebari/charts/nebari-operator \
+  --version 1.0.0 \
   --create-namespace \
   --namespace nebari-operator-system
 ```
 
-Or install directly from URL:
+Or install directly from the GitHub release artifact:
 
 ```bash
 helm install nebari-operator \
