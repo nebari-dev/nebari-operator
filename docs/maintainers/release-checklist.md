@@ -37,22 +37,9 @@ git tag -a v1.2.3 -m "Release v1.2.3"
 git push origin v1.2.3
 ```
 
-### 3. Monitor the Release Workflow
+### 3. Create the GitHub Release
 
-Go to the [Actions tab](https://github.com/nebari-dev/nebari-operator/actions) and monitor the Release workflow:
-
-Wait for all jobs to complete (typically 5-10 minutes):
-- [ ] **tests**: Unit tests and linter pass
-- [ ] **build-manifests**: Generate and upload install.yaml
-- [ ] **docker-build-push**: Build multi-arch images
-- [ ] **merge-manifest**: Create multi-arch manifest
-- [ ] **goreleaser**: Build Go binaries
-- [ ] **publish-helm-chart**: Package and upload Helm chart
-- [ ] **sync-helm-repository**: Sync to helm-repository (if enabled)
-
-### 4. Create the GitHub Release
-
-Once the workflow completes successfully:
+The release workflow is triggered by publishing a GitHub release — it does **not** trigger on tag push alone.
 
 #### Option A: Via GitHub CLI (Recommended)
 
@@ -76,6 +63,19 @@ The `--generate-notes` flag automatically creates release notes from PR titles.
    - Add upgrade instructions if needed
    - Organize by feature/bugfix/docs
 7. Click "Publish release"
+
+### 4. Monitor the Release Workflow
+
+Go to the [Actions tab](https://github.com/nebari-dev/nebari-operator/actions) and monitor the Release workflow:
+
+Wait for all jobs to complete (typically 5-10 minutes):
+- [ ] **tests**: Unit tests and linter pass
+- [ ] **build-manifests**: Generate and upload install.yaml
+- [ ] **docker-build-push**: Build multi-arch images
+- [ ] **merge-manifest**: Create multi-arch manifest
+- [ ] **goreleaser**: Build Go binaries
+- [ ] **publish-helm-chart**: Package and upload Helm chart
+- [ ] **sync-helm-repository**: Sync to helm-repository (if enabled)
 
 ### 5. Verify the Release Artifacts
 
@@ -109,19 +109,20 @@ kubectl apply -f https://github.com/nebari-dev/nebari-operator/releases/download
 ### Test Helm Installation
 
 ```bash
-# Download and install from GitHub release
-helm install nebari-operator \
-  https://github.com/nebari-dev/nebari-operator/releases/download/v1.2.3/nebari-operator-1.2.3.tgz \
+# Install from OCI registry (after helm-repository sync)
+helm install nebari-operator oci://quay.io/nebari/charts/nebari-operator \
+  --version 1.2.3 \
   --create-namespace \
   --namespace nebari-operator-system
 ```
 
-Or, after helm-repository sync:
+Or install directly from the GitHub release artifact:
 
 ```bash
-helm repo add nebari https://nebari-dev.github.io/helm-repository
-helm repo update
-helm install nebari-operator nebari/nebari-operator --version 1.2.3
+helm install nebari-operator \
+  https://github.com/nebari-dev/nebari-operator/releases/download/v1.2.3/nebari-operator-1.2.3.tgz \
+  --create-namespace \
+  --namespace nebari-operator-system
 ```
 
 ### Announce the Release (Optional)
