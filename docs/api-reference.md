@@ -42,11 +42,30 @@ _Appears in:_
 | `groups` _string array_ | Groups specifies the list of groups that should have access to this application.<br />When specified, only users belonging to these groups will be authorized.<br />Group matching is case-sensitive and depends on the OIDC provider's group claim. |  | Optional: \{\} <br /> |
 | `provisionClient` _boolean_ | ProvisionClient determines whether the operator should automatically provision<br />an OIDC client in the provider. When true, the operator will create a client<br />(e.g., in Keycloak) and store the credentials in a Secret.<br />Only supported for provider="keycloak".<br />Defaults to true if not specified. | true | Optional: \{\} <br /> |
 | `enforceAtGateway` _boolean_ | EnforceAtGateway determines whether the operator should create an Envoy Gateway<br />SecurityPolicy to enforce authentication at the gateway level.<br />When true (default), the operator creates a SecurityPolicy that handles<br />the OIDC flow at the gateway before requests reach the application.<br />When false, the operator provisions the OIDC client and stores credentials<br />in a Secret, but does NOT create a SecurityPolicy - the application is<br />expected to handle OAuth natively (e.g., Grafana's built-in generic_oauth). | true | Optional: \{\} <br /> |
+| `denyRedirect` _[DenyRedirectHeader](#denyredirectheader) array_ | DenyRedirect configures headers that, when matched, prevent the OIDC filter<br />from redirecting to the identity provider. Instead, matching requests receive<br />a 401 response. This prevents PKCE race conditions when SPAs fire multiple<br />requests on page load (e.g., the main page and AJAX calls simultaneously),<br />each of which would otherwise start a separate OAuth flow and overwrite<br />each other's state cookies.<br />Only applies when enforceAtGateway is true. |  | Optional: \{\} <br /> |
 | `issuerURL` _string_ | IssuerURL specifies the OIDC issuer URL for generic-oidc provider.<br />Required when provider="generic-oidc", ignored for other providers.<br />Example: https://accounts.google.com, https://login.microsoftonline.com/<tenant>/v2.0 |  | Optional: \{\} <br /> |
 | `spaClient` _[SPAClientConfig](#spaclientconfig)_ | SPAClient configures a public OIDC client for browser-based authentication.<br />When enabled, the operator provisions a separate public client for Single-Page<br />Applications that use PKCE flows (e.g., React apps with keycloak-js).<br />This is distinct from the confidential client used for server-side auth (oauth2-proxy).<br />The public client is configured with:<br />  - publicClient: true (no client secret, safe for browser)<br />  - Redirect URIs: https://<hostname>/* and https://<hostname><br />  - PKCE enforcement (S256)<br />Only supported for provider="keycloak". |  | Optional: \{\} <br /> |
 | `deviceFlowClient` _[DeviceFlowClientConfig](#deviceflowclientconfig)_ | DeviceFlowClient configures a public OIDC client for CLI/native app authentication<br />using the OAuth2 Device Authorization Grant (RFC 8628).<br />When enabled, the operator provisions a separate public client configured for device flow.<br />The device flow client ID is written to the OIDC client Secret under key "device-client-id".<br />Only supported for provider="keycloak". |  | Optional: \{\} <br /> |
 | `keycloakConfig` _[KeycloakClientConfig](#keycloakclientconfig)_ | KeycloakConfig provides Keycloak-specific configuration for fine-grained control<br />over realm resources like groups, client scopes, and protocol mappers.<br />Only used when provider="keycloak" and provisionClient=true; silently ignored<br />for other providers (e.g., generic-oidc). |  | Optional: \{\} <br /> |
 | `tokenExchange` _[TokenExchangeConfig](#tokenexchangeconfig)_ | TokenExchange configures OAuth 2.0 Token Exchange (RFC 8693) for this client.<br />When enabled, other NebariApp OIDC clients in the same Keycloak realm can<br />exchange their access tokens for tokens with this client's audience.<br />Requires KC_FEATURES=token-exchange on the Keycloak server.<br />Only supported for provider="keycloak". |  | Optional: \{\} <br /> |
+
+
+---
+
+#### DenyRedirectHeader
+
+DenyRedirectHeader defines a header match rule for preventing OIDC redirects.
+Requests matching any of these headers will receive a 401 instead of being
+redirected to the identity provider.
+
+_Appears in:_
+- [AuthConfig](#authconfig)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `name` _string_ | Name is the header name to match against. |  | MinLength: 1 <br />Required: \{\} <br /> |
+| `type` _string_ | Type specifies how to match the header value.<br />Valid values: Exact, Prefix, Suffix, RegularExpression | Exact | Enum: [Exact Prefix Suffix RegularExpression] <br />Optional: \{\} <br /> |
+| `value` _string_ | Value is the header value to match. |  | MinLength: 1 <br />Required: \{\} <br /> |
 
 
 ---
