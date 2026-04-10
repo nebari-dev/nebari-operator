@@ -1,0 +1,10 @@
+processor:
+  ignoreFields: []
+
+render:
+  # Include all types (not just top-level resources)
+  schemaVersion: v1
+  # Show inherited fields
+  hideFieldType: false
+  # Custom templates that add a header and horizontal rules between types
+  # Templates directory is passed via --templates-dir flag in the make docs target

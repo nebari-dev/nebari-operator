@@ -71,6 +71,13 @@ jobs:
         run: |
           git diff --exit-code || (echo "Generated code is out of date. Run 'make generate'" && exit 1)
 
+      - name: Generate API reference docs
+        run: make docs
+
+      - name: Check for stale API reference
+        run: |
+          git diff --exit-code docs/api-reference.md || (echo "API reference is out of date. Run 'make docs'" && exit 1)
+
   test:
     name: Unit Tests
     runs-on: ubuntu-latest
