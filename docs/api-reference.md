@@ -46,6 +46,7 @@ _Appears in:_
 | `spaClient` _[SPAClientConfig](#spaclientconfig)_ | SPAClient configures a public OIDC client for browser-based authentication.<br />When enabled, the operator provisions a separate public client for Single-Page<br />Applications that use PKCE flows (e.g., React apps with keycloak-js).<br />This is distinct from the confidential client used for server-side auth (oauth2-proxy).<br />The public client is configured with:<br />  - publicClient: true (no client secret, safe for browser)<br />  - Redirect URIs: https://<hostname>/* and https://<hostname><br />  - PKCE enforcement (S256)<br />Only supported for provider="keycloak". |  | Optional: \{\} <br /> |
 | `deviceFlowClient` _[DeviceFlowClientConfig](#deviceflowclientconfig)_ | DeviceFlowClient configures a public OIDC client for CLI/native app authentication<br />using the OAuth2 Device Authorization Grant (RFC 8628).<br />When enabled, the operator provisions a separate public client configured for device flow.<br />The device flow client ID is written to the OIDC client Secret under key "device-client-id".<br />Only supported for provider="keycloak". |  | Optional: \{\} <br /> |
 | `keycloakConfig` _[KeycloakClientConfig](#keycloakclientconfig)_ | KeycloakConfig provides Keycloak-specific configuration for fine-grained control<br />over realm resources like groups, client scopes, and protocol mappers.<br />Only used when provider="keycloak" and provisionClient=true; silently ignored<br />for other providers (e.g., generic-oidc). |  | Optional: \{\} <br /> |
+| `tokenExchange` _[TokenExchangeConfig](#tokenexchangeconfig)_ | TokenExchange configures OAuth 2.0 Token Exchange (RFC 8693) for this client.<br />When enabled, other NebariApp OIDC clients in the same Keycloak realm can<br />exchange their access tokens for tokens with this client's audience.<br />Requires KC_FEATURES=token-exchange on the Keycloak server.<br />Only supported for provider="keycloak". |  | Optional: \{\} <br /> |
 
 
 ---
@@ -236,6 +237,7 @@ _Appears in:_
 | `hostname` _string_ | Hostname is the actual hostname where the application is accessible.<br />This mirrors the spec.hostname for easy reference. |  | Optional: \{\} <br /> |
 | `gatewayRef` _[GatewayReference](#gatewayreference)_ | GatewayRef identifies the Gateway resource that routes traffic to this application. |  | Optional: \{\} <br /> |
 | `clientSecretRef` _[ResourceReference](#resourcereference)_ | ClientSecretRef identifies the Secret containing OIDC client credentials. |  | Optional: \{\} <br /> |
+| `authConfigHash` _string_ | AuthConfigHash stores a SHA-256 hash of the last successfully provisioned OIDC<br />client configuration. When this matches the hash of the current spec, and the<br />AuthReady condition is True, ProvisionClient is skipped to avoid unnecessary<br />external API calls on every reconcile cycle.<br />To force re-provisioning, set the nebari.dev/force-reprovision annotation on<br />the NebariApp. The annotation is automatically removed after the forced<br />re-provisioning completes. |  | Optional: \{\} <br /> |
 | `serviceDiscovery` _[ServiceDiscoveryStatus](#servicediscoverystatus)_ | ServiceDiscovery is the computed service discovery descriptor.<br />The controller populates this after reconciling spec.landingPage so the<br />webapi watcher can consume a pre-validated, URL-resolved view via<br />status.serviceDiscovery.* without re-deriving it from spec. |  | Optional: \{\} <br /> |
 
 
@@ -361,5 +363,19 @@ _Appears in:_
 | `name` _string_ | Name is the name of the Kubernetes Service in the same namespace. |  | MinLength: 1 <br />Required: \{\} <br /> |
 | `port` _integer_ | Port is the port number on the Service to route traffic to. |  | Maximum: 65535 <br />Minimum: 1 <br />Required: \{\} <br /> |
 | `namespace` _string_ | Namespace is the namespace of the Service (if different from the NebariApp).<br />If not specified, defaults to the NebariApp's namespace.<br />This allows referencing services in other namespaces for centralized service architectures.<br />Note: The operator has cluster-scoped permissions to read Services across all namespaces. |  | MinLength: 1 <br />Optional: \{\} <br /> |
+
+
+---
+
+#### TokenExchangeConfig
+
+TokenExchangeConfig controls OAuth 2.0 Token Exchange (RFC 8693) for this client.
+
+_Appears in:_
+- [AuthConfig](#authconfig)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `enabled` _boolean_ | Enabled determines whether token exchange should be configured for this client.<br />When true, the operator enables authorization services on the Keycloak client<br />and creates policies allowing all other NebariApp clients in the same realm<br />to exchange tokens for this client's audience. | false | Optional: \{\} <br /> |
 
 
