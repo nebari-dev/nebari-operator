@@ -36,6 +36,19 @@ import (
 )
 
 // boolPtr returns a pointer to a bool value
+// verifyTokenEndpoint checks that the SecurityPolicy's token endpoint matches expectations.
+func verifyTokenEndpoint(t *testing.T, sp *egv1alpha1.SecurityPolicy, expected string) {
+	t.Helper()
+	actual := sp.Spec.OIDC.Provider.TokenEndpoint
+	if expected != "" {
+		if actual == nil || *actual != expected {
+			t.Errorf("expected token endpoint %q, got %v", expected, actual)
+		}
+	} else if actual != nil {
+		t.Errorf("expected no explicit token endpoint, got %q", *actual)
+	}
+}
+
 func boolPtr(b bool) *bool {
 	return &b
 }
@@ -1044,19 +1057,7 @@ func TestReconcileAuth(t *testing.T) {
 					if err != nil {
 						t.Errorf("expected SecurityPolicy to be created, got error: %v", err)
 					} else if securityPolicy.Spec.OIDC != nil {
-						// Verify token endpoint matches provider's GetTokenEndpoint
-						tokenEndpoint := tt.provider.GetTokenEndpoint(context.Background(), tt.nebariApp)
-						if tokenEndpoint != "" {
-							if securityPolicy.Spec.OIDC.Provider.TokenEndpoint == nil {
-								t.Error("expected SecurityPolicy to have explicit token endpoint set")
-							} else if *securityPolicy.Spec.OIDC.Provider.TokenEndpoint != tokenEndpoint {
-								t.Errorf("expected token endpoint %q, got %q", tokenEndpoint, *securityPolicy.Spec.OIDC.Provider.TokenEndpoint)
-							}
-						} else {
-							if securityPolicy.Spec.OIDC.Provider.TokenEndpoint != nil {
-								t.Errorf("expected no explicit token endpoint, got %q", *securityPolicy.Spec.OIDC.Provider.TokenEndpoint)
-							}
-						}
+						verifyTokenEndpoint(t, securityPolicy, tt.provider.GetTokenEndpoint(context.Background(), tt.nebariApp))
 					}
 				} else {
 					if err == nil {
