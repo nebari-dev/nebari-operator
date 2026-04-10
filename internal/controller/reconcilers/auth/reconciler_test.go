@@ -43,6 +43,7 @@ func boolPtr(b bool) *bool {
 // mockProvider implements OIDCProvider for testing
 type mockProvider struct {
 	issuerURL            string
+	tokenEndpoint        string
 	clientID             string
 	supportsProvisioning bool
 	provisionError       error
@@ -56,6 +57,10 @@ func (m *mockProvider) GetIssuerURL(ctx context.Context, nebariApp *appsv1.Nebar
 		return "", m.issuerError
 	}
 	return m.issuerURL, nil
+}
+
+func (m *mockProvider) GetTokenEndpoint(ctx context.Context, nebariApp *appsv1.NebariApp) string {
+	return m.tokenEndpoint
 }
 
 func (m *mockProvider) GetExternalIssuerURL(ctx context.Context, nebariApp *appsv1.NebariApp) (string, error) {
@@ -643,6 +648,72 @@ func TestReconcileAuth(t *testing.T) {
 			expectError: false,
 		},
 		{
+			name: "Auth enabled with explicit token endpoint",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app",
+					Namespace: "default",
+				},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "test.example.com",
+					Auth: &appsv1.AuthConfig{
+						Enabled:         true,
+						Provider:        constants.ProviderKeycloak,
+						ProvisionClient: boolPtr(false),
+					},
+				},
+			},
+			existingSecret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app-oidc-client",
+					Namespace: "default",
+				},
+				Data: map[string][]byte{
+					constants.ClientSecretKey: []byte("test-secret"),
+				},
+			},
+			provider: &mockProvider{
+				issuerURL:            "https://keycloak.example.com/realms/test",
+				tokenEndpoint:        "http://keycloak.keycloak.svc.cluster.local:8080/realms/test/protocol/openid-connect/token",
+				clientID:             "test-client",
+				supportsProvisioning: true,
+			},
+			expectError: false,
+		},
+		{
+			name: "Auth enabled without explicit token endpoint (discovery)",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app",
+					Namespace: "default",
+				},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "test.example.com",
+					Auth: &appsv1.AuthConfig{
+						Enabled:         true,
+						Provider:        constants.ProviderKeycloak,
+						ProvisionClient: boolPtr(false),
+					},
+				},
+			},
+			existingSecret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app-oidc-client",
+					Namespace: "default",
+				},
+				Data: map[string][]byte{
+					constants.ClientSecretKey: []byte("test-secret"),
+				},
+			},
+			provider: &mockProvider{
+				issuerURL:            "https://keycloak.example.com/realms/test",
+				tokenEndpoint:        "", // empty means use discovery
+				clientID:             "test-client",
+				supportsProvisioning: true,
+			},
+			expectError: false,
+		},
+		{
 			name: "Auth enabled but secret missing",
 			nebariApp: &appsv1.NebariApp{
 				ObjectMeta: metav1.ObjectMeta{
@@ -972,6 +1043,20 @@ func TestReconcileAuth(t *testing.T) {
 				if shouldEnforceAtGateway(tt.nebariApp.Spec.Auth) {
 					if err != nil {
 						t.Errorf("expected SecurityPolicy to be created, got error: %v", err)
+					} else if securityPolicy.Spec.OIDC != nil {
+						// Verify token endpoint matches provider's GetTokenEndpoint
+						tokenEndpoint := tt.provider.GetTokenEndpoint(context.Background(), tt.nebariApp)
+						if tokenEndpoint != "" {
+							if securityPolicy.Spec.OIDC.Provider.TokenEndpoint == nil {
+								t.Error("expected SecurityPolicy to have explicit token endpoint set")
+							} else if *securityPolicy.Spec.OIDC.Provider.TokenEndpoint != tokenEndpoint {
+								t.Errorf("expected token endpoint %q, got %q", tokenEndpoint, *securityPolicy.Spec.OIDC.Provider.TokenEndpoint)
+							}
+						} else {
+							if securityPolicy.Spec.OIDC.Provider.TokenEndpoint != nil {
+								t.Errorf("expected no explicit token endpoint, got %q", *securityPolicy.Spec.OIDC.Provider.TokenEndpoint)
+							}
+						}
 					}
 				} else {
 					if err == nil {

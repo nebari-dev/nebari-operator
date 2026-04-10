@@ -443,10 +443,20 @@ func (r *AuthReconciler) buildSecurityPolicySpec(ctx context.Context, nebariApp 
 	secretNamespace := gwapiv1.Namespace(nebariApp.Namespace)
 
 	// Build OIDC configuration
+	oidcProvider := egv1alpha1.OIDCProvider{
+		Issuer: issuerURL,
+	}
+
+	// Set explicit token endpoint if the provider returns one.
+	// This ensures Envoy uses the internal cluster URL for the token exchange
+	// instead of the external URL from the OIDC discovery document, which may
+	// use a TLS certificate not trusted by Envoy.
+	if tokenEndpoint := provider.GetTokenEndpoint(ctx, nebariApp); tokenEndpoint != "" {
+		oidcProvider.TokenEndpoint = ptrTo(tokenEndpoint)
+	}
+
 	oidcConfig := &egv1alpha1.OIDC{
-		Provider: egv1alpha1.OIDCProvider{
-			Issuer: issuerURL,
-		},
+		Provider: oidcProvider,
 		ClientID: ptrTo(clientID),
 		ClientSecret: gwapiv1.SecretObjectReference{
 			Group:     &secretGroup,

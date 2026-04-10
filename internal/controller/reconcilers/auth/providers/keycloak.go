@@ -47,18 +47,28 @@ type KeycloakProvider struct {
 	Config config.KeycloakConfig
 }
 
-// GetIssuerURL returns the internal cluster URL for the Keycloak realm.
-// Envoy uses this to fetch OIDC configuration from within the cluster.
-func (p *KeycloakProvider) GetIssuerURL(ctx context.Context, nebariApp *appsv1.NebariApp) (string, error) {
-	realm := p.Config.Realm
-	// Use internal cluster DNS for Envoy to fetch OIDC config
-	// All components are now configurable via environment variables
+// internalRealmURL returns the base internal cluster URL for the Keycloak realm.
+// This is used by both GetIssuerURL and GetTokenEndpoint to avoid duplication.
+func (p *KeycloakProvider) internalRealmURL() string {
 	return fmt.Sprintf("http://%s.%s.svc.cluster.local:%d%s/realms/%s",
 		p.Config.IssuerServiceName,
 		p.Config.IssuerServiceNamespace,
 		p.Config.IssuerServicePort,
 		p.Config.IssuerContextPath,
-		realm), nil
+		p.Config.Realm)
+}
+
+// GetIssuerURL returns the internal cluster URL for the Keycloak realm.
+// Envoy uses this to fetch OIDC configuration from within the cluster.
+func (p *KeycloakProvider) GetIssuerURL(ctx context.Context, nebariApp *appsv1.NebariApp) (string, error) {
+	return p.internalRealmURL(), nil
+}
+
+// GetTokenEndpoint returns the internal cluster token endpoint URL for Keycloak.
+// This avoids Envoy using the external HTTPS token endpoint from the OIDC discovery
+// document, which may use a certificate not trusted by Envoy (e.g., self-signed).
+func (p *KeycloakProvider) GetTokenEndpoint(ctx context.Context, nebariApp *appsv1.NebariApp) string {
+	return p.internalRealmURL() + "/protocol/openid-connect/token"
 }
 
 // GetExternalIssuerURL returns the publicly routable Keycloak issuer URL.
