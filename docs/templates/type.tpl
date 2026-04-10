@@ -28,7 +28,9 @@ _Appears in:_
 | `kind` _string_ | `{{ $type.GVK.Kind }}` | | |
 {{ end -}}
 {{ range $type.Members -}}
+{{ if not (and $type.GVK (or (eq .Name "kind") (eq .Name "apiVersion"))) -}}
 | `{{ .Name }}` _{{ markdownRenderType .Type }}_ | {{ template "type_members" . }} | {{ markdownRenderDefault .Default }} | {{ range .Validation -}} {{ markdownRenderFieldDoc . }} <br />{{ end }} |
+{{ end -}}
 {{ end -}}
 {{ end -}}
 {{ if $type.EnumValues -}}
