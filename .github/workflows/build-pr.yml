@@ -16,8 +16,6 @@ on:
       - 'api/**'
       - 'internal/**'
       - 'hack/**'
-      - 'docs/templates/**'
-      - 'docs/crd-ref-docs-config.yaml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
