@@ -117,6 +117,58 @@ func TestKeycloakProvider_GetIssuerURL(t *testing.T) {
 	}
 }
 
+func TestKeycloakProvider_GetTokenEndpoint(t *testing.T) {
+	tests := []struct {
+		name        string
+		kcConfig    config.KeycloakConfig
+		expectedURL string
+	}{
+		{
+			name: "Default configuration (Keycloak 26+ root context path)",
+			kcConfig: config.KeycloakConfig{
+				Realm:                  "nebari",
+				IssuerServiceName:      "keycloak-keycloakx-http",
+				IssuerServiceNamespace: "keycloak",
+				IssuerServicePort:      8080,
+				IssuerContextPath:      "",
+			},
+			expectedURL: "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/nebari/protocol/openid-connect/token",
+		},
+		{
+			name: "Legacy /auth context path",
+			kcConfig: config.KeycloakConfig{
+				Realm:                  "nebari",
+				IssuerServiceName:      "keycloak-keycloakx-http",
+				IssuerServiceNamespace: "keycloak",
+				IssuerServicePort:      8080,
+				IssuerContextPath:      "/auth",
+			},
+			expectedURL: "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/auth/realms/nebari/protocol/openid-connect/token",
+		},
+		{
+			name: "Custom deployment configuration",
+			kcConfig: config.KeycloakConfig{
+				Realm:                  "custom-realm",
+				IssuerServiceName:      "custom-keycloak",
+				IssuerServiceNamespace: "auth",
+				IssuerServicePort:      9090,
+				IssuerContextPath:      "",
+			},
+			expectedURL: "http://custom-keycloak.auth.svc.cluster.local:9090/realms/custom-realm/protocol/openid-connect/token",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := &KeycloakProvider{Config: tt.kcConfig}
+			got := provider.GetTokenEndpoint(context.Background(), nil)
+			if got != tt.expectedURL {
+				t.Errorf("expected %q, got %q", tt.expectedURL, got)
+			}
+		})
+	}
+}
+
 func TestKeycloakProvider_GetClientID(t *testing.T) {
 	provider := &KeycloakProvider{
 		Config: config.KeycloakConfig{

@@ -101,6 +101,16 @@ func TestGenericOIDCProvider_GetIssuerURL(t *testing.T) {
 	}
 }
 
+func TestGenericOIDCProvider_GetTokenEndpoint(t *testing.T) {
+	provider := &GenericOIDCProvider{}
+	// Generic OIDC always returns empty — token endpoint is discovered from
+	// the provider's well-known configuration document.
+	got := provider.GetTokenEndpoint(context.Background(), nil)
+	if got != "" {
+		t.Errorf("expected empty token endpoint for generic OIDC, got %q", got)
+	}
+}
+
 func TestGenericOIDCProvider_GetClientID(t *testing.T) {
 	provider := &GenericOIDCProvider{}
 

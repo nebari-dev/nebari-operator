@@ -687,7 +687,7 @@ func TestReconcileAuth(t *testing.T) {
 			},
 			provider: &mockProvider{
 				issuerURL:            "https://keycloak.example.com/realms/test",
-				tokenEndpoint:        "http://keycloak.keycloak.svc.cluster.local:8080/realms/test/protocol/openid-connect/token",
+				tokenEndpoint:        "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/test/protocol/openid-connect/token",
 				clientID:             "test-client",
 				supportsProvisioning: true,
 			},
