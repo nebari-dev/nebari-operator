@@ -36,7 +36,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-
 // verifyEndpointOverrides checks that the SecurityPolicy's endpoint overrides match expectations.
 func verifyEndpointOverrides(t *testing.T, sp *egv1alpha1.SecurityPolicy, expected providers.OIDCEndpointOverrides) {
 	t.Helper()
