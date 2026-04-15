@@ -22,6 +22,15 @@ import (
 	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
 )
 
+// OIDCEndpointOverrides holds explicit OIDC endpoint URLs that override
+// the values obtained from the provider's discovery document. Nil fields
+// indicate that the discovered value should be used.
+type OIDCEndpointOverrides struct {
+	Token         *string
+	Authorization *string
+	EndSession    *string
+}
+
 // OIDCProvider defines the interface for OIDC provider implementations.
 // Each provider (Keycloak, generic OIDC, etc.) must implement this interface.
 type OIDCProvider interface {
@@ -31,11 +40,13 @@ type OIDCProvider interface {
 	// The URL should be accessible from within the cluster (internal DNS).
 	GetIssuerURL(ctx context.Context, nebariApp *appsv1.NebariApp) (string, error)
 
-	// GetTokenEndpoint returns an explicit token endpoint URL if needed.
-	// This is used when the OIDC discovery document returns an external URL
-	// that is not reachable from within the cluster (e.g., uses HTTPS with
-	// a certificate not trusted by Envoy). Returns empty string to use discovery.
-	GetTokenEndpoint(ctx context.Context, nebariApp *appsv1.NebariApp) string
+	// GetEndpointOverrides returns explicit OIDC endpoint URLs that should
+	// override the values from the provider's discovery document. This is
+	// used when the discovery document returns external URLs that are not
+	// reachable from within the cluster (e.g., HTTPS with a certificate not
+	// trusted by Envoy). Any non-nil field must be a complete absolute URL
+	// reachable from within the cluster. Nil fields fall back to discovery.
+	GetEndpointOverrides(ctx context.Context, nebariApp *appsv1.NebariApp) (OIDCEndpointOverrides, error)
 
 	// GetExternalIssuerURL returns the publicly routable OIDC issuer URL.
 	// Written to the client Secret for external consumers (CLIs, frontends).

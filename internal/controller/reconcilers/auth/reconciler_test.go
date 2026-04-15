@@ -35,28 +35,39 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-// boolPtr returns a pointer to a bool value
-// verifyTokenEndpoint checks that the SecurityPolicy's token endpoint matches expectations.
-func verifyTokenEndpoint(t *testing.T, sp *egv1alpha1.SecurityPolicy, expected string) {
-	t.Helper()
-	actual := sp.Spec.OIDC.Provider.TokenEndpoint
-	if expected != "" {
-		if actual == nil || *actual != expected {
-			t.Errorf("expected token endpoint %q, got %v", expected, actual)
-		}
-	} else if actual != nil {
-		t.Errorf("expected no explicit token endpoint, got %q", *actual)
-	}
-}
-
+// boolPtr returns a pointer to a bool value.
 func boolPtr(b bool) *bool {
 	return &b
+}
+
+func strPtr(s string) *string {
+	return &s
+}
+
+// verifyEndpointOverrides checks that the SecurityPolicy's endpoint overrides match expectations.
+func verifyEndpointOverrides(t *testing.T, sp *egv1alpha1.SecurityPolicy, expected providers.OIDCEndpointOverrides) {
+	t.Helper()
+	p := sp.Spec.OIDC.Provider
+	verifyOptionalEndpoint(t, "token", p.TokenEndpoint, expected.Token)
+	verifyOptionalEndpoint(t, "authorization", p.AuthorizationEndpoint, expected.Authorization)
+	verifyOptionalEndpoint(t, "endSession", p.EndSessionEndpoint, expected.EndSession)
+}
+
+func verifyOptionalEndpoint(t *testing.T, name string, actual, expected *string) {
+	t.Helper()
+	if expected != nil {
+		if actual == nil || *actual != *expected {
+			t.Errorf("expected %s endpoint %q, got %v", name, *expected, actual)
+		}
+	} else if actual != nil {
+		t.Errorf("expected no explicit %s endpoint, got %q", name, *actual)
+	}
 }
 
 // mockProvider implements OIDCProvider for testing
 type mockProvider struct {
 	issuerURL            string
-	tokenEndpoint        string
+	endpointOverrides    providers.OIDCEndpointOverrides
 	clientID             string
 	supportsProvisioning bool
 	provisionError       error
@@ -72,8 +83,8 @@ func (m *mockProvider) GetIssuerURL(ctx context.Context, nebariApp *appsv1.Nebar
 	return m.issuerURL, nil
 }
 
-func (m *mockProvider) GetTokenEndpoint(ctx context.Context, nebariApp *appsv1.NebariApp) string {
-	return m.tokenEndpoint
+func (m *mockProvider) GetEndpointOverrides(_ context.Context, _ *appsv1.NebariApp) (providers.OIDCEndpointOverrides, error) {
+	return m.endpointOverrides, nil
 }
 
 func (m *mockProvider) GetExternalIssuerURL(ctx context.Context, nebariApp *appsv1.NebariApp) (string, error) {
@@ -586,6 +597,7 @@ func TestReconcileAuth(t *testing.T) {
 		existingSecret         *corev1.Secret
 		existingSecurityPolicy *egv1alpha1.SecurityPolicy
 		provider               *mockProvider
+		expectedOverrides      providers.OIDCEndpointOverrides
 		expectError            bool
 		// validate runs additional assertions after reconciliation (optional)
 		validate func(*testing.T, *mockProvider, *appsv1.NebariApp)
@@ -661,7 +673,7 @@ func TestReconcileAuth(t *testing.T) {
 			expectError: false,
 		},
 		{
-			name: "Auth enabled with explicit token endpoint",
+			name: "Auth enabled with explicit endpoint overrides",
 			nebariApp: &appsv1.NebariApp{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-app",
@@ -686,15 +698,24 @@ func TestReconcileAuth(t *testing.T) {
 				},
 			},
 			provider: &mockProvider{
-				issuerURL:            "https://keycloak.example.com/realms/test",
-				tokenEndpoint:        "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/test/protocol/openid-connect/token",
+				issuerURL: "https://keycloak.example.com/realms/test",
+				endpointOverrides: providers.OIDCEndpointOverrides{
+					Token:         strPtr("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/test/protocol/openid-connect/token"),
+					Authorization: strPtr("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/test/protocol/openid-connect/auth"),
+					EndSession:    strPtr("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/test/protocol/openid-connect/logout"),
+				},
 				clientID:             "test-client",
 				supportsProvisioning: true,
+			},
+			expectedOverrides: providers.OIDCEndpointOverrides{
+				Token:         strPtr("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/test/protocol/openid-connect/token"),
+				Authorization: strPtr("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/test/protocol/openid-connect/auth"),
+				EndSession:    strPtr("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/test/protocol/openid-connect/logout"),
 			},
 			expectError: false,
 		},
 		{
-			name: "Auth enabled without explicit token endpoint (discovery)",
+			name: "Auth enabled without endpoint overrides (discovery)",
 			nebariApp: &appsv1.NebariApp{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-app",
@@ -720,11 +741,11 @@ func TestReconcileAuth(t *testing.T) {
 			},
 			provider: &mockProvider{
 				issuerURL:            "https://keycloak.example.com/realms/test",
-				tokenEndpoint:        "", // empty means use discovery
 				clientID:             "test-client",
 				supportsProvisioning: true,
 			},
-			expectError: false,
+			expectedOverrides: providers.OIDCEndpointOverrides{},
+			expectError:       false,
 		},
 		{
 			name: "Auth enabled but secret missing",
@@ -1057,7 +1078,7 @@ func TestReconcileAuth(t *testing.T) {
 					if err != nil {
 						t.Errorf("expected SecurityPolicy to be created, got error: %v", err)
 					} else if securityPolicy.Spec.OIDC != nil {
-						verifyTokenEndpoint(t, securityPolicy, tt.provider.GetTokenEndpoint(context.Background(), tt.nebariApp))
+						verifyEndpointOverrides(t, securityPolicy, tt.expectedOverrides)
 					}
 				} else {
 					if err == nil {

@@ -48,7 +48,7 @@ type KeycloakProvider struct {
 }
 
 // internalRealmURL returns the base internal cluster URL for the Keycloak realm.
-// This is used by both GetIssuerURL and GetTokenEndpoint to avoid duplication.
+// This is used by both GetIssuerURL and GetEndpointOverrides to avoid duplication.
 func (p *KeycloakProvider) internalRealmURL() string {
 	return fmt.Sprintf("http://%s.%s.svc.cluster.local:%d%s/realms/%s",
 		p.Config.IssuerServiceName,
@@ -64,12 +64,19 @@ func (p *KeycloakProvider) GetIssuerURL(ctx context.Context, nebariApp *appsv1.N
 	return p.internalRealmURL(), nil
 }
 
-// GetTokenEndpoint returns the internal cluster token endpoint URL for Keycloak.
-// This avoids Envoy using the external HTTPS token endpoint from the OIDC discovery
+// GetEndpointOverrides returns internal cluster URLs for Keycloak's OIDC endpoints.
+// This avoids Envoy using the external HTTPS endpoints from the OIDC discovery
 // document, which may use a certificate not trusted by Envoy (e.g., self-signed).
-func (p *KeycloakProvider) GetTokenEndpoint(ctx context.Context, nebariApp *appsv1.NebariApp) string {
-	return p.internalRealmURL() + "/protocol/openid-connect/token"
+func (p *KeycloakProvider) GetEndpointOverrides(_ context.Context, _ *appsv1.NebariApp) (OIDCEndpointOverrides, error) {
+	base := p.internalRealmURL() + "/protocol/openid-connect"
+	return OIDCEndpointOverrides{
+		Token:         ptrTo(base + "/token"),
+		Authorization: ptrTo(base + "/auth"),
+		EndSession:    ptrTo(base + "/logout"),
+	}, nil
 }
+
+func ptrTo(s string) *string { return &s }
 
 // GetExternalIssuerURL returns the publicly routable Keycloak issuer URL.
 func (p *KeycloakProvider) GetExternalIssuerURL(ctx context.Context, nebariApp *appsv1.NebariApp) (string, error) {

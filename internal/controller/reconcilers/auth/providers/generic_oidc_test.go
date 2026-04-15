@@ -101,13 +101,20 @@ func TestGenericOIDCProvider_GetIssuerURL(t *testing.T) {
 	}
 }
 
-func TestGenericOIDCProvider_GetTokenEndpoint(t *testing.T) {
+func TestGenericOIDCProvider_GetEndpointOverrides(t *testing.T) {
 	provider := &GenericOIDCProvider{}
-	// Generic OIDC always returns empty — token endpoint is discovered from
-	// the provider's well-known configuration document.
-	got := provider.GetTokenEndpoint(context.Background(), nil)
-	if got != "" {
-		t.Errorf("expected empty token endpoint for generic OIDC, got %q", got)
+	got, err := provider.GetEndpointOverrides(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Token != nil {
+		t.Errorf("expected nil token endpoint for generic OIDC, got %q", *got.Token)
+	}
+	if got.Authorization != nil {
+		t.Errorf("expected nil authorization endpoint for generic OIDC, got %q", *got.Authorization)
+	}
+	if got.EndSession != nil {
+		t.Errorf("expected nil end session endpoint for generic OIDC, got %q", *got.EndSession)
 	}
 }
 

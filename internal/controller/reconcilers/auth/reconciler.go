@@ -447,12 +447,24 @@ func (r *AuthReconciler) buildSecurityPolicySpec(ctx context.Context, nebariApp 
 		Issuer: issuerURL,
 	}
 
-	// Set explicit token endpoint if the provider returns one.
-	// This ensures Envoy uses the internal cluster URL for the token exchange
-	// instead of the external URL from the OIDC discovery document, which may
-	// use a TLS certificate not trusted by Envoy.
-	if tokenEndpoint := provider.GetTokenEndpoint(ctx, nebariApp); tokenEndpoint != "" {
-		oidcProvider.TokenEndpoint = ptrTo(tokenEndpoint)
+	// Apply explicit endpoint overrides from the provider. This ensures Envoy
+	// uses internal cluster URLs instead of external URLs from the OIDC discovery
+	// document, which may use TLS certificates not trusted by Envoy.
+	overrides, err := provider.GetEndpointOverrides(ctx, nebariApp)
+	if err != nil {
+		return egv1alpha1.SecurityPolicySpec{}, fmt.Errorf("failed to get endpoint overrides: %w", err)
+	}
+	if overrides.Token != nil {
+		log.FromContext(ctx).Info("Overriding OIDC endpoint from discovery", "endpoint", "token", "url", *overrides.Token)
+		oidcProvider.TokenEndpoint = overrides.Token
+	}
+	if overrides.Authorization != nil {
+		log.FromContext(ctx).Info("Overriding OIDC endpoint from discovery", "endpoint", "authorization", "url", *overrides.Authorization)
+		oidcProvider.AuthorizationEndpoint = overrides.Authorization
+	}
+	if overrides.EndSession != nil {
+		log.FromContext(ctx).Info("Overriding OIDC endpoint from discovery", "endpoint", "endSession", "url", *overrides.EndSession)
+		oidcProvider.EndSessionEndpoint = overrides.EndSession
 	}
 
 	oidcConfig := &egv1alpha1.OIDC{
