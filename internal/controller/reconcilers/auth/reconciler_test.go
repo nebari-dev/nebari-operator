@@ -26,6 +26,7 @@ import (
 	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/auth/providers"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/constants"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/naming"
+	"github.com/nebari-dev/nebari-operator/internal/controller/utils/ptr"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -35,14 +36,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-// boolPtr returns a pointer to a bool value.
-func boolPtr(b bool) *bool {
-	return &b
-}
-
-func strPtr(s string) *string {
-	return &s
-}
 
 // verifyEndpointOverrides checks that the SecurityPolicy's endpoint overrides match expectations.
 func verifyEndpointOverrides(t *testing.T, sp *egv1alpha1.SecurityPolicy, expected providers.OIDCEndpointOverrides) {
@@ -675,7 +668,7 @@ func TestReconcileAuth(t *testing.T) {
 					Auth: &appsv1.AuthConfig{
 						Enabled:         true,
 						Provider:        constants.ProviderKeycloak,
-						ProvisionClient: boolPtr(false),
+						ProvisionClient: ptr.To(false),
 					},
 				},
 			},
@@ -707,7 +700,7 @@ func TestReconcileAuth(t *testing.T) {
 					Auth: &appsv1.AuthConfig{
 						Enabled:         true,
 						Provider:        constants.ProviderKeycloak,
-						ProvisionClient: boolPtr(false),
+						ProvisionClient: ptr.To(false),
 					},
 				},
 			},
@@ -723,17 +716,17 @@ func TestReconcileAuth(t *testing.T) {
 			provider: &mockProvider{
 				issuerURL: "https://keycloak.example.com/realms/test",
 				endpointOverrides: providers.OIDCEndpointOverrides{
-					Token:         strPtr("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/test/protocol/openid-connect/token"),
-					Authorization: strPtr("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/test/protocol/openid-connect/auth"),
-					EndSession:    strPtr("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/test/protocol/openid-connect/logout"),
+					Token:         ptr.To("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/test/protocol/openid-connect/token"),
+					Authorization: ptr.To("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/test/protocol/openid-connect/auth"),
+					EndSession:    ptr.To("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/test/protocol/openid-connect/logout"),
 				},
 				clientID:             "test-client",
 				supportsProvisioning: true,
 			},
 			expectedOverrides: providers.OIDCEndpointOverrides{
-				Token:         strPtr("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/test/protocol/openid-connect/token"),
-				Authorization: strPtr("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/test/protocol/openid-connect/auth"),
-				EndSession:    strPtr("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/test/protocol/openid-connect/logout"),
+				Token:         ptr.To("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/test/protocol/openid-connect/token"),
+				Authorization: ptr.To("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/test/protocol/openid-connect/auth"),
+				EndSession:    ptr.To("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/test/protocol/openid-connect/logout"),
 			},
 			expectError: false,
 		},
@@ -749,7 +742,7 @@ func TestReconcileAuth(t *testing.T) {
 					Auth: &appsv1.AuthConfig{
 						Enabled:         true,
 						Provider:        constants.ProviderKeycloak,
-						ProvisionClient: boolPtr(false),
+						ProvisionClient: ptr.To(false),
 					},
 				},
 			},
@@ -782,7 +775,7 @@ func TestReconcileAuth(t *testing.T) {
 					Auth: &appsv1.AuthConfig{
 						Enabled:         true,
 						Provider:        constants.ProviderKeycloak,
-						ProvisionClient: boolPtr(false),
+						ProvisionClient: ptr.To(false),
 					},
 				},
 			},
@@ -806,8 +799,8 @@ func TestReconcileAuth(t *testing.T) {
 					Auth: &appsv1.AuthConfig{
 						Enabled:          true,
 						Provider:         constants.ProviderKeycloak,
-						ProvisionClient:  boolPtr(false),
-						EnforceAtGateway: boolPtr(false),
+						ProvisionClient:  ptr.To(false),
+						EnforceAtGateway: ptr.To(false),
 					},
 				},
 			},
@@ -839,8 +832,8 @@ func TestReconcileAuth(t *testing.T) {
 					Auth: &appsv1.AuthConfig{
 						Enabled:          true,
 						Provider:         constants.ProviderKeycloak,
-						ProvisionClient:  boolPtr(false),
-						EnforceAtGateway: boolPtr(false),
+						ProvisionClient:  ptr.To(false),
+						EnforceAtGateway: ptr.To(false),
 					},
 				},
 			},
@@ -880,7 +873,7 @@ func TestReconcileAuth(t *testing.T) {
 						Auth: &appsv1.AuthConfig{
 							Enabled:         true,
 							Provider:        constants.ProviderKeycloak,
-							ProvisionClient: boolPtr(true),
+							ProvisionClient: ptr.To(true),
 						},
 					},
 				}
@@ -927,7 +920,7 @@ func TestReconcileAuth(t *testing.T) {
 					Auth: &appsv1.AuthConfig{
 						Enabled:         true,
 						Provider:        constants.ProviderKeycloak,
-						ProvisionClient: boolPtr(true),
+						ProvisionClient: ptr.To(true),
 					},
 				},
 				Status: appsv1.NebariAppStatus{
@@ -968,7 +961,7 @@ func TestReconcileAuth(t *testing.T) {
 					Auth: &appsv1.AuthConfig{
 						Enabled:         true,
 						Provider:        constants.ProviderKeycloak,
-						ProvisionClient: boolPtr(true),
+						ProvisionClient: ptr.To(true),
 					},
 				},
 			},
@@ -1001,7 +994,7 @@ func TestReconcileAuth(t *testing.T) {
 						Auth: &appsv1.AuthConfig{
 							Enabled:         true,
 							Provider:        constants.ProviderKeycloak,
-							ProvisionClient: boolPtr(true),
+							ProvisionClient: ptr.To(true),
 						},
 					},
 				}
@@ -1154,7 +1147,7 @@ func TestCleanupAuth(t *testing.T) {
 					Auth: &appsv1.AuthConfig{
 						Enabled:         true,
 						Provider:        constants.ProviderKeycloak,
-						ProvisionClient: boolPtr(true),
+						ProvisionClient: ptr.To(true),
 					},
 				},
 			},
@@ -1175,7 +1168,7 @@ func TestCleanupAuth(t *testing.T) {
 					Auth: &appsv1.AuthConfig{
 						Enabled:         true,
 						Provider:        constants.ProviderKeycloak,
-						ProvisionClient: boolPtr(true),
+						ProvisionClient: ptr.To(true),
 					},
 				},
 			},
@@ -1380,7 +1373,7 @@ func TestReconcileAuth_SpecChangeCycle(t *testing.T) {
 			initial: appsv1.AuthConfig{
 				Enabled:         true,
 				Provider:        constants.ProviderKeycloak,
-				ProvisionClient: boolPtr(true),
+				ProvisionClient: ptr.To(true),
 				RedirectURI:     "/oauth2/callback",
 			},
 			mutate: func(a *appsv1.AuthConfig) { a.RedirectURI = "/auth/callback" },
@@ -1390,7 +1383,7 @@ func TestReconcileAuth_SpecChangeCycle(t *testing.T) {
 			initial: appsv1.AuthConfig{
 				Enabled:         true,
 				Provider:        constants.ProviderKeycloak,
-				ProvisionClient: boolPtr(true),
+				ProvisionClient: ptr.To(true),
 				Groups:          []string{"admins"},
 			},
 			mutate: func(a *appsv1.AuthConfig) {
@@ -1402,7 +1395,7 @@ func TestReconcileAuth_SpecChangeCycle(t *testing.T) {
 			initial: appsv1.AuthConfig{
 				Enabled:         true,
 				Provider:        constants.ProviderKeycloak,
-				ProvisionClient: boolPtr(true),
+				ProvisionClient: ptr.To(true),
 				Scopes:          []string{"openid", "profile"},
 			},
 			mutate: func(a *appsv1.AuthConfig) {
@@ -1414,7 +1407,7 @@ func TestReconcileAuth_SpecChangeCycle(t *testing.T) {
 			initial: appsv1.AuthConfig{
 				Enabled:         true,
 				Provider:        constants.ProviderKeycloak,
-				ProvisionClient: boolPtr(true),
+				ProvisionClient: ptr.To(true),
 				KeycloakConfig: &appsv1.KeycloakClientConfig{
 					Groups: []appsv1.KeycloakGroup{{Name: "admins", Members: []string{"alice"}}},
 				},
