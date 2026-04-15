@@ -66,14 +66,15 @@ func verifyOptionalEndpoint(t *testing.T, name string, actual, expected *string)
 
 // mockProvider implements OIDCProvider for testing
 type mockProvider struct {
-	issuerURL            string
-	endpointOverrides    providers.OIDCEndpointOverrides
-	clientID             string
-	supportsProvisioning bool
-	provisionError       error
-	deleteError          error
-	issuerError          error
-	provisionCount       int // tracks how many times ProvisionClient was called
+	issuerURL              string
+	endpointOverrides      providers.OIDCEndpointOverrides
+	endpointOverridesError error
+	clientID               string
+	supportsProvisioning   bool
+	provisionError         error
+	deleteError            error
+	issuerError            error
+	provisionCount         int // tracks how many times ProvisionClient was called
 }
 
 func (m *mockProvider) GetIssuerURL(ctx context.Context, nebariApp *appsv1.NebariApp) (string, error) {
@@ -84,7 +85,7 @@ func (m *mockProvider) GetIssuerURL(ctx context.Context, nebariApp *appsv1.Nebar
 }
 
 func (m *mockProvider) GetEndpointOverrides(_ context.Context, _ *appsv1.NebariApp) (providers.OIDCEndpointOverrides, error) {
-	return m.endpointOverrides, nil
+	return m.endpointOverrides, m.endpointOverridesError
 }
 
 func (m *mockProvider) GetExternalIssuerURL(ctx context.Context, nebariApp *appsv1.NebariApp) (string, error) {
@@ -550,6 +551,28 @@ func TestBuildSecurityPolicySpec(t *testing.T) {
 				issuerURL:   "",
 				clientID:    "test-client",
 				issuerError: errors.New("failed to get issuer URL"),
+			},
+			expectError: true,
+		},
+		{
+			name: "Endpoint overrides error",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app",
+					Namespace: "default",
+				},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "test.example.com",
+					Auth: &appsv1.AuthConfig{
+						Enabled:  true,
+						Provider: constants.ProviderKeycloak,
+					},
+				},
+			},
+			provider: &mockProvider{
+				issuerURL:              "https://keycloak.example.com/realms/test",
+				clientID:               "test-client",
+				endpointOverridesError: errors.New("failed to resolve endpoints"),
 			},
 			expectError: true,
 		},

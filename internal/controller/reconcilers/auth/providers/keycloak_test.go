@@ -28,6 +28,7 @@ import (
 	"github.com/nebari-dev/nebari-operator/internal/config"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/constants"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/naming"
+	"github.com/nebari-dev/nebari-operator/internal/controller/utils/ptr"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -133,9 +134,9 @@ func TestKeycloakProvider_GetEndpointOverrides(t *testing.T) {
 				IssuerContextPath:      "",
 			},
 			expected: OIDCEndpointOverrides{
-				Token:         ptrTo("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/nebari/protocol/openid-connect/token"),
-				Authorization: ptrTo("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/nebari/protocol/openid-connect/auth"),
-				EndSession:    ptrTo("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/nebari/protocol/openid-connect/logout"),
+				Token:         ptr.To("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/nebari/protocol/openid-connect/token"),
+				Authorization: ptr.To("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/nebari/protocol/openid-connect/auth"),
+				EndSession:    ptr.To("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/nebari/protocol/openid-connect/logout"),
 			},
 		},
 		{
@@ -148,9 +149,9 @@ func TestKeycloakProvider_GetEndpointOverrides(t *testing.T) {
 				IssuerContextPath:      "/auth",
 			},
 			expected: OIDCEndpointOverrides{
-				Token:         ptrTo("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/auth/realms/nebari/protocol/openid-connect/token"),
-				Authorization: ptrTo("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/auth/realms/nebari/protocol/openid-connect/auth"),
-				EndSession:    ptrTo("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/auth/realms/nebari/protocol/openid-connect/logout"),
+				Token:         ptr.To("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/auth/realms/nebari/protocol/openid-connect/token"),
+				Authorization: ptr.To("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/auth/realms/nebari/protocol/openid-connect/auth"),
+				EndSession:    ptr.To("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/auth/realms/nebari/protocol/openid-connect/logout"),
 			},
 		},
 		{
@@ -163,9 +164,9 @@ func TestKeycloakProvider_GetEndpointOverrides(t *testing.T) {
 				IssuerContextPath:      "",
 			},
 			expected: OIDCEndpointOverrides{
-				Token:         ptrTo("http://custom-keycloak.auth.svc.cluster.local:9090/realms/custom-realm/protocol/openid-connect/token"),
-				Authorization: ptrTo("http://custom-keycloak.auth.svc.cluster.local:9090/realms/custom-realm/protocol/openid-connect/auth"),
-				EndSession:    ptrTo("http://custom-keycloak.auth.svc.cluster.local:9090/realms/custom-realm/protocol/openid-connect/logout"),
+				Token:         ptr.To("http://custom-keycloak.auth.svc.cluster.local:9090/realms/custom-realm/protocol/openid-connect/token"),
+				Authorization: ptr.To("http://custom-keycloak.auth.svc.cluster.local:9090/realms/custom-realm/protocol/openid-connect/auth"),
+				EndSession:    ptr.To("http://custom-keycloak.auth.svc.cluster.local:9090/realms/custom-realm/protocol/openid-connect/logout"),
 			},
 		},
 	}

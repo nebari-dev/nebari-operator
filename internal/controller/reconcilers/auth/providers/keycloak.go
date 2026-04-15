@@ -33,6 +33,7 @@ import (
 	"github.com/nebari-dev/nebari-operator/internal/config"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/constants"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/naming"
+	"github.com/nebari-dev/nebari-operator/internal/controller/utils/ptr"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -70,13 +71,11 @@ func (p *KeycloakProvider) GetIssuerURL(ctx context.Context, nebariApp *appsv1.N
 func (p *KeycloakProvider) GetEndpointOverrides(_ context.Context, _ *appsv1.NebariApp) (OIDCEndpointOverrides, error) {
 	base := p.internalRealmURL() + "/protocol/openid-connect"
 	return OIDCEndpointOverrides{
-		Token:         ptrTo(base + "/token"),
-		Authorization: ptrTo(base + "/auth"),
-		EndSession:    ptrTo(base + "/logout"),
+		Token:         ptr.To(base + "/token"),
+		Authorization: ptr.To(base + "/auth"),
+		EndSession:    ptr.To(base + "/logout"),
 	}, nil
 }
-
-func ptrTo(s string) *string { return &s }
 
 // GetExternalIssuerURL returns the publicly routable Keycloak issuer URL.
 func (p *KeycloakProvider) GetExternalIssuerURL(ctx context.Context, nebariApp *appsv1.NebariApp) (string, error) {

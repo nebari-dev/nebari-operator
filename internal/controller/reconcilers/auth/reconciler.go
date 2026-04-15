@@ -30,6 +30,7 @@ import (
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/conditions"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/constants"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/naming"
+	"github.com/nebari-dev/nebari-operator/internal/controller/utils/ptr"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -469,15 +470,15 @@ func (r *AuthReconciler) buildSecurityPolicySpec(ctx context.Context, nebariApp 
 
 	oidcConfig := &egv1alpha1.OIDC{
 		Provider: oidcProvider,
-		ClientID: ptrTo(clientID),
+		ClientID: ptr.To(clientID),
 		ClientSecret: gwapiv1.SecretObjectReference{
 			Group:     &secretGroup,
 			Kind:      &secretKind,
 			Name:      gwapiv1.ObjectName(clientSecretName),
 			Namespace: &secretNamespace,
 		},
-		RedirectURL: ptrTo(redirectURL),
-		LogoutPath:  ptrTo(constants.DefaultLogoutPath),
+		RedirectURL: ptr.To(redirectURL),
+		LogoutPath:  ptr.To(constants.DefaultLogoutPath),
 	}
 
 	// Set OIDC scopes
@@ -581,8 +582,4 @@ func (r *AuthReconciler) reconcileTokenExchange(ctx context.Context, nebariApp *
 	}
 
 	return provider.ConfigureTokenExchange(ctx, nebariApp, peerClientIDs)
-}
-
-func ptrTo[T any](v T) *T {
-	return &v
 }
