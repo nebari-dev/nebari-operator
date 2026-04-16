@@ -151,6 +151,21 @@ type RoutingTLSConfig struct {
 	// +kubebuilder:default=true
 	// +optional
 	Enabled *bool `json:"enabled,omitempty"`
+
+	// SecretName optionally references a pre-existing Kubernetes TLS secret
+	// (type kubernetes.io/tls) in the Gateway's namespace (envoy-gateway-system).
+	// When set, the operator will not create a cert-manager Certificate; instead
+	// it points the per-app HTTPS listener at this secret. Use this for
+	// pre-provisioned or externally managed certificates (for example, wildcard
+	// certs or air-gapped environments without ACME access). The secret must be
+	// created and maintained by the user in the envoy-gateway-system namespace.
+	// Mutually exclusive with cert-manager-managed certificates: when set, the
+	// operator will not create or update a Certificate for this NebariApp and
+	// will clean up any existing owned Certificate.
+	// Ignored when enabled is false.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	SecretName string `json:"secretName,omitempty"`
 }
 
 // AuthConfig specifies authentication/authorization configuration.
