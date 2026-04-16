@@ -654,6 +654,15 @@ const (
 
 	// ReasonGatewayListenerConflict indicates the Gateway listener conflicts with another NebariApp
 	ReasonGatewayListenerConflict = "GatewayListenerConflict"
+
+	// ReasonUserProvidedSecretReady indicates a user-provided TLS secret exists and is valid.
+	ReasonUserProvidedSecretReady = "UserProvidedSecretReady"
+
+	// ReasonUserProvidedSecretNotFound indicates the user-provided TLS secret does not exist.
+	ReasonUserProvidedSecretNotFound = "UserProvidedSecretNotFound"
+
+	// ReasonUserProvidedSecretInvalidType indicates the user-provided secret is not type kubernetes.io/tls.
+	ReasonUserProvidedSecretInvalidType = "UserProvidedSecretInvalidType"
 )
 
 // Event reasons for recording Kubernetes events
@@ -723,6 +732,15 @@ const (
 
 	// EventReasonGatewayListenerConflict is used when a listener conflicts with another app
 	EventReasonGatewayListenerConflict = "GatewayListenerConflict"
+
+	// EventReasonUserProvidedSecretInUse is used when a user-provided TLS secret is successfully attached.
+	EventReasonUserProvidedSecretInUse = "UserProvidedSecretInUse"
+
+	// EventReasonUserProvidedSecretNotFound is used when a referenced user-provided TLS secret is missing.
+	EventReasonUserProvidedSecretNotFound = "UserProvidedSecretNotFound"
+
+	// EventReasonUserProvidedSecretInvalid is used when a referenced TLS secret is not type kubernetes.io/tls.
+	EventReasonUserProvidedSecretInvalid = "UserProvidedSecretInvalid"
 )
 
 // +kubebuilder:object:root=true
