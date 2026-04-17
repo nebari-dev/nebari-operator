@@ -371,7 +371,7 @@ func (p *KeycloakProvider) ConfigureTokenExchange(ctx context.Context, nebariApp
 		"id":               tokenExchangePermID,
 		"name":             fmt.Sprintf("token-exchange.permission.client.%s", internalID),
 		"type":             "scope",
-		"decisionStrategy": "UNANIMOUS",
+		"decisionStrategy": "AFFIRMATIVE",
 		"scopes":           []string{tokenExchangeScopeID},
 		"policies":         policyIDs,
 		"resources":        []string{gocloak.PString(mgmtPerms.Resource)},
