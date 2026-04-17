@@ -19,11 +19,15 @@ package controller
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	certmanagerv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
@@ -62,11 +66,20 @@ var _ = BeforeSuite(func() {
 	err = reconcilersv1.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
 
+	err = certmanagerv1.AddToScheme(scheme.Scheme)
+	Expect(err).NotTo(HaveOccurred())
+
+	err = gatewayv1.Install(scheme.Scheme)
+	Expect(err).NotTo(HaveOccurred())
+
 	// +kubebuilder:scaffold:scheme
 
 	By("bootstrapping test environment")
 	testEnv = &envtest.Environment{
-		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "config", "crd", "bases")},
+		CRDDirectoryPaths: append(
+			[]string{filepath.Join("..", "..", "config", "crd", "bases")},
+			extraCRDPaths()...,
+		),
 		ErrorIfCRDPathMissing: true,
 	}
 
@@ -91,6 +104,33 @@ var _ = AfterSuite(func() {
 	err := testEnv.Stop()
 	Expect(err).NotTo(HaveOccurred())
 })
+
+// extraCRDPaths returns paths to CRD directories for Gateway API and cert-manager
+// from the Go module cache. These CRDs are required for envtest to recognise
+// Gateway and Certificate objects created in integration tests.
+func extraCRDPaths() []string {
+	out, err := exec.Command("go", "env", "GOMODCACHE").Output()
+	if err != nil {
+		logf.Log.Error(err, "Failed to get GOMODCACHE; Gateway API and cert-manager CRDs will not be loaded")
+		return nil
+	}
+	modCache := strings.TrimSpace(string(out))
+
+	paths := []string{
+		filepath.Join(modCache, "sigs.k8s.io", "gateway-api@v1.4.1", "config", "crd", "standard"),
+		filepath.Join(modCache, "github.com", "cert-manager", "cert-manager@v1.19.3", "deploy", "crds"),
+	}
+
+	var valid []string
+	for _, p := range paths {
+		if _, statErr := os.Stat(p); statErr == nil {
+			valid = append(valid, p)
+		} else {
+			logf.Log.Error(statErr, "CRD path not found; some types may be unavailable in envtest", "path", p)
+		}
+	}
+	return valid
+}
 
 // getFirstFoundEnvTestBinaryDir locates the first binary in the specified path.
 // ENVTEST-based tests depend on specific binaries, usually located in paths set by
