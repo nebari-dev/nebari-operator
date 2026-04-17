@@ -471,6 +471,41 @@ func (r *TLSReconciler) cleanupOwnedCertificate(ctx context.Context, nebariApp *
 	return nil
 }
 
+// checkUserProvidedSecret inspects a user-supplied TLS secret in the Gateway
+// namespace and returns a condition (status, reason, message) tuple describing
+// its readiness. The check is best-effort: a missing or malformed secret yields
+// ConditionFalse but does not error, so the caller can still proceed to attach
+// the listener.
+func (r *TLSReconciler) checkUserProvidedSecret(ctx context.Context, secretName string) (metav1.ConditionStatus, string, string) {
+	secret := &corev1.Secret{}
+	err := r.Client.Get(ctx, types.NamespacedName{
+		Name:      secretName,
+		Namespace: constants.GatewayNamespace,
+	}, secret)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return metav1.ConditionFalse,
+				appsv1.ReasonUserProvidedSecretNotFound,
+				fmt.Sprintf("TLS secret %s/%s not found; create it and the listener will pick it up",
+					constants.GatewayNamespace, secretName)
+		}
+		return metav1.ConditionFalse,
+			appsv1.ReasonUserProvidedSecretNotFound,
+			fmt.Sprintf("failed to check TLS secret %s/%s: %v", constants.GatewayNamespace, secretName, err)
+	}
+
+	if secret.Type != corev1.SecretTypeTLS {
+		return metav1.ConditionFalse,
+			appsv1.ReasonUserProvidedSecretInvalidType,
+			fmt.Sprintf("TLS secret %s/%s is type %s, expected kubernetes.io/tls",
+				constants.GatewayNamespace, secretName, secret.Type)
+	}
+
+	return metav1.ConditionTrue,
+		appsv1.ReasonUserProvidedSecretReady,
+		fmt.Sprintf("using pre-provisioned TLS secret %s/%s", constants.GatewayNamespace, secretName)
+}
+
 // deleteCertificate removes the cert-manager Certificate from the Gateway namespace.
 func (r *TLSReconciler) deleteCertificate(ctx context.Context, nebariApp *appsv1.NebariApp) error {
 	logger := log.FromContext(ctx)

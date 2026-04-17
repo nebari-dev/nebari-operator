@@ -26,6 +26,7 @@ import (
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/conditions"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/constants"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/naming"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -43,6 +44,7 @@ func newScheme() *runtime.Scheme {
 	_ = appsv1.AddToScheme(scheme)
 	_ = certmanagerv1.AddToScheme(scheme)
 	_ = gatewayv1.Install(scheme)
+	_ = corev1.AddToScheme(scheme)
 	return scheme
 }
 
@@ -823,6 +825,78 @@ func TestCleanupOwnedCertificate(t *testing.T) {
 				if !tt.expectDeleted && getErr != nil {
 					t.Errorf("expected Certificate to be preserved but got error: %v", getErr)
 				}
+			}
+		})
+	}
+}
+
+func TestCheckUserProvidedSecret(t *testing.T) {
+	scheme := newScheme()
+
+	tests := []struct {
+		name           string
+		secretName     string
+		existingSecret *corev1.Secret
+		expectStatus   metav1.ConditionStatus
+		expectReason   string
+	}{
+		{
+			name:       "Valid kubernetes.io/tls secret yields Ready=True",
+			secretName: "my-tls",
+			existingSecret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "my-tls",
+					Namespace: constants.GatewayNamespace,
+				},
+				Type: corev1.SecretTypeTLS,
+			},
+			expectStatus: metav1.ConditionTrue,
+			expectReason: appsv1.ReasonUserProvidedSecretReady,
+		},
+		{
+			name:           "Missing secret yields NotFound",
+			secretName:     "absent-tls",
+			existingSecret: nil,
+			expectStatus:   metav1.ConditionFalse,
+			expectReason:   appsv1.ReasonUserProvidedSecretNotFound,
+		},
+		{
+			name:       "Opaque secret yields InvalidType",
+			secretName: "opaque-tls",
+			existingSecret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "opaque-tls",
+					Namespace: constants.GatewayNamespace,
+				},
+				Type: corev1.SecretTypeOpaque,
+			},
+			expectStatus: metav1.ConditionFalse,
+			expectReason: appsv1.ReasonUserProvidedSecretInvalidType,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			builder := fake.NewClientBuilder().WithScheme(scheme)
+			if tt.existingSecret != nil {
+				builder = builder.WithObjects(tt.existingSecret)
+			}
+			fakeClient := builder.Build()
+			reconciler := &TLSReconciler{
+				Client:   fakeClient,
+				Scheme:   scheme,
+				Recorder: record.NewFakeRecorder(10),
+			}
+
+			status, reason, msg := reconciler.checkUserProvidedSecret(context.Background(), tt.secretName)
+			if status != tt.expectStatus {
+				t.Errorf("expected status %s, got %s", tt.expectStatus, status)
+			}
+			if reason != tt.expectReason {
+				t.Errorf("expected reason %s, got %s", tt.expectReason, reason)
+			}
+			if msg == "" {
+				t.Error("expected non-empty message")
 			}
 		})
 	}
