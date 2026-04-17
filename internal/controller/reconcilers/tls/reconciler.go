@@ -110,7 +110,7 @@ func (r *TLSReconciler) ReconcileTLS(ctx context.Context, nebariApp *appsv1.Neba
 	}
 
 	// Step 4: Patch Gateway to add per-app HTTPS listener
-	if err := r.reconcileGatewayListener(ctx, nebariApp); err != nil {
+	if err := r.reconcileGatewayListener(ctx, nebariApp, naming.CertificateSecretName(nebariApp)); err != nil {
 		// Check if this is a listener conflict error
 		if containsListenerConflict(err) {
 			conditions.SetCondition(nebariApp, appsv1.ConditionTypeTLSReady, metav1.ConditionFalse,
@@ -231,12 +231,11 @@ func (r *TLSReconciler) reconcileCertificate(ctx context.Context, nebariApp *app
 // reconcileGatewayListener adds or updates a per-app HTTPS listener on the shared Gateway.
 // It uses a Get→upsert-in-slice→Update pattern so that concurrent reconcilers operating
 // on the same Gateway each own exactly one named listener without rewriting the whole spec.
-func (r *TLSReconciler) reconcileGatewayListener(ctx context.Context, nebariApp *appsv1.NebariApp) error {
+func (r *TLSReconciler) reconcileGatewayListener(ctx context.Context, nebariApp *appsv1.NebariApp, secretName string) error {
 	logger := log.FromContext(ctx)
 
 	gatewayName := naming.GatewayName(nebariApp)
 	listenerName := naming.ListenerName(nebariApp)
-	secretName := naming.CertificateSecretName(nebariApp)
 	hostname := gatewayv1.Hostname(nebariApp.Spec.Hostname)
 	tlsMode := gatewayv1.TLSModeTerminate
 	fromSelector := gatewayv1.NamespacesFromSelector
