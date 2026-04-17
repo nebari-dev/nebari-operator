@@ -70,10 +70,12 @@ func TestReconcileTLS(t *testing.T) { //nolint:gocyclo // table-driven test with
 		clusterIssuerName  string
 		gateway            *gatewayv1.Gateway
 		existingCert       *certmanagerv1.Certificate
+		existingSecret     *corev1.Secret
 		expectError        bool
 		expectNilResult    bool
 		validateResult     func(*testing.T, *TLSResult)
 		validateCert       func(*testing.T, *certmanagerv1.Certificate)
+		validateCertAbsent bool
 		validateGateway    func(*testing.T, *gatewayv1.Gateway)
 		validateConditions func(*testing.T, *appsv1.NebariApp)
 	}{
@@ -468,6 +470,212 @@ func TestReconcileTLS(t *testing.T) { //nolint:gocyclo // table-driven test with
 				}
 			},
 		},
+		{
+			name: "secretName set with valid TLS secret: listener added, no Certificate, TLSReady=True",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{Name: "bring-your-own", Namespace: "default"},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "byo.example.com",
+					Service:  appsv1.ServiceReference{Name: "svc", Port: 8080},
+					Routing: &appsv1.RoutingConfig{
+						TLS: &appsv1.RoutingTLSConfig{
+							Enabled:    boolPtr(true),
+							SecretName: "my-wildcard-tls",
+						},
+					},
+				},
+			},
+			clusterIssuerName: "letsencrypt-prod",
+			gateway:           newGateway(constants.PublicGatewayName),
+			existingSecret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: "my-wildcard-tls", Namespace: constants.GatewayNamespace},
+				Type:       corev1.SecretTypeTLS,
+			},
+			expectError:     false,
+			expectNilResult: false,
+			validateResult: func(t *testing.T, result *TLSResult) {
+				if result.SecretName != "my-wildcard-tls" {
+					t.Errorf("expected result.SecretName = my-wildcard-tls, got %s", result.SecretName)
+				}
+				if !result.CertReady {
+					t.Error("expected CertReady=true for a valid user-provided secret")
+				}
+			},
+			validateGateway: func(t *testing.T, gw *gatewayv1.Gateway) {
+				if len(gw.Spec.Listeners) != 1 {
+					t.Fatalf("expected 1 listener, got %d", len(gw.Spec.Listeners))
+				}
+				refs := gw.Spec.Listeners[0].TLS.CertificateRefs
+				if len(refs) != 1 || string(refs[0].Name) != "my-wildcard-tls" {
+					t.Errorf("expected listener cert ref my-wildcard-tls, got %+v", refs)
+				}
+			},
+			validateCertAbsent: true,
+			validateConditions: func(t *testing.T, app *appsv1.NebariApp) {
+				c := conditions.GetCondition(app, appsv1.ConditionTypeTLSReady)
+				if c == nil || c.Status != metav1.ConditionTrue || c.Reason != appsv1.ReasonUserProvidedSecretReady {
+					t.Errorf("expected TLSReady=True/UserProvidedSecretReady, got %+v", c)
+				}
+			},
+		},
+		{
+			name: "secretName set with missing secret: listener still added, TLSReady=False/NotFound",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{Name: "missing-secret", Namespace: "default"},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "missing.example.com",
+					Service:  appsv1.ServiceReference{Name: "svc", Port: 8080},
+					Routing: &appsv1.RoutingConfig{
+						TLS: &appsv1.RoutingTLSConfig{
+							Enabled:    boolPtr(true),
+							SecretName: "absent-tls",
+						},
+					},
+				},
+			},
+			clusterIssuerName: "letsencrypt-prod",
+			gateway:           newGateway(constants.PublicGatewayName),
+			existingSecret:    nil,
+			expectError:       false,
+			expectNilResult:   false,
+			validateGateway: func(t *testing.T, gw *gatewayv1.Gateway) {
+				if len(gw.Spec.Listeners) != 1 {
+					t.Fatalf("expected listener to be added even when secret missing, got %d", len(gw.Spec.Listeners))
+				}
+			},
+			validateCertAbsent: true,
+			validateConditions: func(t *testing.T, app *appsv1.NebariApp) {
+				c := conditions.GetCondition(app, appsv1.ConditionTypeTLSReady)
+				if c == nil || c.Status != metav1.ConditionFalse || c.Reason != appsv1.ReasonUserProvidedSecretNotFound {
+					t.Errorf("expected TLSReady=False/UserProvidedSecretNotFound, got %+v", c)
+				}
+			},
+		},
+		{
+			name: "secretName set with wrong-type secret: TLSReady=False/InvalidType",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{Name: "bad-type", Namespace: "default"},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "badtype.example.com",
+					Service:  appsv1.ServiceReference{Name: "svc", Port: 8080},
+					Routing: &appsv1.RoutingConfig{
+						TLS: &appsv1.RoutingTLSConfig{
+							Enabled:    boolPtr(true),
+							SecretName: "opaque-secret",
+						},
+					},
+				},
+			},
+			clusterIssuerName: "letsencrypt-prod",
+			gateway:           newGateway(constants.PublicGatewayName),
+			existingSecret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: "opaque-secret", Namespace: constants.GatewayNamespace},
+				Type:       corev1.SecretTypeOpaque,
+			},
+			expectError:        false,
+			expectNilResult:    false,
+			validateCertAbsent: true,
+			validateConditions: func(t *testing.T, app *appsv1.NebariApp) {
+				c := conditions.GetCondition(app, appsv1.ConditionTypeTLSReady)
+				if c == nil || c.Status != metav1.ConditionFalse || c.Reason != appsv1.ReasonUserProvidedSecretInvalidType {
+					t.Errorf("expected TLSReady=False/UserProvidedSecretInvalidType, got %+v", c)
+				}
+			},
+		},
+		{
+			name: "secretName set with empty ClusterIssuerName: reconcile succeeds",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{Name: "no-issuer", Namespace: "default"},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "noissuer.example.com",
+					Service:  appsv1.ServiceReference{Name: "svc", Port: 8080},
+					Routing: &appsv1.RoutingConfig{
+						TLS: &appsv1.RoutingTLSConfig{
+							Enabled:    boolPtr(true),
+							SecretName: "my-tls",
+						},
+					},
+				},
+			},
+			clusterIssuerName: "",
+			gateway:           newGateway(constants.PublicGatewayName),
+			existingSecret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: "my-tls", Namespace: constants.GatewayNamespace},
+				Type:       corev1.SecretTypeTLS,
+			},
+			expectError:        false,
+			expectNilResult:    false,
+			validateCertAbsent: true,
+			validateConditions: func(t *testing.T, app *appsv1.NebariApp) {
+				c := conditions.GetCondition(app, appsv1.ConditionTypeTLSReady)
+				if c == nil || c.Status != metav1.ConditionTrue {
+					t.Errorf("expected TLSReady=True when secretName supplied without ClusterIssuer, got %+v", c)
+				}
+			},
+		},
+		{
+			name: "enabled=false with secretName set: HTTP-only, secretName ignored",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{Name: "disabled-with-secret", Namespace: "default"},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "disabled.example.com",
+					Service:  appsv1.ServiceReference{Name: "svc", Port: 8080},
+					Routing: &appsv1.RoutingConfig{
+						TLS: &appsv1.RoutingTLSConfig{
+							Enabled:    boolPtr(false),
+							SecretName: "should-be-ignored",
+						},
+					},
+				},
+			},
+			clusterIssuerName:  "letsencrypt-prod",
+			gateway:            newGateway(constants.PublicGatewayName),
+			expectError:        false,
+			expectNilResult:    true,
+			validateCertAbsent: true,
+			validateConditions: func(t *testing.T, app *appsv1.NebariApp) {
+				c := conditions.GetCondition(app, appsv1.ConditionTypeTLSReady)
+				if c == nil || c.Status != metav1.ConditionFalse || c.Reason != "TLSDisabled" {
+					t.Errorf("expected TLSReady=False/TLSDisabled (secretName must be ignored when disabled), got %+v", c)
+				}
+			},
+		},
+		{
+			name: "secretName set with pre-existing owned Certificate: Certificate is cleaned up",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{Name: "migrate", Namespace: "default"},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "migrate.example.com",
+					Service:  appsv1.ServiceReference{Name: "svc", Port: 8080},
+					Routing: &appsv1.RoutingConfig{
+						TLS: &appsv1.RoutingTLSConfig{
+							Enabled:    boolPtr(true),
+							SecretName: "my-tls",
+						},
+					},
+				},
+			},
+			clusterIssuerName: "letsencrypt-prod",
+			gateway:           newGateway(constants.PublicGatewayName),
+			existingSecret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: "my-tls", Namespace: constants.GatewayNamespace},
+				Type:       corev1.SecretTypeTLS,
+			},
+			existingCert: &certmanagerv1.Certificate{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      naming.CertificateName(&appsv1.NebariApp{ObjectMeta: metav1.ObjectMeta{Name: "migrate", Namespace: "default"}}),
+					Namespace: constants.GatewayNamespace,
+					Labels: map[string]string{
+						"app.kubernetes.io/managed-by":   "nebari-operator",
+						"nebari.dev/nebariapp-name":      "migrate",
+						"nebari.dev/nebariapp-namespace": "default",
+					},
+				},
+			},
+			expectError:        false,
+			expectNilResult:    false,
+			validateCertAbsent: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -481,6 +689,9 @@ func TestReconcileTLS(t *testing.T) { //nolint:gocyclo // table-driven test with
 			}
 			if tt.existingCert != nil {
 				builder = builder.WithObjects(tt.existingCert)
+			}
+			if tt.existingSecret != nil {
+				builder = builder.WithObjects(tt.existingSecret)
 			}
 
 			fakeClient := builder.Build()
@@ -526,6 +737,17 @@ func TestReconcileTLS(t *testing.T) { //nolint:gocyclo // table-driven test with
 					t.Fatalf("expected Certificate to exist, got error: %v", err)
 				}
 				tt.validateCert(t, cert)
+			}
+
+			if tt.validateCertAbsent {
+				cert := &certmanagerv1.Certificate{}
+				err := fakeClient.Get(context.Background(), types.NamespacedName{
+					Name:      naming.CertificateName(tt.nebariApp),
+					Namespace: constants.GatewayNamespace,
+				}, cert)
+				if err == nil {
+					t.Error("expected Certificate to be absent (user-provided secret path), but it exists")
+				}
 			}
 
 			// Validate Gateway was patched
