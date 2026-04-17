@@ -433,6 +433,44 @@ func (r *TLSReconciler) removeGatewayListener(ctx context.Context, nebariApp *ap
 	return nil
 }
 
+// cleanupOwnedCertificate deletes the cert-manager Certificate for this NebariApp
+// if it exists and is labeled as owned by this NebariApp. This is used when a
+// NebariApp switches from cert-manager to a user-provided TLS secret via
+// routing.tls.secretName. The function is idempotent: missing Certificates and
+// Certificates with mismatched ownership labels are left alone.
+func (r *TLSReconciler) cleanupOwnedCertificate(ctx context.Context, nebariApp *appsv1.NebariApp) error {
+	logger := log.FromContext(ctx)
+	certName := naming.CertificateName(nebariApp)
+
+	cert := &certmanagerv1.Certificate{}
+	if err := r.Client.Get(ctx, types.NamespacedName{
+		Name:      certName,
+		Namespace: constants.GatewayNamespace,
+	}, cert); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to get Certificate for cleanup check: %w", err)
+	}
+
+	if cert.Labels["nebari.dev/nebariapp-name"] != nebariApp.Name ||
+		cert.Labels["nebari.dev/nebariapp-namespace"] != nebariApp.Namespace {
+		logger.V(1).Info("Certificate exists with mismatched ownership labels, leaving it alone",
+			"name", certName, "namespace", constants.GatewayNamespace)
+		return nil
+	}
+
+	if err := client.IgnoreNotFound(r.Client.Delete(ctx, cert)); err != nil {
+		return fmt.Errorf("failed to delete owned Certificate during migration: %w", err)
+	}
+
+	logger.Info("Deleted owned Certificate during migration to user-provided secret",
+		"name", certName, "namespace", constants.GatewayNamespace)
+	r.Recorder.Event(nebariApp, corev1.EventTypeNormal, appsv1.EventReasonCertificateDeleted,
+		fmt.Sprintf("Deleted cert-manager Certificate %s/%s after switch to user-provided secret", constants.GatewayNamespace, certName))
+	return nil
+}
+
 // deleteCertificate removes the cert-manager Certificate from the Gateway namespace.
 func (r *TLSReconciler) deleteCertificate(ctx context.Context, nebariApp *appsv1.NebariApp) error {
 	logger := log.FromContext(ctx)

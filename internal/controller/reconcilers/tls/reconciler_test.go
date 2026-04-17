@@ -721,6 +721,113 @@ func TestCleanupTLS(t *testing.T) {
 	}
 }
 
+func TestCleanupOwnedCertificate(t *testing.T) {
+	scheme := newScheme()
+
+	app := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{Name: "migrate-app", Namespace: "default"},
+		Spec: appsv1.NebariAppSpec{
+			Hostname: "migrate.example.com",
+			Service:  appsv1.ServiceReference{Name: "svc", Port: 8080},
+		},
+	}
+	certName := naming.CertificateName(app)
+
+	tests := []struct {
+		name          string
+		existingCert  *certmanagerv1.Certificate
+		expectError   bool
+		expectDeleted bool
+	}{
+		{
+			name: "Owned Certificate is deleted",
+			existingCert: &certmanagerv1.Certificate{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      certName,
+					Namespace: constants.GatewayNamespace,
+					Labels: map[string]string{
+						"app.kubernetes.io/managed-by":   "nebari-operator",
+						"nebari.dev/nebariapp-name":      "migrate-app",
+						"nebari.dev/nebariapp-namespace": "default",
+					},
+				},
+			},
+			expectError:   false,
+			expectDeleted: true,
+		},
+		{
+			name:          "Absent Certificate is a no-op",
+			existingCert:  nil,
+			expectError:   false,
+			expectDeleted: false,
+		},
+		{
+			name: "Certificate with mismatched labels is preserved",
+			existingCert: &certmanagerv1.Certificate{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      certName,
+					Namespace: constants.GatewayNamespace,
+					Labels: map[string]string{
+						"nebari.dev/nebariapp-name":      "some-other-app",
+						"nebari.dev/nebariapp-namespace": "default",
+					},
+				},
+			},
+			expectError:   false,
+			expectDeleted: false,
+		},
+		{
+			name: "Certificate with no labels is preserved",
+			existingCert: &certmanagerv1.Certificate{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      certName,
+					Namespace: constants.GatewayNamespace,
+				},
+			},
+			expectError:   false,
+			expectDeleted: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			builder := fake.NewClientBuilder().WithScheme(scheme)
+			if tt.existingCert != nil {
+				builder = builder.WithObjects(tt.existingCert)
+			}
+			fakeClient := builder.Build()
+			reconciler := &TLSReconciler{
+				Client:   fakeClient,
+				Scheme:   scheme,
+				Recorder: record.NewFakeRecorder(10),
+			}
+
+			err := reconciler.cleanupOwnedCertificate(context.Background(), app)
+
+			if tt.expectError && err == nil {
+				t.Error("expected error, got nil")
+			}
+			if !tt.expectError && err != nil {
+				t.Errorf("expected no error, got %v", err)
+			}
+
+			if tt.existingCert != nil {
+				cert := &certmanagerv1.Certificate{}
+				getErr := fakeClient.Get(context.Background(), types.NamespacedName{
+					Name:      certName,
+					Namespace: constants.GatewayNamespace,
+				}, cert)
+				if tt.expectDeleted && getErr == nil {
+					t.Error("expected Certificate to be deleted but it still exists")
+				}
+				if !tt.expectDeleted && getErr != nil {
+					t.Errorf("expected Certificate to be preserved but got error: %v", getErr)
+				}
+			}
+		})
+	}
+}
+
 func TestIsCertificateReady(t *testing.T) {
 	scheme := newScheme()
 
