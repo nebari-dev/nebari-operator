@@ -53,6 +53,11 @@ func (in *AuthConfig) DeepCopyInto(out *AuthConfig) {
 		*out = new(bool)
 		**out = **in
 	}
+	if in.ForwardAccessToken != nil {
+		in, out := &in.ForwardAccessToken, &out.ForwardAccessToken
+		*out = new(bool)
+		**out = **in
+	}
 	if in.DenyRedirect != nil {
 		in, out := &in.DenyRedirect, &out.DenyRedirect
 		*out = make([]DenyRedirectHeader, len(*in))

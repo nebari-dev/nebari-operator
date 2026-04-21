@@ -133,6 +133,17 @@ spec:
                       in a Secret, but does NOT create a SecurityPolicy - the application is
                       expected to handle OAuth natively (e.g., Grafana's built-in generic_oauth).
                     type: boolean
+                  forwardAccessToken:
+                    description: |-
+                      ForwardAccessToken instructs the gateway-enforced OIDC filter to forward
+                      the user's OAuth2 access token to the upstream service via the
+                      `Authorization: Bearer <token>` header. Use this when the application
+                      needs to read the JWT itself - for example to extract the user's groups
+                      claim and apply per-user authorization decisions on top of the gateway's
+                      authentication. By default the gateway only stores the token in an
+                      encrypted session cookie that backends cannot decode.
+                      Only applies when enforceAtGateway is true.
+                    type: boolean
                   groups:
                     description: |-
                       Groups specifies the list of groups that should have access to this application.

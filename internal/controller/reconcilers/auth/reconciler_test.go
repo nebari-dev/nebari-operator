@@ -503,6 +503,68 @@ func TestBuildSecurityPolicySpec(t *testing.T) {
 			},
 		},
 		{
+			name: "ForwardAccessToken=true sets the field on OIDC spec",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app",
+					Namespace: "default",
+				},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "test.example.com",
+					Auth: &appsv1.AuthConfig{
+						Enabled:            true,
+						Provider:           constants.ProviderKeycloak,
+						ForwardAccessToken: ptrTo(true),
+					},
+				},
+			},
+			provider: &mockProvider{
+				issuerURL: "https://keycloak.example.com/realms/test",
+				clientID:  "test-client",
+			},
+			expectError: false,
+			validateSpec: func(t *testing.T, spec egv1alpha1.SecurityPolicySpec) {
+				if spec.OIDC == nil {
+					t.Fatal("OIDC config is nil")
+				}
+				if spec.OIDC.ForwardAccessToken == nil {
+					t.Fatal("ForwardAccessToken is nil, expected true")
+				}
+				if !*spec.OIDC.ForwardAccessToken {
+					t.Error("ForwardAccessToken=false, expected true")
+				}
+			},
+		},
+		{
+			name: "ForwardAccessToken unset leaves OIDC field nil (filter default applies)",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app",
+					Namespace: "default",
+				},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "test.example.com",
+					Auth: &appsv1.AuthConfig{
+						Enabled:  true,
+						Provider: constants.ProviderKeycloak,
+					},
+				},
+			},
+			provider: &mockProvider{
+				issuerURL: "https://keycloak.example.com/realms/test",
+				clientID:  "test-client",
+			},
+			expectError: false,
+			validateSpec: func(t *testing.T, spec egv1alpha1.SecurityPolicySpec) {
+				if spec.OIDC == nil {
+					t.Fatal("OIDC config is nil")
+				}
+				if spec.OIDC.ForwardAccessToken != nil {
+					t.Errorf("ForwardAccessToken = %v, expected nil", *spec.OIDC.ForwardAccessToken)
+				}
+			},
+		},
+		{
 			name: "Provider returns error",
 			nebariApp: &appsv1.NebariApp{
 				ObjectMeta: metav1.ObjectMeta{

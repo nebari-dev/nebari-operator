@@ -465,6 +465,15 @@ func (r *AuthReconciler) buildSecurityPolicySpec(ctx context.Context, nebariApp 
 		oidcConfig.Scopes = []string{"openid", "profile", "email"}
 	}
 
+	// Forward the OAuth2 access token to the upstream as Authorization: Bearer
+	// when the user opts in. Applications that read the JWT for per-user
+	// authorization (e.g. group claim filtering) need this; without it the
+	// gateway only stores the token in an encrypted session cookie that
+	// backends cannot decode.
+	if nebariApp.Spec.Auth.ForwardAccessToken != nil {
+		oidcConfig.ForwardAccessToken = nebariApp.Spec.Auth.ForwardAccessToken
+	}
+
 	// Set DenyRedirect headers to prevent PKCE race conditions from concurrent requests
 	if len(nebariApp.Spec.Auth.DenyRedirect) > 0 {
 		headers := make([]egv1alpha1.OIDCDenyRedirectHeader, 0, len(nebariApp.Spec.Auth.DenyRedirect))
