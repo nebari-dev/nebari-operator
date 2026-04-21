@@ -503,68 +503,6 @@ func TestBuildSecurityPolicySpec(t *testing.T) {
 			},
 		},
 		{
-			name: "ForwardAccessToken=true sets the field on OIDC spec",
-			nebariApp: &appsv1.NebariApp{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-app",
-					Namespace: "default",
-				},
-				Spec: appsv1.NebariAppSpec{
-					Hostname: "test.example.com",
-					Auth: &appsv1.AuthConfig{
-						Enabled:            true,
-						Provider:           constants.ProviderKeycloak,
-						ForwardAccessToken: ptrTo(true),
-					},
-				},
-			},
-			provider: &mockProvider{
-				issuerURL: "https://keycloak.example.com/realms/test",
-				clientID:  "test-client",
-			},
-			expectError: false,
-			validateSpec: func(t *testing.T, spec egv1alpha1.SecurityPolicySpec) {
-				if spec.OIDC == nil {
-					t.Fatal("OIDC config is nil")
-				}
-				if spec.OIDC.ForwardAccessToken == nil {
-					t.Fatal("ForwardAccessToken is nil, expected true")
-				}
-				if !*spec.OIDC.ForwardAccessToken {
-					t.Error("ForwardAccessToken=false, expected true")
-				}
-			},
-		},
-		{
-			name: "ForwardAccessToken unset leaves OIDC field nil (filter default applies)",
-			nebariApp: &appsv1.NebariApp{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-app",
-					Namespace: "default",
-				},
-				Spec: appsv1.NebariAppSpec{
-					Hostname: "test.example.com",
-					Auth: &appsv1.AuthConfig{
-						Enabled:  true,
-						Provider: constants.ProviderKeycloak,
-					},
-				},
-			},
-			provider: &mockProvider{
-				issuerURL: "https://keycloak.example.com/realms/test",
-				clientID:  "test-client",
-			},
-			expectError: false,
-			validateSpec: func(t *testing.T, spec egv1alpha1.SecurityPolicySpec) {
-				if spec.OIDC == nil {
-					t.Fatal("OIDC config is nil")
-				}
-				if spec.OIDC.ForwardAccessToken != nil {
-					t.Errorf("ForwardAccessToken = %v, expected nil", *spec.OIDC.ForwardAccessToken)
-				}
-			},
-		},
-		{
 			name: "Provider returns error",
 			nebariApp: &appsv1.NebariApp{
 				ObjectMeta: metav1.ObjectMeta{
@@ -612,6 +550,84 @@ func TestBuildSecurityPolicySpec(t *testing.T) {
 
 			if !tt.expectError && tt.validateSpec != nil {
 				tt.validateSpec(t, spec)
+			}
+		})
+	}
+}
+
+// TestBuildSecurityPolicySpec_ForwardAccessToken covers the forwardAccessToken
+// passthrough in isolation. Kept separate from TestBuildSecurityPolicySpec
+// to keep that table-driven test below the gocyclo complexity threshold.
+func TestBuildSecurityPolicySpec_ForwardAccessToken(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = appsv1.AddToScheme(scheme)
+	_ = egv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	tests := []struct {
+		name              string
+		forwardAccessTok  *bool
+		wantOIDCFieldNil  bool
+		wantOIDCFieldTrue bool
+	}{
+		{
+			name:              "true sets OIDC field to true",
+			forwardAccessTok:  ptrTo(true),
+			wantOIDCFieldNil:  false,
+			wantOIDCFieldTrue: true,
+		},
+		{
+			name:              "false sets OIDC field to false (explicit opt-out)",
+			forwardAccessTok:  ptrTo(false),
+			wantOIDCFieldNil:  false,
+			wantOIDCFieldTrue: false,
+		},
+		{
+			name:             "unset leaves OIDC field nil so Envoy default applies",
+			forwardAccessTok: nil,
+			wantOIDCFieldNil: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := &AuthReconciler{
+				Client: fake.NewClientBuilder().WithScheme(scheme).Build(),
+				Scheme: scheme,
+			}
+			nebariApp := &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app",
+					Namespace: "default",
+				},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "test.example.com",
+					Auth: &appsv1.AuthConfig{
+						Enabled:            true,
+						Provider:           constants.ProviderKeycloak,
+						ForwardAccessToken: tt.forwardAccessTok,
+					},
+				},
+			}
+			provider := &mockProvider{
+				issuerURL: "https://keycloak.example.com/realms/test",
+				clientID:  "test-client",
+			}
+
+			spec, err := r.buildSecurityPolicySpec(context.Background(), nebariApp, provider)
+			if err != nil {
+				t.Fatalf("buildSecurityPolicySpec returned error: %v", err)
+			}
+			if spec.OIDC == nil {
+				t.Fatal("OIDC config is nil")
+			}
+			switch {
+			case tt.wantOIDCFieldNil && spec.OIDC.ForwardAccessToken != nil:
+				t.Errorf("ForwardAccessToken = %v, want nil", *spec.OIDC.ForwardAccessToken)
+			case !tt.wantOIDCFieldNil && spec.OIDC.ForwardAccessToken == nil:
+				t.Fatalf("ForwardAccessToken is nil, want %v", tt.wantOIDCFieldTrue)
+			case !tt.wantOIDCFieldNil && *spec.OIDC.ForwardAccessToken != tt.wantOIDCFieldTrue:
+				t.Errorf("ForwardAccessToken = %v, want %v", *spec.OIDC.ForwardAccessToken, tt.wantOIDCFieldTrue)
 			}
 		})
 	}
