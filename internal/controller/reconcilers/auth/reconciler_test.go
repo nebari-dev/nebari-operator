@@ -19,6 +19,8 @@ package auth
 import (
 	"context"
 	"errors"
+	"fmt"
+	"reflect"
 	"testing"
 
 	egv1alpha1 "github.com/envoyproxy/gateway/api/v1alpha1"
@@ -550,6 +552,84 @@ func TestBuildSecurityPolicySpec(t *testing.T) {
 
 			if !tt.expectError && tt.validateSpec != nil {
 				tt.validateSpec(t, spec)
+			}
+		})
+	}
+}
+
+// TestBuildSecurityPolicySpec_ForwardAccessToken covers the forwardAccessToken
+// passthrough in isolation. Kept separate from TestBuildSecurityPolicySpec
+// to keep that table-driven test below the gocyclo complexity threshold.
+func TestBuildSecurityPolicySpec_ForwardAccessToken(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = appsv1.AddToScheme(scheme)
+	_ = egv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	tests := []struct {
+		name             string
+		forwardAccessTok *bool
+		want             *bool
+	}{
+		{
+			name:             "true sets OIDC field to true",
+			forwardAccessTok: ptrTo(true),
+			want:             ptrTo(true),
+		},
+		{
+			name:             "false sets OIDC field to false (explicit opt-out)",
+			forwardAccessTok: ptrTo(false),
+			want:             ptrTo(false),
+		},
+		{
+			name:             "unset leaves OIDC field nil so Envoy default applies",
+			forwardAccessTok: nil,
+			want:             nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := &AuthReconciler{
+				Client: fake.NewClientBuilder().WithScheme(scheme).Build(),
+				Scheme: scheme,
+			}
+			nebariApp := &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app",
+					Namespace: "default",
+				},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "test.example.com",
+					Auth: &appsv1.AuthConfig{
+						Enabled:            true,
+						Provider:           constants.ProviderKeycloak,
+						ForwardAccessToken: tt.forwardAccessTok,
+					},
+				},
+			}
+			provider := &mockProvider{
+				issuerURL: "https://keycloak.example.com/realms/test",
+				clientID:  "test-client",
+			}
+
+			spec, err := r.buildSecurityPolicySpec(context.Background(), nebariApp, provider)
+			if err != nil {
+				t.Fatalf("buildSecurityPolicySpec returned error: %v", err)
+			}
+			if spec.OIDC == nil {
+				t.Fatal("OIDC config is nil")
+			}
+			if !reflect.DeepEqual(spec.OIDC.ForwardAccessToken, tt.want) {
+				got := "nil"
+				if spec.OIDC.ForwardAccessToken != nil {
+					got = fmt.Sprintf("%v", *spec.OIDC.ForwardAccessToken)
+				}
+				wantStr := "nil"
+				if tt.want != nil {
+					wantStr = fmt.Sprintf("%v", *tt.want)
+				}
+				t.Errorf("ForwardAccessToken = %s, want %s", got, wantStr)
 			}
 		})
 	}

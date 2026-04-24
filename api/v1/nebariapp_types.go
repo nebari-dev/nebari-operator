@@ -154,6 +154,7 @@ type RoutingTLSConfig struct {
 }
 
 // AuthConfig specifies authentication/authorization configuration.
+// +kubebuilder:validation:XValidation:rule="!has(self.forwardAccessToken) || self.forwardAccessToken == false || (has(self.enforceAtGateway) && self.enforceAtGateway == true)",message="forwardAccessToken: true requires enforceAtGateway: true"
 type AuthConfig struct {
 	// Enabled determines whether authentication should be enforced for this application.
 	// When true, users must authenticate via OIDC before accessing the application.
@@ -215,6 +216,17 @@ type AuthConfig struct {
 	// +kubebuilder:default=true
 	// +optional
 	EnforceAtGateway *bool `json:"enforceAtGateway,omitempty"`
+
+	// ForwardAccessToken instructs the gateway-enforced OIDC filter to forward
+	// the user's OAuth2 access token to the upstream service via the
+	// `Authorization: Bearer <token>` header. Use this when the application
+	// needs to read the JWT itself - for example to extract the user's groups
+	// claim and apply per-user authorization decisions on top of the gateway's
+	// authentication. By default the gateway only stores the token in an
+	// encrypted session cookie that backends cannot decode.
+	// Only applies when enforceAtGateway is true.
+	// +optional
+	ForwardAccessToken *bool `json:"forwardAccessToken,omitempty"`
 
 	// DenyRedirect configures headers that, when matched, prevent the OIDC filter
 	// from redirecting to the identity provider. Instead, matching requests receive
