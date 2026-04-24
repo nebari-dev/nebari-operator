@@ -307,9 +307,10 @@ spec:
                     type: object
                 type: object
                 x-kubernetes-validations:
-                - message: 'forwardAccessToken requires enforceAtGateway: true'
-                  rule: '!has(self.forwardAccessToken) || (has(self.enforceAtGateway)
-                    && self.enforceAtGateway == true)'
+                - message: 'forwardAccessToken: true requires enforceAtGateway: true'
+                  rule: '!has(self.forwardAccessToken) || self.forwardAccessToken
+                    == false || (has(self.enforceAtGateway) && self.enforceAtGateway
+                    == true)'
               gateway:
                 default: public
                 description: |-

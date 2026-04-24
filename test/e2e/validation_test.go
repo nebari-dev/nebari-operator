@@ -206,6 +206,90 @@ spec:
 		})
 	})
 
+	Context("ForwardAccessToken Validation", func() {
+		tests := []struct {
+			name               string
+			appName            string
+			hostname           string
+			forwardAccessToken string
+			enforceAtGateway   string
+			expectErr          bool
+		}{
+			{
+				name:               "reject forwardAccessToken=true with enforceAtGateway=false",
+				appName:            "test-fat-true-enforce-false",
+				hostname:           "fat-true-enforce-false.example.com",
+				forwardAccessToken: "true",
+				enforceAtGateway:   "false",
+				expectErr:          true,
+			},
+			{
+				name:               "allow forwardAccessToken=false with enforceAtGateway=false",
+				appName:            "test-fat-false-enforce-false",
+				hostname:           "fat-false-enforce-false.example.com",
+				forwardAccessToken: "false",
+				enforceAtGateway:   "false",
+				expectErr:          false,
+			},
+			{
+				name:               "allow forwardAccessToken=true with enforceAtGateway=true",
+				appName:            "test-fat-true-enforce-true",
+				hostname:           "fat-true-enforce-true.example.com",
+				forwardAccessToken: "true",
+				enforceAtGateway:   "true",
+				expectErr:          false,
+			},
+			{
+				name:               "allow forwardAccessToken=false with enforceAtGateway=true",
+				appName:            "test-fat-false-enforce-true",
+				hostname:           "fat-false-enforce-true.example.com",
+				forwardAccessToken: "false",
+				enforceAtGateway:   "true",
+				expectErr:          false,
+			},
+		}
+
+		for _, tc := range tests {
+			tc := tc
+			It(tc.name, func() {
+				nebariAppYAML := fmt.Sprintf(`
+apiVersion: reconcilers.nebari.dev/v1
+kind: NebariApp
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  hostname: %s
+  service:
+    name: test-app
+    port: 80
+  routing:
+    tls:
+      enabled: false
+  auth:
+    enabled: true
+    provider: keycloak
+    enforceAtGateway: %s
+    forwardAccessToken: %s
+`, tc.appName, testNamespace, tc.hostname, tc.enforceAtGateway, tc.forwardAccessToken)
+
+				cmd := exec.Command("kubectl", "apply", "-f", "-")
+				cmd.Stdin = strings.NewReader(nebariAppYAML)
+				_, err := utils.Run(cmd)
+
+				if tc.expectErr {
+					Expect(err).To(HaveOccurred(),
+						"kubectl should reject forwardAccessToken: true with enforceAtGateway: false")
+				} else {
+					Expect(err).NotTo(HaveOccurred(),
+						"kubectl should accept this combination")
+					cleanup := exec.Command("kubectl", "delete", "nebariapp", tc.appName, "-n", testNamespace, "--ignore-not-found")
+					_, _ = utils.Run(cleanup)
+				}
+			})
+		}
+	})
+
 	Context("Path Validation", func() {
 		It("should reject path not starting with slash", func() {
 			appName := "test-invalid-path"

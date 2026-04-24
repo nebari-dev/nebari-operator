@@ -154,7 +154,7 @@ type RoutingTLSConfig struct {
 }
 
 // AuthConfig specifies authentication/authorization configuration.
-// +kubebuilder:validation:XValidation:rule="!has(self.forwardAccessToken) || (has(self.enforceAtGateway) && self.enforceAtGateway == true)",message="forwardAccessToken requires enforceAtGateway: true"
+// +kubebuilder:validation:XValidation:rule="!has(self.forwardAccessToken) || self.forwardAccessToken == false || (has(self.enforceAtGateway) && self.enforceAtGateway == true)",message="forwardAccessToken: true requires enforceAtGateway: true"
 type AuthConfig struct {
 	// Enabled determines whether authentication should be enforced for this application.
 	// When true, users must authenticate via OIDC before accessing the application.
