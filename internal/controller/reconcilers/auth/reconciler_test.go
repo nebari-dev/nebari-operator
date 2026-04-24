@@ -19,6 +19,8 @@ package auth
 import (
 	"context"
 	"errors"
+	"fmt"
+	"reflect"
 	"testing"
 
 	egv1alpha1 "github.com/envoyproxy/gateway/api/v1alpha1"
@@ -565,27 +567,24 @@ func TestBuildSecurityPolicySpec_ForwardAccessToken(t *testing.T) {
 	_ = corev1.AddToScheme(scheme)
 
 	tests := []struct {
-		name              string
-		forwardAccessTok  *bool
-		wantOIDCFieldNil  bool
-		wantOIDCFieldTrue bool
+		name             string
+		forwardAccessTok *bool
+		want             *bool
 	}{
 		{
-			name:              "true sets OIDC field to true",
-			forwardAccessTok:  ptrTo(true),
-			wantOIDCFieldNil:  false,
-			wantOIDCFieldTrue: true,
+			name:             "true sets OIDC field to true",
+			forwardAccessTok: ptrTo(true),
+			want:             ptrTo(true),
 		},
 		{
-			name:              "false sets OIDC field to false (explicit opt-out)",
-			forwardAccessTok:  ptrTo(false),
-			wantOIDCFieldNil:  false,
-			wantOIDCFieldTrue: false,
+			name:             "false sets OIDC field to false (explicit opt-out)",
+			forwardAccessTok: ptrTo(false),
+			want:             ptrTo(false),
 		},
 		{
 			name:             "unset leaves OIDC field nil so Envoy default applies",
 			forwardAccessTok: nil,
-			wantOIDCFieldNil: true,
+			want:             nil,
 		},
 	}
 
@@ -621,13 +620,16 @@ func TestBuildSecurityPolicySpec_ForwardAccessToken(t *testing.T) {
 			if spec.OIDC == nil {
 				t.Fatal("OIDC config is nil")
 			}
-			switch {
-			case tt.wantOIDCFieldNil && spec.OIDC.ForwardAccessToken != nil:
-				t.Errorf("ForwardAccessToken = %v, want nil", *spec.OIDC.ForwardAccessToken)
-			case !tt.wantOIDCFieldNil && spec.OIDC.ForwardAccessToken == nil:
-				t.Fatalf("ForwardAccessToken is nil, want %v", tt.wantOIDCFieldTrue)
-			case !tt.wantOIDCFieldNil && *spec.OIDC.ForwardAccessToken != tt.wantOIDCFieldTrue:
-				t.Errorf("ForwardAccessToken = %v, want %v", *spec.OIDC.ForwardAccessToken, tt.wantOIDCFieldTrue)
+			if !reflect.DeepEqual(spec.OIDC.ForwardAccessToken, tt.want) {
+				got := "nil"
+				if spec.OIDC.ForwardAccessToken != nil {
+					got = fmt.Sprintf("%v", *spec.OIDC.ForwardAccessToken)
+				}
+				wantStr := "nil"
+				if tt.want != nil {
+					wantStr = fmt.Sprintf("%v", *tt.want)
+				}
+				t.Errorf("ForwardAccessToken = %s, want %s", got, wantStr)
 			}
 		})
 	}
