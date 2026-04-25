@@ -30,6 +30,7 @@ import (
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/conditions"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/constants"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/naming"
+	"github.com/nebari-dev/nebari-operator/internal/controller/utils/ptr"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -443,19 +444,41 @@ func (r *AuthReconciler) buildSecurityPolicySpec(ctx context.Context, nebariApp 
 	secretNamespace := gwapiv1.Namespace(nebariApp.Namespace)
 
 	// Build OIDC configuration
+	oidcProvider := egv1alpha1.OIDCProvider{
+		Issuer: issuerURL,
+	}
+
+	// Apply explicit endpoint overrides from the provider. This ensures Envoy
+	// uses internal cluster URLs instead of external URLs from the OIDC discovery
+	// document, which may use TLS certificates not trusted by Envoy.
+	overrides, err := provider.GetEndpointOverrides(ctx, nebariApp)
+	if err != nil {
+		return egv1alpha1.SecurityPolicySpec{}, fmt.Errorf("failed to get endpoint overrides: %w", err)
+	}
+	if overrides.Token != nil {
+		log.FromContext(ctx).Info("Overriding OIDC endpoint from discovery", "endpoint", "token", "url", *overrides.Token)
+		oidcProvider.TokenEndpoint = overrides.Token
+	}
+	if overrides.Authorization != nil {
+		log.FromContext(ctx).Info("Overriding OIDC endpoint from discovery", "endpoint", "authorization", "url", *overrides.Authorization)
+		oidcProvider.AuthorizationEndpoint = overrides.Authorization
+	}
+	if overrides.EndSession != nil {
+		log.FromContext(ctx).Info("Overriding OIDC endpoint from discovery", "endpoint", "endSession", "url", *overrides.EndSession)
+		oidcProvider.EndSessionEndpoint = overrides.EndSession
+	}
+
 	oidcConfig := &egv1alpha1.OIDC{
-		Provider: egv1alpha1.OIDCProvider{
-			Issuer: issuerURL,
-		},
-		ClientID: ptrTo(clientID),
+		Provider: oidcProvider,
+		ClientID: ptr.To(clientID),
 		ClientSecret: gwapiv1.SecretObjectReference{
 			Group:     &secretGroup,
 			Kind:      &secretKind,
 			Name:      gwapiv1.ObjectName(clientSecretName),
 			Namespace: &secretNamespace,
 		},
-		RedirectURL: ptrTo(redirectURL),
-		LogoutPath:  ptrTo(constants.DefaultLogoutPath),
+		RedirectURL: ptr.To(redirectURL),
+		LogoutPath:  ptr.To(constants.DefaultLogoutPath),
 	}
 
 	// Set OIDC scopes
@@ -571,8 +594,4 @@ func (r *AuthReconciler) reconcileTokenExchange(ctx context.Context, nebariApp *
 	}
 
 	return provider.ConfigureTokenExchange(ctx, nebariApp, peerClientIDs)
-}
-
-func ptrTo[T any](v T) *T {
-	return &v
 }

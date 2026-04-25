@@ -101,6 +101,23 @@ func TestGenericOIDCProvider_GetIssuerURL(t *testing.T) {
 	}
 }
 
+func TestGenericOIDCProvider_GetEndpointOverrides(t *testing.T) {
+	provider := &GenericOIDCProvider{}
+	got, err := provider.GetEndpointOverrides(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Token != nil {
+		t.Errorf("expected nil token endpoint for generic OIDC, got %q", *got.Token)
+	}
+	if got.Authorization != nil {
+		t.Errorf("expected nil authorization endpoint for generic OIDC, got %q", *got.Authorization)
+	}
+	if got.EndSession != nil {
+		t.Errorf("expected nil end session endpoint for generic OIDC, got %q", *got.EndSession)
+	}
+}
+
 func TestGenericOIDCProvider_GetClientID(t *testing.T) {
 	provider := &GenericOIDCProvider{}
 

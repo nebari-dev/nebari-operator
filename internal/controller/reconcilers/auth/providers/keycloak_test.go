@@ -28,6 +28,7 @@ import (
 	"github.com/nebari-dev/nebari-operator/internal/config"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/constants"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/naming"
+	"github.com/nebari-dev/nebari-operator/internal/controller/utils/ptr"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -112,6 +113,79 @@ func TestKeycloakProvider_GetIssuerURL(t *testing.T) {
 
 			if url != tt.expectedURL {
 				t.Errorf("expected URL %s, got %s", tt.expectedURL, url)
+			}
+		})
+	}
+}
+
+func TestKeycloakProvider_GetEndpointOverrides(t *testing.T) {
+	tests := []struct {
+		name     string
+		kcConfig config.KeycloakConfig
+		expected OIDCEndpointOverrides
+	}{
+		{
+			name: "Default configuration (Keycloak 26+ root context path)",
+			kcConfig: config.KeycloakConfig{
+				Realm:                  "nebari",
+				IssuerServiceName:      "keycloak-keycloakx-http",
+				IssuerServiceNamespace: "keycloak",
+				IssuerServicePort:      8080,
+				IssuerContextPath:      "",
+			},
+			expected: OIDCEndpointOverrides{
+				Token:         ptr.To("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/nebari/protocol/openid-connect/token"),
+				Authorization: ptr.To("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/nebari/protocol/openid-connect/auth"),
+				EndSession:    ptr.To("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/nebari/protocol/openid-connect/logout"),
+			},
+		},
+		{
+			name: "Legacy /auth context path",
+			kcConfig: config.KeycloakConfig{
+				Realm:                  "nebari",
+				IssuerServiceName:      "keycloak-keycloakx-http",
+				IssuerServiceNamespace: "keycloak",
+				IssuerServicePort:      8080,
+				IssuerContextPath:      "/auth",
+			},
+			expected: OIDCEndpointOverrides{
+				Token:         ptr.To("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/auth/realms/nebari/protocol/openid-connect/token"),
+				Authorization: ptr.To("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/auth/realms/nebari/protocol/openid-connect/auth"),
+				EndSession:    ptr.To("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/auth/realms/nebari/protocol/openid-connect/logout"),
+			},
+		},
+		{
+			name: "Custom deployment configuration",
+			kcConfig: config.KeycloakConfig{
+				Realm:                  "custom-realm",
+				IssuerServiceName:      "custom-keycloak",
+				IssuerServiceNamespace: "auth",
+				IssuerServicePort:      9090,
+				IssuerContextPath:      "",
+			},
+			expected: OIDCEndpointOverrides{
+				Token:         ptr.To("http://custom-keycloak.auth.svc.cluster.local:9090/realms/custom-realm/protocol/openid-connect/token"),
+				Authorization: ptr.To("http://custom-keycloak.auth.svc.cluster.local:9090/realms/custom-realm/protocol/openid-connect/auth"),
+				EndSession:    ptr.To("http://custom-keycloak.auth.svc.cluster.local:9090/realms/custom-realm/protocol/openid-connect/logout"),
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := &KeycloakProvider{Config: tt.kcConfig}
+			got, err := provider.GetEndpointOverrides(context.Background(), nil)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got.Token == nil || *got.Token != *tt.expected.Token {
+				t.Errorf("token: expected %q, got %v", *tt.expected.Token, got.Token)
+			}
+			if got.Authorization == nil || *got.Authorization != *tt.expected.Authorization {
+				t.Errorf("authorization: expected %q, got %v", *tt.expected.Authorization, got.Authorization)
+			}
+			if got.EndSession == nil || *got.EndSession != *tt.expected.EndSession {
+				t.Errorf("endSession: expected %q, got %v", *tt.expected.EndSession, got.EndSession)
 			}
 		})
 	}

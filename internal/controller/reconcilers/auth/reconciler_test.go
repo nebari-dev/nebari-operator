@@ -28,6 +28,7 @@ import (
 	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/auth/providers"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/constants"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/naming"
+	"github.com/nebari-dev/nebari-operator/internal/controller/utils/ptr"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -37,20 +38,37 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-// boolPtr returns a pointer to a bool value
-func boolPtr(b bool) *bool {
-	return &b
+// verifyEndpointOverrides checks that the SecurityPolicy's endpoint overrides match expectations.
+func verifyEndpointOverrides(t *testing.T, sp *egv1alpha1.SecurityPolicy, expected providers.OIDCEndpointOverrides) {
+	t.Helper()
+	p := sp.Spec.OIDC.Provider
+	verifyOptionalEndpoint(t, "token", p.TokenEndpoint, expected.Token)
+	verifyOptionalEndpoint(t, "authorization", p.AuthorizationEndpoint, expected.Authorization)
+	verifyOptionalEndpoint(t, "endSession", p.EndSessionEndpoint, expected.EndSession)
+}
+
+func verifyOptionalEndpoint(t *testing.T, name string, actual, expected *string) {
+	t.Helper()
+	if expected != nil {
+		if actual == nil || *actual != *expected {
+			t.Errorf("expected %s endpoint %q, got %v", name, *expected, actual)
+		}
+	} else if actual != nil {
+		t.Errorf("expected no explicit %s endpoint, got %q", name, *actual)
+	}
 }
 
 // mockProvider implements OIDCProvider for testing
 type mockProvider struct {
-	issuerURL            string
-	clientID             string
-	supportsProvisioning bool
-	provisionError       error
-	deleteError          error
-	issuerError          error
-	provisionCount       int // tracks how many times ProvisionClient was called
+	issuerURL              string
+	endpointOverrides      providers.OIDCEndpointOverrides
+	endpointOverridesError error
+	clientID               string
+	supportsProvisioning   bool
+	provisionError         error
+	deleteError            error
+	issuerError            error
+	provisionCount         int // tracks how many times ProvisionClient was called
 }
 
 func (m *mockProvider) GetIssuerURL(ctx context.Context, nebariApp *appsv1.NebariApp) (string, error) {
@@ -58,6 +76,10 @@ func (m *mockProvider) GetIssuerURL(ctx context.Context, nebariApp *appsv1.Nebar
 		return "", m.issuerError
 	}
 	return m.issuerURL, nil
+}
+
+func (m *mockProvider) GetEndpointOverrides(_ context.Context, _ *appsv1.NebariApp) (providers.OIDCEndpointOverrides, error) {
+	return m.endpointOverrides, m.endpointOverridesError
 }
 
 func (m *mockProvider) GetExternalIssuerURL(ctx context.Context, nebariApp *appsv1.NebariApp) (string, error) {
@@ -526,6 +548,28 @@ func TestBuildSecurityPolicySpec(t *testing.T) {
 			},
 			expectError: true,
 		},
+		{
+			name: "Endpoint overrides error",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app",
+					Namespace: "default",
+				},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "test.example.com",
+					Auth: &appsv1.AuthConfig{
+						Enabled:  true,
+						Provider: constants.ProviderKeycloak,
+					},
+				},
+			},
+			provider: &mockProvider{
+				issuerURL:              "https://keycloak.example.com/realms/test",
+				clientID:               "test-client",
+				endpointOverridesError: errors.New("failed to resolve endpoints"),
+			},
+			expectError: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -648,6 +692,7 @@ func TestReconcileAuth(t *testing.T) {
 		existingSecret         *corev1.Secret
 		existingSecurityPolicy *egv1alpha1.SecurityPolicy
 		provider               *mockProvider
+		expectedOverrides      providers.OIDCEndpointOverrides
 		expectError            bool
 		// validate runs additional assertions after reconciliation (optional)
 		validate func(*testing.T, *mockProvider, *appsv1.NebariApp)
@@ -702,7 +747,7 @@ func TestReconcileAuth(t *testing.T) {
 					Auth: &appsv1.AuthConfig{
 						Enabled:         true,
 						Provider:        constants.ProviderKeycloak,
-						ProvisionClient: boolPtr(false),
+						ProvisionClient: ptr.To(false),
 					},
 				},
 			},
@@ -723,6 +768,81 @@ func TestReconcileAuth(t *testing.T) {
 			expectError: false,
 		},
 		{
+			name: "Auth enabled with explicit endpoint overrides",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app",
+					Namespace: "default",
+				},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "test.example.com",
+					Auth: &appsv1.AuthConfig{
+						Enabled:         true,
+						Provider:        constants.ProviderKeycloak,
+						ProvisionClient: ptr.To(false),
+					},
+				},
+			},
+			existingSecret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app-oidc-client",
+					Namespace: "default",
+				},
+				Data: map[string][]byte{
+					constants.ClientSecretKey: []byte("test-secret"),
+				},
+			},
+			provider: &mockProvider{
+				issuerURL: "https://keycloak.example.com/realms/test",
+				endpointOverrides: providers.OIDCEndpointOverrides{
+					Token:         ptr.To("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/test/protocol/openid-connect/token"),
+					Authorization: ptr.To("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/test/protocol/openid-connect/auth"),
+					EndSession:    ptr.To("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/test/protocol/openid-connect/logout"),
+				},
+				clientID:             "test-client",
+				supportsProvisioning: true,
+			},
+			expectedOverrides: providers.OIDCEndpointOverrides{
+				Token:         ptr.To("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/test/protocol/openid-connect/token"),
+				Authorization: ptr.To("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/test/protocol/openid-connect/auth"),
+				EndSession:    ptr.To("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/test/protocol/openid-connect/logout"),
+			},
+			expectError: false,
+		},
+		{
+			name: "Auth enabled without endpoint overrides (discovery)",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app",
+					Namespace: "default",
+				},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "test.example.com",
+					Auth: &appsv1.AuthConfig{
+						Enabled:         true,
+						Provider:        constants.ProviderKeycloak,
+						ProvisionClient: ptr.To(false),
+					},
+				},
+			},
+			existingSecret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app-oidc-client",
+					Namespace: "default",
+				},
+				Data: map[string][]byte{
+					constants.ClientSecretKey: []byte("test-secret"),
+				},
+			},
+			provider: &mockProvider{
+				issuerURL:            "https://keycloak.example.com/realms/test",
+				clientID:             "test-client",
+				supportsProvisioning: true,
+			},
+			expectedOverrides: providers.OIDCEndpointOverrides{},
+			expectError:       false,
+		},
+		{
 			name: "Auth enabled but secret missing",
 			nebariApp: &appsv1.NebariApp{
 				ObjectMeta: metav1.ObjectMeta{
@@ -734,7 +854,7 @@ func TestReconcileAuth(t *testing.T) {
 					Auth: &appsv1.AuthConfig{
 						Enabled:         true,
 						Provider:        constants.ProviderKeycloak,
-						ProvisionClient: boolPtr(false),
+						ProvisionClient: ptr.To(false),
 					},
 				},
 			},
@@ -758,8 +878,8 @@ func TestReconcileAuth(t *testing.T) {
 					Auth: &appsv1.AuthConfig{
 						Enabled:          true,
 						Provider:         constants.ProviderKeycloak,
-						ProvisionClient:  boolPtr(false),
-						EnforceAtGateway: boolPtr(false),
+						ProvisionClient:  ptr.To(false),
+						EnforceAtGateway: ptr.To(false),
 					},
 				},
 			},
@@ -791,8 +911,8 @@ func TestReconcileAuth(t *testing.T) {
 					Auth: &appsv1.AuthConfig{
 						Enabled:          true,
 						Provider:         constants.ProviderKeycloak,
-						ProvisionClient:  boolPtr(false),
-						EnforceAtGateway: boolPtr(false),
+						ProvisionClient:  ptr.To(false),
+						EnforceAtGateway: ptr.To(false),
 					},
 				},
 			},
@@ -832,7 +952,7 @@ func TestReconcileAuth(t *testing.T) {
 						Auth: &appsv1.AuthConfig{
 							Enabled:         true,
 							Provider:        constants.ProviderKeycloak,
-							ProvisionClient: boolPtr(true),
+							ProvisionClient: ptr.To(true),
 						},
 					},
 				}
@@ -879,7 +999,7 @@ func TestReconcileAuth(t *testing.T) {
 					Auth: &appsv1.AuthConfig{
 						Enabled:         true,
 						Provider:        constants.ProviderKeycloak,
-						ProvisionClient: boolPtr(true),
+						ProvisionClient: ptr.To(true),
 					},
 				},
 				Status: appsv1.NebariAppStatus{
@@ -920,7 +1040,7 @@ func TestReconcileAuth(t *testing.T) {
 					Auth: &appsv1.AuthConfig{
 						Enabled:         true,
 						Provider:        constants.ProviderKeycloak,
-						ProvisionClient: boolPtr(true),
+						ProvisionClient: ptr.To(true),
 					},
 				},
 			},
@@ -953,7 +1073,7 @@ func TestReconcileAuth(t *testing.T) {
 						Auth: &appsv1.AuthConfig{
 							Enabled:         true,
 							Provider:        constants.ProviderKeycloak,
-							ProvisionClient: boolPtr(true),
+							ProvisionClient: ptr.To(true),
 						},
 					},
 				}
@@ -1052,6 +1172,8 @@ func TestReconcileAuth(t *testing.T) {
 				if shouldEnforceAtGateway(tt.nebariApp.Spec.Auth) {
 					if err != nil {
 						t.Errorf("expected SecurityPolicy to be created, got error: %v", err)
+					} else if securityPolicy.Spec.OIDC != nil {
+						verifyEndpointOverrides(t, securityPolicy, tt.expectedOverrides)
 					}
 				} else {
 					if err == nil {
@@ -1104,7 +1226,7 @@ func TestCleanupAuth(t *testing.T) {
 					Auth: &appsv1.AuthConfig{
 						Enabled:         true,
 						Provider:        constants.ProviderKeycloak,
-						ProvisionClient: boolPtr(true),
+						ProvisionClient: ptr.To(true),
 					},
 				},
 			},
@@ -1125,7 +1247,7 @@ func TestCleanupAuth(t *testing.T) {
 					Auth: &appsv1.AuthConfig{
 						Enabled:         true,
 						Provider:        constants.ProviderKeycloak,
-						ProvisionClient: boolPtr(true),
+						ProvisionClient: ptr.To(true),
 					},
 				},
 			},
@@ -1330,7 +1452,7 @@ func TestReconcileAuth_SpecChangeCycle(t *testing.T) {
 			initial: appsv1.AuthConfig{
 				Enabled:         true,
 				Provider:        constants.ProviderKeycloak,
-				ProvisionClient: boolPtr(true),
+				ProvisionClient: ptr.To(true),
 				RedirectURI:     "/oauth2/callback",
 			},
 			mutate: func(a *appsv1.AuthConfig) { a.RedirectURI = "/auth/callback" },
@@ -1340,7 +1462,7 @@ func TestReconcileAuth_SpecChangeCycle(t *testing.T) {
 			initial: appsv1.AuthConfig{
 				Enabled:         true,
 				Provider:        constants.ProviderKeycloak,
-				ProvisionClient: boolPtr(true),
+				ProvisionClient: ptr.To(true),
 				Groups:          []string{"admins"},
 			},
 			mutate: func(a *appsv1.AuthConfig) {
@@ -1352,7 +1474,7 @@ func TestReconcileAuth_SpecChangeCycle(t *testing.T) {
 			initial: appsv1.AuthConfig{
 				Enabled:         true,
 				Provider:        constants.ProviderKeycloak,
-				ProvisionClient: boolPtr(true),
+				ProvisionClient: ptr.To(true),
 				Scopes:          []string{"openid", "profile"},
 			},
 			mutate: func(a *appsv1.AuthConfig) {
@@ -1364,7 +1486,7 @@ func TestReconcileAuth_SpecChangeCycle(t *testing.T) {
 			initial: appsv1.AuthConfig{
 				Enabled:         true,
 				Provider:        constants.ProviderKeycloak,
-				ProvisionClient: boolPtr(true),
+				ProvisionClient: ptr.To(true),
 				KeycloakConfig: &appsv1.KeycloakClientConfig{
 					Groups: []appsv1.KeycloakGroup{{Name: "admins", Members: []string{"alice"}}},
 				},

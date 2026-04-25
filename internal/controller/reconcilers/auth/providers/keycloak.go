@@ -33,6 +33,7 @@ import (
 	"github.com/nebari-dev/nebari-operator/internal/config"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/constants"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/naming"
+	"github.com/nebari-dev/nebari-operator/internal/controller/utils/ptr"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -47,18 +48,33 @@ type KeycloakProvider struct {
 	Config config.KeycloakConfig
 }
 
-// GetIssuerURL returns the internal cluster URL for the Keycloak realm.
-// Envoy uses this to fetch OIDC configuration from within the cluster.
-func (p *KeycloakProvider) GetIssuerURL(ctx context.Context, nebariApp *appsv1.NebariApp) (string, error) {
-	realm := p.Config.Realm
-	// Use internal cluster DNS for Envoy to fetch OIDC config
-	// All components are now configurable via environment variables
+// internalRealmURL returns the base internal cluster URL for the Keycloak realm.
+// This is used by both GetIssuerURL and GetEndpointOverrides to avoid duplication.
+func (p *KeycloakProvider) internalRealmURL() string {
 	return fmt.Sprintf("http://%s.%s.svc.cluster.local:%d%s/realms/%s",
 		p.Config.IssuerServiceName,
 		p.Config.IssuerServiceNamespace,
 		p.Config.IssuerServicePort,
 		p.Config.IssuerContextPath,
-		realm), nil
+		p.Config.Realm)
+}
+
+// GetIssuerURL returns the internal cluster URL for the Keycloak realm.
+// Envoy uses this to fetch OIDC configuration from within the cluster.
+func (p *KeycloakProvider) GetIssuerURL(ctx context.Context, nebariApp *appsv1.NebariApp) (string, error) {
+	return p.internalRealmURL(), nil
+}
+
+// GetEndpointOverrides returns internal cluster URLs for Keycloak's OIDC endpoints.
+// This avoids Envoy using the external HTTPS endpoints from the OIDC discovery
+// document, which may use a certificate not trusted by Envoy (e.g., self-signed).
+func (p *KeycloakProvider) GetEndpointOverrides(_ context.Context, _ *appsv1.NebariApp) (OIDCEndpointOverrides, error) {
+	base := p.internalRealmURL() + "/protocol/openid-connect"
+	return OIDCEndpointOverrides{
+		Token:         ptr.To(base + "/token"),
+		Authorization: ptr.To(base + "/auth"),
+		EndSession:    ptr.To(base + "/logout"),
+	}, nil
 }
 
 // GetExternalIssuerURL returns the publicly routable Keycloak issuer URL.
