@@ -88,11 +88,18 @@ func (p *KeycloakProvider) GetIssuerURL(ctx context.Context, nebariApp *appsv1.N
 //     the in-cluster URL causes the browser to fail DNS resolution and dead-end
 //     the OAuth2 flow.
 //
-// When KEYCLOAK_EXTERNAL_URL is not configured, Authorization and EndSession
-// are left unset; Envoy falls back to the values it discovers from the
-// OIDC discovery document fetched at the (in-cluster) issuer URL, which may or
-// may not be publicly reachable depending on Keycloak's frontendUrl. Setting
-// KEYCLOAK_EXTERNAL_URL is therefore strongly recommended in production.
+// Fallback when KEYCLOAK_EXTERNAL_URL is unset: Authorization and EndSession
+// are returned as nil overrides. Envoy Gateway then triggers OIDC discovery
+// against the (in-cluster) issuer URL and uses whatever Authorization /
+// EndSession endpoints Keycloak advertises in the discovery document. That
+// path only produces publicly reachable URLs if Keycloak itself is configured
+// with a public-facing `frontendUrl` / `KC_HOSTNAME_URL` so its discovery
+// document advertises external URLs. In every other case the discovered
+// values will also be in-cluster and the browser flow will still dead-end.
+// Operators should set KEYCLOAK_EXTERNAL_URL on the nebari-operator
+// deployment OR configure Keycloak's frontendUrl explicitly. A startup
+// warning is logged when neither is configured (see KeycloakProvider's
+// constructor / config validation).
 func (p *KeycloakProvider) GetEndpointOverrides(_ context.Context, _ *appsv1.NebariApp) (OIDCEndpointOverrides, error) {
 	internalBase := p.internalRealmURL() + "/protocol/openid-connect"
 	overrides := OIDCEndpointOverrides{
