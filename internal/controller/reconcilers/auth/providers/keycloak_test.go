@@ -125,48 +125,88 @@ func TestKeycloakProvider_GetEndpointOverrides(t *testing.T) {
 		expected OIDCEndpointOverrides
 	}{
 		{
-			name: "Default configuration (Keycloak 26+ root context path)",
+			name: "Default configuration with ExternalURL (Keycloak 26+ root context path)",
 			kcConfig: config.KeycloakConfig{
 				Realm:                  "nebari",
 				IssuerServiceName:      "keycloak-keycloakx-http",
 				IssuerServiceNamespace: "keycloak",
 				IssuerServicePort:      8080,
 				IssuerContextPath:      "",
+				ExternalURL:            "https://keycloak.example.com",
 			},
 			expected: OIDCEndpointOverrides{
-				Token:         ptr.To("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/nebari/protocol/openid-connect/token"),
-				Authorization: ptr.To("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/nebari/protocol/openid-connect/auth"),
-				EndSession:    ptr.To("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/nebari/protocol/openid-connect/logout"),
+				// Token endpoint: server-to-server, Envoy proxy hits this in
+				// the back-channel. Stays on the in-cluster URL for latency.
+				Token: ptr.To("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/nebari/protocol/openid-connect/token"),
+				// Authorization + EndSession: browser front-channel. Must be
+				// the publicly routable URL, otherwise the browser cannot
+				// reach Keycloak.
+				Authorization: ptr.To("https://keycloak.example.com/realms/nebari/protocol/openid-connect/auth"),
+				EndSession:    ptr.To("https://keycloak.example.com/realms/nebari/protocol/openid-connect/logout"),
 			},
 		},
 		{
-			name: "Legacy /auth context path",
+			name: "Legacy /auth context path with ExternalURL",
 			kcConfig: config.KeycloakConfig{
 				Realm:                  "nebari",
 				IssuerServiceName:      "keycloak-keycloakx-http",
 				IssuerServiceNamespace: "keycloak",
 				IssuerServicePort:      8080,
 				IssuerContextPath:      "/auth",
+				ExternalURL:            "https://keycloak.example.com/auth",
 			},
 			expected: OIDCEndpointOverrides{
 				Token:         ptr.To("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/auth/realms/nebari/protocol/openid-connect/token"),
-				Authorization: ptr.To("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/auth/realms/nebari/protocol/openid-connect/auth"),
-				EndSession:    ptr.To("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/auth/realms/nebari/protocol/openid-connect/logout"),
+				Authorization: ptr.To("https://keycloak.example.com/auth/realms/nebari/protocol/openid-connect/auth"),
+				EndSession:    ptr.To("https://keycloak.example.com/auth/realms/nebari/protocol/openid-connect/logout"),
 			},
 		},
 		{
-			name: "Custom deployment configuration",
+			name: "Custom deployment configuration with ExternalURL",
 			kcConfig: config.KeycloakConfig{
 				Realm:                  "custom-realm",
 				IssuerServiceName:      "custom-keycloak",
 				IssuerServiceNamespace: "auth",
 				IssuerServicePort:      9090,
 				IssuerContextPath:      "",
+				ExternalURL:            "https://auth.custom.example.com",
 			},
 			expected: OIDCEndpointOverrides{
 				Token:         ptr.To("http://custom-keycloak.auth.svc.cluster.local:9090/realms/custom-realm/protocol/openid-connect/token"),
-				Authorization: ptr.To("http://custom-keycloak.auth.svc.cluster.local:9090/realms/custom-realm/protocol/openid-connect/auth"),
-				EndSession:    ptr.To("http://custom-keycloak.auth.svc.cluster.local:9090/realms/custom-realm/protocol/openid-connect/logout"),
+				Authorization: ptr.To("https://auth.custom.example.com/realms/custom-realm/protocol/openid-connect/auth"),
+				EndSession:    ptr.To("https://auth.custom.example.com/realms/custom-realm/protocol/openid-connect/logout"),
+			},
+		},
+		{
+			name: "ExternalURL with trailing slash is normalized",
+			kcConfig: config.KeycloakConfig{
+				Realm:                  "nebari",
+				IssuerServiceName:      "keycloak-keycloakx-http",
+				IssuerServiceNamespace: "keycloak",
+				IssuerServicePort:      8080,
+				IssuerContextPath:      "",
+				ExternalURL:            "https://keycloak.example.com/",
+			},
+			expected: OIDCEndpointOverrides{
+				Token:         ptr.To("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/nebari/protocol/openid-connect/token"),
+				Authorization: ptr.To("https://keycloak.example.com/realms/nebari/protocol/openid-connect/auth"),
+				EndSession:    ptr.To("https://keycloak.example.com/realms/nebari/protocol/openid-connect/logout"),
+			},
+		},
+		{
+			name: "No ExternalURL: only Token override is set; Envoy falls back to discovery for Authorization and EndSession",
+			kcConfig: config.KeycloakConfig{
+				Realm:                  "nebari",
+				IssuerServiceName:      "keycloak-keycloakx-http",
+				IssuerServiceNamespace: "keycloak",
+				IssuerServicePort:      8080,
+				IssuerContextPath:      "",
+				ExternalURL:            "",
+			},
+			expected: OIDCEndpointOverrides{
+				Token:         ptr.To("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/nebari/protocol/openid-connect/token"),
+				Authorization: nil,
+				EndSession:    nil,
 			},
 		},
 	}
@@ -181,11 +221,21 @@ func TestKeycloakProvider_GetEndpointOverrides(t *testing.T) {
 			if got.Token == nil || *got.Token != *tt.expected.Token {
 				t.Errorf("token: expected %q, got %v", *tt.expected.Token, got.Token)
 			}
-			if got.Authorization == nil || *got.Authorization != *tt.expected.Authorization {
-				t.Errorf("authorization: expected %q, got %v", *tt.expected.Authorization, got.Authorization)
+			switch {
+			case tt.expected.Authorization == nil && got.Authorization != nil:
+				t.Errorf("authorization: expected nil, got %q", *got.Authorization)
+			case tt.expected.Authorization != nil && got.Authorization == nil:
+				t.Errorf("authorization: expected %q, got nil", *tt.expected.Authorization)
+			case tt.expected.Authorization != nil && got.Authorization != nil && *got.Authorization != *tt.expected.Authorization:
+				t.Errorf("authorization: expected %q, got %q", *tt.expected.Authorization, *got.Authorization)
 			}
-			if got.EndSession == nil || *got.EndSession != *tt.expected.EndSession {
-				t.Errorf("endSession: expected %q, got %v", *tt.expected.EndSession, got.EndSession)
+			switch {
+			case tt.expected.EndSession == nil && got.EndSession != nil:
+				t.Errorf("endSession: expected nil, got %q", *got.EndSession)
+			case tt.expected.EndSession != nil && got.EndSession == nil:
+				t.Errorf("endSession: expected %q, got nil", *tt.expected.EndSession)
+			case tt.expected.EndSession != nil && got.EndSession != nil && *got.EndSession != *tt.expected.EndSession:
+				t.Errorf("endSession: expected %q, got %q", *tt.expected.EndSession, *got.EndSession)
 			}
 		})
 	}
