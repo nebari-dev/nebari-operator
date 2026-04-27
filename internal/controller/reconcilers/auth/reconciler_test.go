@@ -617,13 +617,13 @@ func TestBuildSecurityPolicySpec_ForwardAccessToken(t *testing.T) {
 	}{
 		{
 			name:             "true sets OIDC field to true",
-			forwardAccessTok: ptrTo(true),
-			want:             ptrTo(true),
+			forwardAccessTok: ptr.To(true),
+			want:             ptr.To(true),
 		},
 		{
 			name:             "false sets OIDC field to false (explicit opt-out)",
-			forwardAccessTok: ptrTo(false),
-			want:             ptrTo(false),
+			forwardAccessTok: ptr.To(false),
+			want:             ptr.To(false),
 		},
 		{
 			name:             "unset leaves OIDC field nil so Envoy default applies",

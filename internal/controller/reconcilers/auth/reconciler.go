@@ -494,7 +494,7 @@ func (r *AuthReconciler) buildSecurityPolicySpec(ctx context.Context, nebariApp 
 	// gateway only stores the token in an encrypted session cookie that
 	// backends cannot decode.
 	if nebariApp.Spec.Auth.ForwardAccessToken != nil {
-		oidcConfig.ForwardAccessToken = ptrTo(*nebariApp.Spec.Auth.ForwardAccessToken)
+		oidcConfig.ForwardAccessToken = ptr.To(*nebariApp.Spec.Auth.ForwardAccessToken)
 		if *nebariApp.Spec.Auth.ForwardAccessToken {
 			log.FromContext(ctx).V(1).Info("forwarding access token to upstream as Authorization: Bearer")
 		}
