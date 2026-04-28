@@ -59,30 +59,69 @@ func (p *KeycloakProvider) internalRealmURL() string {
 		p.Config.Realm)
 }
 
+// externalRealmURL returns the publicly routable base URL for the Keycloak realm,
+// or empty string when KEYCLOAK_EXTERNAL_URL is not configured.
+func (p *KeycloakProvider) externalRealmURL() string {
+	if p.Config.ExternalURL == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s/realms/%s",
+		strings.TrimRight(p.Config.ExternalURL, "/"),
+		p.Config.Realm)
+}
+
 // GetIssuerURL returns the internal cluster URL for the Keycloak realm.
 // Envoy uses this to fetch OIDC configuration from within the cluster.
 func (p *KeycloakProvider) GetIssuerURL(ctx context.Context, nebariApp *appsv1.NebariApp) (string, error) {
 	return p.internalRealmURL(), nil
 }
 
-// GetEndpointOverrides returns internal cluster URLs for Keycloak's OIDC endpoints.
-// This avoids Envoy using the external HTTPS endpoints from the OIDC discovery
-// document, which may use a certificate not trusted by Envoy (e.g., self-signed).
+// GetEndpointOverrides returns OIDC endpoint URLs split by who actually hits
+// each endpoint:
+//
+//   - Token: server-side, called by the Envoy proxy in the OAuth2 back-channel.
+//     Uses the in-cluster Keycloak service URL: lower latency than the public
+//     URL, and avoids requiring Envoy to trust the public TLS chain (which can
+//     be a self-signed or staging issuer).
+//   - Authorization, EndSession: browser-facing. The user's browser is redirected
+//     to these URLs, so they MUST be the publicly routable Keycloak URL. Using
+//     the in-cluster URL causes the browser to fail DNS resolution and dead-end
+//     the OAuth2 flow.
+//
+// Fallback when KEYCLOAK_EXTERNAL_URL is unset: Authorization and EndSession
+// are returned as nil overrides. Envoy Gateway then triggers OIDC discovery
+// against the (in-cluster) issuer URL and uses whatever Authorization /
+// EndSession endpoints Keycloak advertises in the discovery document. That
+// path only produces publicly reachable URLs if Keycloak itself is configured
+// with a public-facing `frontendUrl` / `KC_HOSTNAME_URL` so its discovery
+// document advertises external URLs. In every other case the discovered
+// values will also be in-cluster and the browser flow will still dead-end.
+// Operators should set KEYCLOAK_EXTERNAL_URL on the nebari-operator
+// deployment OR configure Keycloak's frontendUrl explicitly. A startup
+// warning is logged when neither is configured (see KeycloakProvider's
+// constructor / config validation).
 func (p *KeycloakProvider) GetEndpointOverrides(_ context.Context, _ *appsv1.NebariApp) (OIDCEndpointOverrides, error) {
-	base := p.internalRealmURL() + "/protocol/openid-connect"
-	return OIDCEndpointOverrides{
-		Token:         ptr.To(base + "/token"),
-		Authorization: ptr.To(base + "/auth"),
-		EndSession:    ptr.To(base + "/logout"),
-	}, nil
+	internalBase := p.internalRealmURL() + "/protocol/openid-connect"
+	overrides := OIDCEndpointOverrides{
+		Token: ptr.To(internalBase + "/token"),
+	}
+
+	if externalBase := p.externalRealmURL(); externalBase != "" {
+		externalProtocol := externalBase + "/protocol/openid-connect"
+		overrides.Authorization = ptr.To(externalProtocol + "/auth")
+		overrides.EndSession = ptr.To(externalProtocol + "/logout")
+	}
+
+	return overrides, nil
 }
 
 // GetExternalIssuerURL returns the publicly routable Keycloak issuer URL.
 func (p *KeycloakProvider) GetExternalIssuerURL(ctx context.Context, nebariApp *appsv1.NebariApp) (string, error) {
-	if p.Config.ExternalURL == "" {
+	external := p.externalRealmURL()
+	if external == "" {
 		return "", fmt.Errorf("KEYCLOAK_EXTERNAL_URL not configured; required for external issuer URL")
 	}
-	return fmt.Sprintf("%s/realms/%s", strings.TrimRight(p.Config.ExternalURL, "/"), p.Config.Realm), nil
+	return external, nil
 }
 
 // GetClientID returns the OIDC client ID for the NebariApp.

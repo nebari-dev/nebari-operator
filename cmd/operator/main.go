@@ -215,6 +215,23 @@ func main() {
 			Config: authConfig.Keycloak,
 		}
 		oidcProviders[constants.ProviderKeycloak] = keycloakProvider
+
+		// KEYCLOAK_EXTERNAL_URL is the source for browser-facing OIDC endpoints
+		// (Authorization, EndSession) on generated SecurityPolicies. When unset,
+		// Envoy Gateway falls back to OIDC discovery against the in-cluster
+		// issuer URL, which only produces browser-reachable URLs if Keycloak's
+		// own frontendUrl is configured. Warn loudly so operators know to
+		// configure one of the two.
+		if authConfig.Keycloak.ExternalURL == "" {
+			setupLog.Info("WARNING: KEYCLOAK_EXTERNAL_URL is not set. " +
+				"NebariApp SecurityPolicies will leave browser-facing OIDC endpoints " +
+				"(authorizationEndpoint, endSessionEndpoint) unset, and Envoy Gateway " +
+				"will fall back to OIDC discovery against the in-cluster issuer. " +
+				"Browser OAuth2 redirects will only work if Keycloak's frontendUrl " +
+				"is configured to a publicly routable URL. Set KEYCLOAK_EXTERNAL_URL " +
+				"on this deployment OR configure Keycloak frontendUrl explicitly.")
+		}
+
 		setupLog.Info("Keycloak OIDC provider initialized successfully")
 	}
 
