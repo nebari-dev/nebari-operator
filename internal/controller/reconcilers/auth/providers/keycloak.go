@@ -117,10 +117,11 @@ func (p *KeycloakProvider) GetEndpointOverrides(_ context.Context, _ *appsv1.Neb
 
 // GetExternalIssuerURL returns the publicly routable Keycloak issuer URL.
 func (p *KeycloakProvider) GetExternalIssuerURL(ctx context.Context, nebariApp *appsv1.NebariApp) (string, error) {
-	if p.Config.ExternalURL == "" {
+	external := p.externalRealmURL()
+	if external == "" {
 		return "", fmt.Errorf("KEYCLOAK_EXTERNAL_URL not configured; required for external issuer URL")
 	}
-	return fmt.Sprintf("%s/realms/%s", strings.TrimRight(p.Config.ExternalURL, "/"), p.Config.Realm), nil
+	return external, nil
 }
 
 // GetClientID returns the OIDC client ID for the NebariApp.
