@@ -231,21 +231,22 @@ func main() {
 		Providers: oidcProviders,
 	}
 
-	// Load TLS configuration
+	// Load TLS configuration and always wire up the TLS reconciler. The reconciler
+	// itself branches on spec.routing.tls: NebariApps with routing.tls.secretName
+	// set use a pre-provisioned TLS secret and do not require a ClusterIssuer,
+	// while the cert-manager path reports a clear "ClusterIssuerNotConfigured"
+	// condition when ClusterIssuerName is empty.
 	tlsConfig := config.LoadTLSConfig()
-
-	// Initialize TLS reconciler if ClusterIssuer is configured
-	var tlsReconciler *tlsreconciler.TLSReconciler
+	tlsReconciler := &tlsreconciler.TLSReconciler{
+		Client:            mgr.GetClient(),
+		Scheme:            mgr.GetScheme(),
+		Recorder:          mgr.GetEventRecorderFor("nebariapp-tls"),
+		ClusterIssuerName: tlsConfig.ClusterIssuerName,
+	}
 	if tlsConfig.ClusterIssuerName != "" {
-		tlsReconciler = &tlsreconciler.TLSReconciler{
-			Client:            mgr.GetClient(),
-			Scheme:            mgr.GetScheme(),
-			Recorder:          mgr.GetEventRecorderFor("nebariapp-tls"),
-			ClusterIssuerName: tlsConfig.ClusterIssuerName,
-		}
 		setupLog.Info("TLS reconciler initialized", "clusterIssuer", tlsConfig.ClusterIssuerName)
 	} else {
-		setupLog.Info("TLS reconciler disabled - TLS_CLUSTER_ISSUER_NAME not set")
+		setupLog.Info("TLS reconciler initialized without a ClusterIssuer; NebariApps must set routing.tls.secretName or routing.tls.enabled=false")
 	}
 
 	// Initialize core and routing reconcilers
