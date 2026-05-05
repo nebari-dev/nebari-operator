@@ -64,7 +64,13 @@ func (r *RoutingReconciler) ReconcileRouting(ctx context.Context, nebariApp *app
 	}
 
 	// Generate desired HTTPRoute
-	desiredRoute := r.buildHTTPRoute(nebariApp, gatewayName, tlsListenerName)
+	desiredRoute, err := r.buildHTTPRoute(nebariApp, gatewayName, tlsListenerName)
+	if err != nil {
+		logger.Error(err, "Failed to build HTTPRoute")
+		conditions.SetCondition(nebariApp, appsv1.ConditionTypeRoutingReady, metav1.ConditionFalse,
+			"BuildFailed", fmt.Sprintf("Failed to build HTTPRoute: %v", err))
+		return err
+	}
 
 	// Check if HTTPRoute already exists
 	existingRoute := &gatewayv1.HTTPRoute{}
@@ -73,7 +79,7 @@ func (r *RoutingReconciler) ReconcileRouting(ctx context.Context, nebariApp *app
 		Namespace: desiredRoute.Namespace,
 	}
 
-	err := r.Client.Get(ctx, routeKey, existingRoute)
+	err = r.Client.Get(ctx, routeKey, existingRoute)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			// Create new HTTPRoute
@@ -153,7 +159,7 @@ func (r *RoutingReconciler) CleanupHTTPRoute(ctx context.Context, nebariApp *app
 // buildHTTPRoute generates an HTTPRoute resource from NebariApp spec.
 // tlsListenerName overrides the default "https" section name when TLS is enabled
 // and a per-app TLS listener has been created by the TLS reconciler.
-func (r *RoutingReconciler) buildHTTPRoute(nebariApp *appsv1.NebariApp, gatewayName string, tlsListenerName string) *gatewayv1.HTTPRoute {
+func (r *RoutingReconciler) buildHTTPRoute(nebariApp *appsv1.NebariApp, gatewayName string, tlsListenerName string) (*gatewayv1.HTTPRoute, error) {
 	routeName := naming.HTTPRouteName(nebariApp)
 	namespace := gatewayv1.Namespace(constants.GatewayNamespace)
 
@@ -208,9 +214,11 @@ func (r *RoutingReconciler) buildHTTPRoute(nebariApp *appsv1.NebariApp, gatewayN
 	}
 
 	// Set owner reference for garbage collection
-	_ = controllerutil.SetControllerReference(nebariApp, route, r.Scheme)
+	if err := controllerutil.SetControllerReference(nebariApp, route, r.Scheme); err != nil {
+		return nil, fmt.Errorf("failed to set controller reference on HTTPRoute: %w", err)
+	}
 
-	return route
+	return route, nil
 }
 
 // buildHTTPRouteRules generates HTTPRoute rules based on NebariApp routes
@@ -302,7 +310,13 @@ func (r *RoutingReconciler) ReconcilePublicRoute(ctx context.Context, nebariApp 
 	logger.Info("Reconciling public route", "gateway", gatewayName, "hostname", nebariApp.Spec.Hostname,
 		"publicRoutes", nebariApp.Spec.Routing.PublicRoutes)
 
-	desiredRoute := r.buildPublicHTTPRoute(nebariApp, gatewayName, tlsListenerName)
+	desiredRoute, err := r.buildPublicHTTPRoute(nebariApp, gatewayName, tlsListenerName)
+	if err != nil {
+		logger.Error(err, "Failed to build public HTTPRoute")
+		conditions.SetCondition(nebariApp, appsv1.ConditionTypeRoutingReady, metav1.ConditionFalse,
+			"BuildFailed", fmt.Sprintf("Failed to build public HTTPRoute: %v", err))
+		return err
+	}
 
 	existingRoute := &gatewayv1.HTTPRoute{}
 	routeKey := client.ObjectKey{
@@ -310,7 +324,7 @@ func (r *RoutingReconciler) ReconcilePublicRoute(ctx context.Context, nebariApp 
 		Namespace: desiredRoute.Namespace,
 	}
 
-	err := r.Client.Get(ctx, routeKey, existingRoute)
+	err = r.Client.Get(ctx, routeKey, existingRoute)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			if err := r.Client.Create(ctx, desiredRoute); err != nil {
@@ -375,7 +389,7 @@ func (r *RoutingReconciler) CleanupPublicHTTPRoute(ctx context.Context, nebariAp
 
 // buildPublicHTTPRoute generates an HTTPRoute for public routes that bypass OIDC authentication.
 // This route is separate from the main route so the SecurityPolicy only targets the main route.
-func (r *RoutingReconciler) buildPublicHTTPRoute(nebariApp *appsv1.NebariApp, gatewayName string, tlsListenerName string) *gatewayv1.HTTPRoute {
+func (r *RoutingReconciler) buildPublicHTTPRoute(nebariApp *appsv1.NebariApp, gatewayName string, tlsListenerName string) (*gatewayv1.HTTPRoute, error) {
 	routeName := naming.PublicHTTPRouteName(nebariApp)
 	namespace := gatewayv1.Namespace(constants.GatewayNamespace)
 
@@ -441,9 +455,11 @@ func (r *RoutingReconciler) buildPublicHTTPRoute(nebariApp *appsv1.NebariApp, ga
 		},
 	}
 
-	_ = controllerutil.SetControllerReference(nebariApp, route, r.Scheme)
+	if err := controllerutil.SetControllerReference(nebariApp, route, r.Scheme); err != nil {
+		return nil, fmt.Errorf("failed to set controller reference on public HTTPRoute: %w", err)
+	}
 
-	return route
+	return route, nil
 }
 
 // validateGateway checks if the specified gateway exists

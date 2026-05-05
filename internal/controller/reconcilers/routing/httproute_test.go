@@ -202,7 +202,10 @@ func TestBuildHTTPRoute(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			route := reconciler.buildHTTPRoute(tt.nebariApp, tt.gatewayName, "")
+			route, err := reconciler.buildHTTPRoute(tt.nebariApp, tt.gatewayName, "")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
 
 			// Check basic metadata
 			if route.Name == "" {
@@ -253,6 +256,61 @@ func TestBuildHTTPRoute(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestBuildHTTPRoute_SetControllerReferenceError(t *testing.T) {
+	// An empty scheme has no types registered, so SetControllerReference will
+	// fail because it cannot look up the GVK for NebariApp.
+	emptyScheme := runtime.NewScheme()
+
+	reconciler := &RoutingReconciler{
+		Scheme:   emptyScheme,
+		Recorder: record.NewFakeRecorder(10),
+	}
+
+	nebariApp := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-app", Namespace: "default"},
+		Spec: appsv1.NebariAppSpec{
+			Hostname: "test.nebari.local",
+			Service:  appsv1.ServiceReference{Name: "test-service", Port: 8080},
+		},
+	}
+
+	route, err := reconciler.buildHTTPRoute(nebariApp, "nebari-gateway", "")
+	if err == nil {
+		t.Error("expected error when scheme has no types registered, got nil")
+	}
+	if route != nil {
+		t.Error("expected nil route on error, got non-nil")
+	}
+}
+
+func TestBuildPublicHTTPRoute_SetControllerReferenceError(t *testing.T) {
+	emptyScheme := runtime.NewScheme()
+
+	reconciler := &RoutingReconciler{
+		Scheme:   emptyScheme,
+		Recorder: record.NewFakeRecorder(10),
+	}
+
+	nebariApp := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-app", Namespace: "default"},
+		Spec: appsv1.NebariAppSpec{
+			Hostname: "test.nebari.local",
+			Service:  appsv1.ServiceReference{Name: "test-service", Port: 8080},
+			Routing: &appsv1.RoutingConfig{
+				PublicRoutes: []appsv1.RouteMatch{{PathPrefix: "/health"}},
+			},
+		},
+	}
+
+	route, err := reconciler.buildPublicHTTPRoute(nebariApp, "nebari-gateway", "")
+	if err == nil {
+		t.Error("expected error when scheme has no types registered, got nil")
+	}
+	if route != nil {
+		t.Error("expected nil route on error, got non-nil")
 	}
 }
 
@@ -453,6 +511,60 @@ func TestReconcileRouting(t *testing.T) {
 	}
 }
 
+func TestReconcileRouting_BuildError(t *testing.T) {
+	// Use a properly initialised scheme for the fake client so validateGateway
+	// passes, but give the reconciler an empty scheme so SetControllerReference
+	// fails — confirming ReconcileRouting surfaces the error and sets the
+	// RoutingReady condition to False.
+	clientScheme := runtime.NewScheme()
+	_ = appsv1.AddToScheme(clientScheme)
+	_ = gatewayv1.Install(clientScheme)
+	_ = corev1.AddToScheme(clientScheme)
+
+	nebariApp := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-app", Namespace: "default"},
+		Spec: appsv1.NebariAppSpec{
+			Hostname: "test.nebari.local",
+			Service:  appsv1.ServiceReference{Name: "test-service", Port: 8080},
+		},
+	}
+
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      constants.PublicGatewayName,
+			Namespace: constants.GatewayNamespace,
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(clientScheme).
+		WithObjects(nebariApp, gateway).
+		Build()
+
+	reconciler := &RoutingReconciler{
+		Client:   fakeClient,
+		Scheme:   runtime.NewScheme(), // empty — causes SetControllerReference to fail
+		Recorder: record.NewFakeRecorder(10),
+	}
+
+	err := reconciler.ReconcileRouting(context.Background(), nebariApp, "")
+	if err == nil {
+		t.Fatal("expected error from ReconcileRouting when buildHTTPRoute fails, got nil")
+	}
+
+	// Confirm the condition is set so the failure is observable on the resource
+	var foundFalse bool
+	for _, cond := range nebariApp.Status.Conditions {
+		if cond.Type == appsv1.ConditionTypeRoutingReady && cond.Status == metav1.ConditionFalse {
+			foundFalse = true
+			break
+		}
+	}
+	if !foundFalse {
+		t.Error("expected RoutingReady condition to be set to False on build error")
+	}
+}
+
 func TestCleanupHTTPRoute(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = appsv1.AddToScheme(scheme)
@@ -600,7 +712,10 @@ func TestBuildPublicHTTPRoute(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			route := reconciler.buildPublicHTTPRoute(tt.nebariApp, tt.gatewayName, "")
+			route, err := reconciler.buildPublicHTTPRoute(tt.nebariApp, tt.gatewayName, "")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
 
 			if route.Name != tt.expectedName {
 				t.Errorf("expected name=%s, got name=%s", tt.expectedName, route.Name)
@@ -877,7 +992,10 @@ func TestBuildHTTPRouteWithTLSListener(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			reconciler := &RoutingReconciler{Scheme: scheme}
-			route := reconciler.buildHTTPRoute(tt.nebariApp, constants.PublicGatewayName, tt.tlsListenerName)
+			route, err := reconciler.buildHTTPRoute(tt.nebariApp, constants.PublicGatewayName, tt.tlsListenerName)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
 			if len(route.Spec.ParentRefs) == 0 {
 				t.Fatal("expected at least one ParentRef")
 			}
@@ -959,7 +1077,10 @@ func TestBuildHTTPRouteAnnotations(t *testing.T) {
 				},
 			}
 
-			route := reconciler.buildHTTPRoute(nebariApp, constants.PublicGatewayName, "")
+			route, err := reconciler.buildHTTPRoute(nebariApp, constants.PublicGatewayName, "")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
 
 			for k, want := range tt.expectedAnnotations {
 				got, ok := route.Annotations[k]
