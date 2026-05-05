@@ -246,7 +246,8 @@ func main() {
 	if tlsConfig.ClusterIssuerName != "" {
 		setupLog.Info("TLS reconciler initialized", "clusterIssuer", tlsConfig.ClusterIssuerName)
 	} else {
-		setupLog.Info("TLS reconciler initialized without a ClusterIssuer; NebariApps must set routing.tls.secretName or routing.tls.enabled=false")
+		setupLog.Info("TLS reconciler initialized without a ClusterIssuer; " +
+			"NebariApps must set routing.tls.secretName or routing.tls.enabled=false")
 	}
 
 	// Initialize core and routing reconcilers
