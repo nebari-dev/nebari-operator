@@ -149,6 +149,7 @@ The operator manages these conditions on each `NebariApp`:
 |-----------|-------------|--------|
 | `Ready` | Overall health - all reconcilers succeeded | All reconcilers |
 | `RoutingReady` | HTTPRoute created and Gateway is routing traffic | Routing reconciler |
+| `TLSReady` | TLS certificate ready and listener attached (when TLS is enabled) | TLS reconciler |
 | `AuthReady` | Authentication configured (if enabled) | Authentication reconciler |
 
 ### Condition Reasons
@@ -159,6 +160,8 @@ Common reasons you'll see in conditions:
 - `ValidationSuccess` - Prerequisites validated
 - `ReconcileSuccess` - Reconciliation completed
 - `Available` - Resource is functioning
+- `TLSConfigured` - cert-manager Certificate is ready and the per-app HTTPS listener is attached
+- `UserProvidedSecretReady` - The TLS secret named in `routing.tls.secretName` exists and is type `kubernetes.io/tls`
 
 **Failures:**
 - `NamespaceNotOptedIn` - Namespace missing required label
@@ -167,6 +170,13 @@ Common reasons you'll see in conditions:
 - `GatewayListenerConflict` - Multiple apps share hostname with per-app TLS (seen in TLSReady condition)
 - `SecretNotFound` - OIDC client secret missing
 - `Failed` - General reconciliation failure
+
+**TLSReady-specific:**
+- `CertificateNotReady` - cert-manager Certificate exists but is not yet `Ready=True` (cert is still being issued)
+- `ClusterIssuerNotConfigured` - `TLS_CLUSTER_ISSUER_NAME` is unset and the app does not set `routing.tls.secretName`; the routing reconciler falls back to the shared HTTPS listener
+- `UserProvidedSecretNotFound` - `routing.tls.secretName` is set but the secret does not exist in `envoy-gateway-system`. The listener is still attached so Envoy will pick the secret up as soon as it is created.
+- `UserProvidedSecretInvalidType` - The named secret exists but is not type `kubernetes.io/tls`
+- `UserProvidedSecretCheckFailed` - The operator could not determine the secret's state (transient API error, RBAC failure). Distinct from `UserProvidedSecretNotFound`.
 
 ## Event Recording
 
@@ -182,9 +192,19 @@ Reconcilers emit Kubernetes events to provide visibility into operations:
 - `HTTPRouteCreated` (Normal) - HTTPRoute created
 - `HTTPRouteUpdated` (Normal) - HTTPRoute updated
 - `HTTPRouteDeleted` (Normal) - HTTPRoute deleted
-- `TLSConfigured` (Normal) - TLS configured successfully
 - `GatewayNotFound` (Warning) - Gateway not available
+
+**TLS Events:**
+- `CertificateCreated` (Normal) - cert-manager Certificate created for this app
+- `CertificateUpdated` (Normal) - cert-manager Certificate spec updated
+- `CertificateDeleted` (Normal) - cert-manager Certificate removed (cleanup, or migration to user-provided secret)
+- `GatewayListenerAdded` (Normal) - Per-app HTTPS listener attached to the shared Gateway
+- `GatewayListenerRemoved` (Normal) - Per-app HTTPS listener detached during cleanup
 - `GatewayListenerConflict` (Warning) - Multiple NebariApps share hostname with per-app TLS
+- `UserProvidedSecretInUse` (Normal) - `routing.tls.secretName` references a valid TLS secret that has been attached to the listener
+- `UserProvidedSecretNotFound` (Warning) - `routing.tls.secretName` references a secret that does not exist
+- `UserProvidedSecretInvalid` (Warning) - The referenced secret exists but is not type `kubernetes.io/tls`
+- `UserProvidedSecretCheckFailed` (Warning) - The operator could not check the secret's state (transient error)
 
 **Authentication Events:**
 - `ClientProvisioned` (Normal) - OIDC client created
