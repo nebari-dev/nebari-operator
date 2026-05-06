@@ -273,7 +273,7 @@ jobs:
   build-multiarch:
     name: Build & Push (${{ matrix.platform }})
     runs-on: ${{ matrix.runner }}
-    needs: [lint] # TEMP: skip waiting for tests to speed up image build
+    # TEMP: skip all gating to speed up image build (revert before merge)
     strategy:
       matrix:
         include:
