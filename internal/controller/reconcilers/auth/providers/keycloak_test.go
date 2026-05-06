@@ -37,6 +37,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
+// Path segment constants used in handler URL parsing in test mocks below.
+const (
+	clientsPathSegment         = "clients"
+	protocolMappersPathSegment = "protocol-mappers"
+)
+
 func TestKeycloakProvider_GetIssuerURL(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -1614,7 +1620,7 @@ func TestKeycloakProvider_ConfigureTokenExchange_SetsStandardTokenExchangeAttrib
 			// for a trailing /clients/{id} path with no further segments.
 			parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/"), "/")
 			// Expect ["admin","realms","test","clients","<id>"]
-			if len(parts) == 5 && parts[3] == "clients" {
+			if len(parts) == 5 && parts[3] == clientsPathSegment {
 				body, _ := io.ReadAll(r.Body)
 				updates[parts[4]] = body
 				w.WriteHeader(http.StatusNoContent)
@@ -1706,14 +1712,14 @@ func TestKeycloakProvider_ConfigureTokenExchange_AddsAudienceMapper(t *testing.T
 			return
 		case r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/clients/"):
 			parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/"), "/")
-			if len(parts) == 5 && parts[3] == "clients" {
+			if len(parts) == 5 && parts[3] == clientsPathSegment {
 				w.WriteHeader(http.StatusNoContent)
 				return
 			}
 		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/protocol-mappers/models"):
 			// Path: /admin/realms/test/clients/<uuid>/protocol-mappers/models
 			parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/"), "/")
-			if len(parts) >= 7 && parts[3] == "clients" && parts[5] == "protocol-mappers" {
+			if len(parts) >= 7 && parts[3] == clientsPathSegment && parts[5] == protocolMappersPathSegment {
 				body, _ := io.ReadAll(r.Body)
 				mapperPosts[parts[4]] = body
 				w.WriteHeader(http.StatusCreated)
