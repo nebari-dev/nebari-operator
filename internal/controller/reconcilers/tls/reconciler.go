@@ -197,6 +197,8 @@ func (r *TLSReconciler) reconcileUserProvidedTLS(ctx context.Context, nebariApp 
 		r.Recorder.Event(nebariApp, corev1.EventTypeWarning, appsv1.EventReasonUserProvidedSecretNotFound, msg)
 	case appsv1.ReasonUserProvidedSecretInvalidType:
 		r.Recorder.Event(nebariApp, corev1.EventTypeWarning, appsv1.EventReasonUserProvidedSecretInvalid, msg)
+	case appsv1.ReasonUserProvidedSecretCheckFailed:
+		r.Recorder.Event(nebariApp, corev1.EventTypeWarning, appsv1.EventReasonUserProvidedSecretCheckFailed, msg)
 	}
 
 	return &TLSResult{
@@ -546,7 +548,7 @@ func (r *TLSReconciler) checkUserProvidedSecret(ctx context.Context, secretName 
 					constants.GatewayNamespace, secretName)
 		}
 		return metav1.ConditionFalse,
-			appsv1.ReasonUserProvidedSecretNotFound,
+			appsv1.ReasonUserProvidedSecretCheckFailed,
 			fmt.Sprintf("failed to check TLS secret %s/%s: %v", constants.GatewayNamespace, secretName, err)
 	}
 

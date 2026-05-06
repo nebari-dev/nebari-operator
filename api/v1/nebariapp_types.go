@@ -665,6 +665,12 @@ const (
 
 	// ReasonUserProvidedSecretInvalidType indicates the user-provided secret is not type kubernetes.io/tls.
 	ReasonUserProvidedSecretInvalidType = "UserProvidedSecretInvalidType"
+
+	// ReasonUserProvidedSecretCheckFailed indicates the user-provided TLS secret could not be checked
+	// due to a transient error (for example, an API server timeout or RBAC failure). Distinct from
+	// UserProvidedSecretNotFound so operators can tell "the secret is missing" apart from "we could
+	// not tell whether the secret is missing".
+	ReasonUserProvidedSecretCheckFailed = "UserProvidedSecretCheckFailed"
 )
 
 // Event reasons for recording Kubernetes events
@@ -743,6 +749,10 @@ const (
 
 	// EventReasonUserProvidedSecretInvalid is used when a referenced TLS secret is not type kubernetes.io/tls.
 	EventReasonUserProvidedSecretInvalid = "UserProvidedSecretInvalid"
+
+	// EventReasonUserProvidedSecretCheckFailed is used when the operator could not determine the state
+	// of a user-provided TLS secret (for example, a transient API error).
+	EventReasonUserProvidedSecretCheckFailed = "UserProvidedSecretCheckFailed"
 )
 
 // +kubebuilder:object:root=true

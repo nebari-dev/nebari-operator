@@ -18,6 +18,7 @@ package tls
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	certmanagerv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
@@ -31,7 +32,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
@@ -1059,6 +1062,7 @@ func TestCheckUserProvidedSecret(t *testing.T) {
 		name           string
 		secretName     string
 		existingSecret *corev1.Secret
+		getErr         error
 		expectStatus   metav1.ConditionStatus
 		expectReason   string
 	}{
@@ -1095,6 +1099,13 @@ func TestCheckUserProvidedSecret(t *testing.T) {
 			expectStatus: metav1.ConditionFalse,
 			expectReason: appsv1.ReasonUserProvidedSecretInvalidType,
 		},
+		{
+			name:         "Transient API error yields CheckFailed (not NotFound)",
+			secretName:   "any-tls",
+			getErr:       fmt.Errorf("etcdserver: request timed out"),
+			expectStatus: metav1.ConditionFalse,
+			expectReason: appsv1.ReasonUserProvidedSecretCheckFailed,
+		},
 	}
 
 	for _, tt := range tests {
@@ -1102,6 +1113,13 @@ func TestCheckUserProvidedSecret(t *testing.T) {
 			builder := fake.NewClientBuilder().WithScheme(scheme)
 			if tt.existingSecret != nil {
 				builder = builder.WithObjects(tt.existingSecret)
+			}
+			if tt.getErr != nil {
+				builder = builder.WithInterceptorFuncs(interceptor.Funcs{
+					Get: func(_ context.Context, _ client.WithWatch, _ client.ObjectKey, _ client.Object, _ ...client.GetOption) error {
+						return tt.getErr
+					},
+				})
 			}
 			fakeClient := builder.Build()
 			reconciler := &TLSReconciler{
