@@ -54,8 +54,10 @@ Dockerfile.cross
 *.swp
 *.bak
 
-# Claude Code
+# Claude Code and AI workflow artefacts (local only, never committed)
 CLAUDE.md
+.claude/
+docs/superpowers/
 
 # Git worktrees
 .worktrees/
