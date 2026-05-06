@@ -352,6 +352,15 @@ func (p *KeycloakProvider) ConfigureTokenExchange(ctx context.Context, nebariApp
 		return fmt.Errorf("failed to enable standard token exchange on peers: %w", err)
 	}
 
+	// V2 also requires the target client to be in the requesting client's
+	// scope tree, otherwise Keycloak rejects with
+	// 400 invalid_request "Requested audience not available: <target>".
+	// Add an oidc-audience-mapper on each peer client targeting this client's
+	// clientId so requests for `audience=<target>` resolve.
+	if err := p.addAudienceMapperOnPeers(ctx, kcClient, token, peerClientIDs, clientID); err != nil {
+		return fmt.Errorf("failed to add audience mapper on peers: %w", err)
+	}
+
 	// Step 1: Enable management permissions on the target client.
 	// Keycloak auto-creates scope permissions (including token-exchange) on
 	// the realm-management client's authorization resource server.
@@ -513,6 +522,75 @@ func (p *KeycloakProvider) enableStandardTokenExchangeOnPeers(
 			return fmt.Errorf("failed to enable standard token exchange on peer %s: %w", peerID, err)
 		}
 		logger.Info("Standard token exchange enabled on peer", "peer", peerID)
+	}
+	return nil
+}
+
+// addAudienceMapperOnPeers ensures each peer client carries an
+// oidc-audience-mapper protocol mapper pointing to the target client's
+// clientId. Required by Keycloak Standard Token Exchange V2 alongside the
+// `standard.token.exchange.enabled` attribute: V2 only resolves an
+// `audience=<target>` parameter when the target appears in the requesting
+// client's scope tree, otherwise the exchange returns
+// `400 invalid_request "Requested audience not available"`.
+//
+// The mapper is named `<targetClientID>-audience` so the operator can
+// idempotently detect and skip an existing mapper on subsequent reconciles.
+func (p *KeycloakProvider) addAudienceMapperOnPeers(
+	ctx context.Context,
+	kcClient *gocloak.GoCloak,
+	token *gocloak.JWT,
+	peerClientIDs []string,
+	targetClientID string,
+) error {
+	logger := log.FromContext(ctx)
+	mapperName := targetClientID + "-audience"
+	for _, peerID := range peerClientIDs {
+		peer, err := p.findClient(ctx, kcClient, token, peerID)
+		if err != nil {
+			return fmt.Errorf("failed to look up peer client %s: %w", peerID, err)
+		}
+		if peer == nil {
+			logger.Info("Peer client not found, skipping audience mapper", "peer", peerID)
+			continue
+		}
+		peerInternalID := gocloak.PString(peer.ID)
+
+		// Skip if an audience mapper for this target already exists. The peer
+		// client representation from findClient carries the full list of
+		// protocol mappers; no extra round-trip needed.
+		exists := false
+		if peer.ProtocolMappers != nil {
+			for _, m := range *peer.ProtocolMappers {
+				if m.Name != nil && *m.Name == mapperName {
+					exists = true
+					break
+				}
+			}
+		}
+		if exists {
+			continue
+		}
+
+		mapper := gocloak.ProtocolMapperRepresentation{
+			Name:           gocloak.StringP(mapperName),
+			Protocol:       gocloak.StringP("openid-connect"),
+			ProtocolMapper: gocloak.StringP("oidc-audience-mapper"),
+			Config: &map[string]string{
+				"included.client.audience": targetClientID,
+				"id.token.claim":           attrTrue,
+				"access.token.claim":       attrTrue,
+			},
+		}
+		if _, err := kcClient.CreateClientProtocolMapper(ctx, token.AccessToken, p.Config.Realm, peerInternalID, mapper); err != nil {
+			// Tolerate races where another reconcile created it first.
+			if !strings.Contains(err.Error(), "409") {
+				return fmt.Errorf("failed to create audience mapper on peer %s: %w", peerID, err)
+			}
+			logger.Info("Audience mapper already exists on peer", "peer", peerID, "audience", targetClientID)
+			continue
+		}
+		logger.Info("Audience mapper added on peer", "peer", peerID, "audience", targetClientID)
 	}
 	return nil
 }
