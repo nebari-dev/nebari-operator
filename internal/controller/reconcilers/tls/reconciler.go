@@ -106,9 +106,17 @@ func (r *TLSReconciler) ReconcileTLS(ctx context.Context, nebariApp *appsv1.Neba
 	}
 
 	if r.ClusterIssuerName == "" {
+		// No ClusterIssuer is configured operator-wide, and this app does not
+		// reference a pre-provisioned secret either. Surface this on the
+		// condition so an operator can see it, but do not block the rest of
+		// the pipeline: the routing reconciler will fall back to the shared
+		// HTTPS listener on the Gateway. Returning (nil, nil) here matches
+		// the pre-existing behavior of skipping the TLSReconciler entirely
+		// when TLS_CLUSTER_ISSUER_NAME was unset.
 		conditions.SetCondition(nebariApp, appsv1.ConditionTypeTLSReady, metav1.ConditionFalse,
-			"ClusterIssuerNotConfigured", "No ClusterIssuer configured for TLS certificate management")
-		return nil, fmt.Errorf("ClusterIssuerName is not configured; set TLS_CLUSTER_ISSUER_NAME environment variable")
+			"ClusterIssuerNotConfigured",
+			"No ClusterIssuer configured and routing.tls.secretName not set; using the shared HTTPS listener")
+		return nil, nil
 	}
 
 	logger.Info("Reconciling TLS",

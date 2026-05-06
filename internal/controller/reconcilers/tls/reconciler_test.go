@@ -249,7 +249,7 @@ func TestReconcileTLS(t *testing.T) { //nolint:gocyclo // table-driven test with
 			},
 		},
 		{
-			name: "No ClusterIssuer configured returns error",
+			name: "No ClusterIssuer configured and no secretName: skip TLS, fall back to shared listener",
 			nebariApp: &appsv1.NebariApp{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-app",
@@ -263,7 +263,7 @@ func TestReconcileTLS(t *testing.T) { //nolint:gocyclo // table-driven test with
 			},
 			clusterIssuerName: "", // Empty - no ClusterIssuer configured
 			gateway:           newGateway(constants.PublicGatewayName),
-			expectError:       true,
+			expectError:       false,
 			expectNilResult:   true,
 			validateConditions: func(t *testing.T, app *appsv1.NebariApp) {
 				c := conditions.GetCondition(app, appsv1.ConditionTypeTLSReady)
@@ -272,6 +272,9 @@ func TestReconcileTLS(t *testing.T) { //nolint:gocyclo // table-driven test with
 				}
 				if c.Status != metav1.ConditionFalse {
 					t.Errorf("expected TLSReady=False, got %s", c.Status)
+				}
+				if c.Reason != "ClusterIssuerNotConfigured" {
+					t.Errorf("expected reason ClusterIssuerNotConfigured, got %s", c.Reason)
 				}
 			},
 		},
