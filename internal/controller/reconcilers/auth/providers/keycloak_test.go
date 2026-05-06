@@ -18,6 +18,7 @@ package providers
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -1559,4 +1560,112 @@ func TestKeycloakProvider_ConfigureTokenExchange(t *testing.T) {
 	// Will fail without a live Keycloak instance, but verifies the method
 	// has the correct signature and handles the call path
 	_ = provider.ConfigureTokenExchange(context.Background(), nebariApp, []string{"peer-client-uuid"})
+}
+
+// TestKeycloakProvider_ConfigureTokenExchange_SetsStandardTokenExchangeAttribute
+// asserts the operator enables Keycloak Standard Token Exchange (V2, RFC 8693)
+// on each peer client by setting the `standard.token.exchange.enabled=true`
+// client attribute via UpdateClient.
+//
+// Background: Keycloak 26.2+ ships TOKEN_EXCHANGE_STANDARD_V2 enabled by default
+// alongside the legacy TOKEN_EXCHANGE feature. When V2 is active, Keycloak
+// routes the urn:ietf:params:oauth:grant-type:token-exchange grant through V2,
+// which requires the *requesting* client to have the standard token exchange
+// attribute set; the V1 fine-grained-authz wiring on the *target* client is
+// ignored. Without this attribute, every exchange returns
+// 403 access_denied "Client not allowed to exchange".
+func TestKeycloakProvider_ConfigureTokenExchange_SetsStandardTokenExchangeAttribute(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = appsv1.AddToScheme(scheme)
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	peerClientIDs := []string{"peer-alpha", "peer-beta"}
+	// Capture every UpdateClient (PUT /admin/realms/{realm}/clients/{id})
+	// payload keyed by the path's client UUID so the assertion can scan the
+	// peer clients only (target client + realm-management may also be PUT).
+	updates := map[string][]byte{}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		// gocloak.LoginAdmin
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/realms/master/protocol/openid-connect/token"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"access_token":"admin-token","token_type":"Bearer","expires_in":300}`))
+			return
+
+		// gocloak.GetClients(?clientId=X) — return a single client whose
+		// internal UUID matches the clientId so downstream PUT paths are
+		// predictable in the assertion.
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/clients"):
+			clientID := r.URL.Query().Get("clientId")
+			if clientID == "" {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`[]`))
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[{"id":"` + clientID + `-uuid","clientId":"` + clientID + `","attributes":{}}]`))
+			return
+
+		// gocloak.UpdateClient — capture body for each PUT to a client UUID.
+		case r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/clients/"):
+			// Skip nested authz/realm-management resources by checking
+			// for a trailing /clients/{id} path with no further segments.
+			parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/"), "/")
+			// Expect ["admin","realms","test","clients","<id>"]
+			if len(parts) == 5 && parts[3] == "clients" {
+				body, _ := io.ReadAll(r.Body)
+				updates[parts[4]] = body
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+		}
+		// Any other Keycloak API the V1 wiring touches will 500; the V2
+		// attribute step must run first and complete before V1 errors out.
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	provider := &KeycloakProvider{
+		Config: config.KeycloakConfig{
+			URL:           server.URL,
+			Realm:         "test",
+			AdminUsername: "admin",
+			AdminPassword: "admin",
+		},
+		Client: k8sClient,
+	}
+
+	nebariApp := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-app",
+			Namespace: "default",
+			UID:       "test-uid",
+		},
+		Spec: appsv1.NebariAppSpec{
+			Hostname: "test.example.com",
+			Auth: &appsv1.AuthConfig{
+				Enabled: true,
+				TokenExchange: &appsv1.TokenExchangeConfig{
+					Enabled: true,
+				},
+			},
+		},
+	}
+
+	// Error from downstream V1 wiring (mock returns 500 for those endpoints)
+	// is expected and irrelevant — the V2 attribute step must run regardless.
+	_ = provider.ConfigureTokenExchange(context.Background(), nebariApp, peerClientIDs)
+
+	for _, peer := range peerClientIDs {
+		body, ok := updates[peer+"-uuid"]
+		if !ok {
+			t.Errorf("expected UpdateClient (PUT /admin/realms/test/clients/%s-uuid) for peer %q, got none", peer, peer)
+			continue
+		}
+		if !strings.Contains(string(body), `"standard.token.exchange.enabled":"true"`) {
+			t.Errorf("peer %q: expected attributes.standard.token.exchange.enabled=true in UpdateClient body, got: %s", peer, string(body))
+		}
+	}
 }

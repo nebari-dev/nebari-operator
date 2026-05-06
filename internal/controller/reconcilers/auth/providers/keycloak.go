@@ -331,6 +331,17 @@ func (p *KeycloakProvider) ConfigureTokenExchange(ctx context.Context, nebariApp
 	}
 	internalID := gocloak.PString(existingClient.ID)
 
+	// Enable Keycloak Standard Token Exchange (V2, RFC 8693) on each peer
+	// client. In Keycloak 26.2+ TOKEN_EXCHANGE_STANDARD_V2 is enabled by
+	// default and routes the urn:ietf:params:oauth:grant-type:token-exchange
+	// grant through V2, which checks the requesting client's
+	// `standard.token.exchange.enabled` attribute. Without this, the legacy
+	// V1 fine-grained-authz wiring below is silently ignored and every
+	// exchange returns 403 access_denied "Client not allowed to exchange".
+	if err := p.enableStandardTokenExchangeOnPeers(ctx, kcClient, token, peerClientIDs); err != nil {
+		return fmt.Errorf("failed to enable standard token exchange on peers: %w", err)
+	}
+
 	// Step 1: Enable management permissions on the target client.
 	// Keycloak auto-creates scope permissions (including token-exchange) on
 	// the realm-management client's authorization resource server.
@@ -454,6 +465,45 @@ func (p *KeycloakProvider) ConfigureTokenExchange(ctx context.Context, nebariApp
 	}
 	logger.Info("Token exchange permission configured", "clientID", clientID, "peers", len(peerClientIDs))
 
+	return nil
+}
+
+// enableStandardTokenExchangeOnPeers sets the `standard.token.exchange.enabled`
+// client attribute to "true" on each peer client. Required by Keycloak Standard
+// Token Exchange V2 (RFC 8693). Idempotent: skips peers that are already
+// enabled. Missing peer clients are skipped with a log entry rather than
+// returning an error so token-exchange wiring stays best-effort across the
+// realm.
+func (p *KeycloakProvider) enableStandardTokenExchangeOnPeers(
+	ctx context.Context,
+	kcClient *gocloak.GoCloak,
+	token *gocloak.JWT,
+	peerClientIDs []string,
+) error {
+	logger := log.FromContext(ctx)
+	for _, peerID := range peerClientIDs {
+		peer, err := p.findClient(ctx, kcClient, token, peerID)
+		if err != nil {
+			return fmt.Errorf("failed to look up peer client %s: %w", peerID, err)
+		}
+		if peer == nil {
+			logger.Info("Peer client not found, skipping standard token exchange enablement", "peer", peerID)
+			continue
+		}
+		attrs := map[string]string{}
+		if peer.Attributes != nil {
+			attrs = *peer.Attributes
+		}
+		if attrs["standard.token.exchange.enabled"] == "true" {
+			continue
+		}
+		attrs["standard.token.exchange.enabled"] = "true"
+		peer.Attributes = &attrs
+		if err := kcClient.UpdateClient(ctx, token.AccessToken, p.Config.Realm, *peer); err != nil {
+			return fmt.Errorf("failed to enable standard token exchange on peer %s: %w", peerID, err)
+		}
+		logger.Info("Standard token exchange enabled on peer", "peer", peerID)
+	}
 	return nil
 }
 
