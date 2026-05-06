@@ -42,6 +42,16 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
+const (
+	// standardTokenExchangeAttr is the Keycloak client attribute that enables
+	// Standard Token Exchange (V2, RFC 8693) on the requesting client.
+	standardTokenExchangeAttr = "standard.token.exchange.enabled"
+
+	// attrTrue is the literal "true" used as the value for boolean Keycloak
+	// client attributes (the admin API serializes them as strings).
+	attrTrue = "true"
+)
+
 // KeycloakProvider implements the OIDCProvider interface for Keycloak.
 type KeycloakProvider struct {
 	Client client.Client
@@ -494,10 +504,10 @@ func (p *KeycloakProvider) enableStandardTokenExchangeOnPeers(
 		if peer.Attributes != nil {
 			attrs = *peer.Attributes
 		}
-		if attrs["standard.token.exchange.enabled"] == "true" {
+		if attrs[standardTokenExchangeAttr] == attrTrue {
 			continue
 		}
-		attrs["standard.token.exchange.enabled"] = "true"
+		attrs[standardTokenExchangeAttr] = attrTrue
 		peer.Attributes = &attrs
 		if err := kcClient.UpdateClient(ctx, token.AccessToken, p.Config.Realm, *peer); err != nil {
 			return fmt.Errorf("failed to enable standard token exchange on peer %s: %w", peerID, err)
