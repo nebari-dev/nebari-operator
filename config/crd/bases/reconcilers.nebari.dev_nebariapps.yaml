@@ -508,7 +508,9 @@ spec:
                           operator will not create or update a Certificate for this NebariApp and
                           will clean up any existing owned Certificate.
                           Ignored when enabled is false.
+                        maxLength: 253
                         minLength: 1
+                        pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
                         type: string
                     type: object
                 type: object

@@ -164,10 +164,12 @@ func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		if tlsResult != nil {
 			tlsListenerName = tlsResult.ListenerName
 			if !tlsResult.CertReady {
-				logger.Info("TLS Certificate not ready yet, will requeue")
+				logger.Info("TLS secret not ready yet, will requeue")
 				// Save status so TLSReady=False is visible, then requeue.
-				// The Certificate watch will also trigger re-reconciliation
-				// when the cert becomes ready.
+				// On the cert-manager path the Certificate watch will also
+				// trigger re-reconciliation when the cert becomes ready; on
+				// the user-provided-secret path we rely on the periodic
+				// requeue below since there is no Secret watch.
 				nebariApp.Status.ObservedGeneration = nebariApp.Generation
 				if err := r.Status().Update(ctx, nebariApp); err != nil {
 					return ctrl.Result{}, err

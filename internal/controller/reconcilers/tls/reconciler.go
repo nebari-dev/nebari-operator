@@ -52,10 +52,15 @@ type TLSResult struct {
 	// ListenerName is the name of the per-app HTTPS listener on the Gateway.
 	ListenerName string
 
-	// SecretName is the name of the TLS secret created by cert-manager.
+	// SecretName is the TLS secret the per-app listener references.
+	// On the cert-manager path it is the cert-manager-issued secret;
+	// on the user-provided-secret path it is the secret named in routing.tls.secretName.
 	SecretName string
 
-	// CertReady indicates whether the cert-manager Certificate has a Ready=True condition.
+	// CertReady indicates whether the listener's TLS secret is ready for use.
+	// On the cert-manager path it reflects the Certificate's Ready=True condition;
+	// on the user-provided-secret path it reflects whether the named secret exists
+	// and is of type kubernetes.io/tls.
 	CertReady bool
 }
 
