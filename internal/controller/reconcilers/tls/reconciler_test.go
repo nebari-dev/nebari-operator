@@ -19,6 +19,7 @@ package tls
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	certmanagerv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
@@ -496,6 +497,10 @@ func TestReconcileTLS(t *testing.T) { //nolint:gocyclo // table-driven test with
 			existingSecret: &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{Name: "my-wildcard-tls", Namespace: constants.GatewayNamespace},
 				Type:       corev1.SecretTypeTLS,
+				Data: map[string][]byte{
+					corev1.TLSCertKey:       []byte("stubcert"),
+					corev1.TLSPrivateKeyKey: []byte("stubkey"),
+				},
 			},
 			expectError:     false,
 			expectNilResult: false,
@@ -608,6 +613,10 @@ func TestReconcileTLS(t *testing.T) { //nolint:gocyclo // table-driven test with
 			existingSecret: &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{Name: "my-tls", Namespace: constants.GatewayNamespace},
 				Type:       corev1.SecretTypeTLS,
+				Data: map[string][]byte{
+					corev1.TLSCertKey:       []byte("stubcert"),
+					corev1.TLSPrivateKeyKey: []byte("stubkey"),
+				},
 			},
 			expectError:        false,
 			expectNilResult:    false,
@@ -666,6 +675,10 @@ func TestReconcileTLS(t *testing.T) { //nolint:gocyclo // table-driven test with
 			existingSecret: &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{Name: "my-tls", Namespace: constants.GatewayNamespace},
 				Type:       corev1.SecretTypeTLS,
+				Data: map[string][]byte{
+					corev1.TLSCertKey:       []byte("stubcert"),
+					corev1.TLSPrivateKeyKey: []byte("stubkey"),
+				},
 			},
 			existingCert: &certmanagerv1.Certificate{
 				ObjectMeta: metav1.ObjectMeta{
@@ -814,6 +827,10 @@ func TestCleanupTLS(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      naming.CertificateName(&appsv1.NebariApp{ObjectMeta: metav1.ObjectMeta{Name: "cleanup-app", Namespace: "default"}}),
 					Namespace: constants.GatewayNamespace,
+					Labels: map[string]string{
+						"nebari.dev/nebariapp-name":      "cleanup-app",
+						"nebari.dev/nebariapp-namespace": "default",
+					},
 				},
 			},
 			expectError: false,
@@ -881,6 +898,10 @@ func TestCleanupTLS(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      naming.CertificateName(&appsv1.NebariApp{ObjectMeta: metav1.ObjectMeta{Name: "internal-cleanup", Namespace: "default"}}),
 					Namespace: constants.GatewayNamespace,
+					Labels: map[string]string{
+						"nebari.dev/nebariapp-name":      "internal-cleanup",
+						"nebari.dev/nebariapp-namespace": "default",
+					},
 				},
 			},
 			expectError: false,
@@ -1078,9 +1099,44 @@ func TestCheckUserProvidedSecret(t *testing.T) {
 					Namespace: constants.GatewayNamespace,
 				},
 				Type: corev1.SecretTypeTLS,
+				Data: map[string][]byte{
+					corev1.TLSCertKey:       []byte("-----BEGIN CERTIFICATE-----\nstub\n-----END CERTIFICATE-----\n"),
+					corev1.TLSPrivateKeyKey: []byte("-----BEGIN PRIVATE KEY-----\nstub\n-----END PRIVATE KEY-----\n"),
+				},
 			},
 			expectStatus: metav1.ConditionTrue,
 			expectReason: appsv1.ReasonUserProvidedSecretReady,
+		},
+		{
+			name:       "kubernetes.io/tls secret with empty data yields InvalidType",
+			secretName: "empty-tls",
+			existingSecret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "empty-tls",
+					Namespace: constants.GatewayNamespace,
+				},
+				Type: corev1.SecretTypeTLS,
+				// Data intentionally nil: simulates `kubectl apply -f` of a
+				// kubernetes.io/tls secret without the required PEM keys.
+			},
+			expectStatus: metav1.ConditionFalse,
+			expectReason: appsv1.ReasonUserProvidedSecretInvalidType,
+		},
+		{
+			name:       "kubernetes.io/tls secret missing tls.key yields InvalidType",
+			secretName: "no-key-tls",
+			existingSecret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "no-key-tls",
+					Namespace: constants.GatewayNamespace,
+				},
+				Type: corev1.SecretTypeTLS,
+				Data: map[string][]byte{
+					corev1.TLSCertKey: []byte("-----BEGIN CERTIFICATE-----\nstub\n-----END CERTIFICATE-----\n"),
+				},
+			},
+			expectStatus: metav1.ConditionFalse,
+			expectReason: appsv1.ReasonUserProvidedSecretInvalidType,
 		},
 		{
 			name:           "Missing secret yields NotFound",
@@ -1142,6 +1198,176 @@ func TestCheckUserProvidedSecret(t *testing.T) {
 				t.Error("expected non-empty message")
 			}
 		})
+	}
+}
+
+// TestCleanupTLSLeavesUnownedCertificateAlone verifies that CleanupTLS does not
+// delete a Certificate whose name collides with this NebariApp's derived name
+// but whose ownership labels point at a different NebariApp. The previous
+// implementation deleted by name only, which could remove another app's
+// Certificate in the unlikely event of a name collision.
+func TestCleanupTLSLeavesUnownedCertificateAlone(t *testing.T) {
+	scheme := newScheme()
+
+	app := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{Name: "collide-app", Namespace: "default"},
+		Spec: appsv1.NebariAppSpec{
+			Hostname: "collide.example.com",
+			Service:  appsv1.ServiceReference{Name: "svc", Port: 8080},
+		},
+	}
+	certName := naming.CertificateName(app)
+
+	// A Certificate at the same derived name, but labeled as owned by a
+	// different NebariApp ("other-app"/"other-ns"). CleanupTLS for `app` must
+	// leave this Certificate in place.
+	foreignCert := &certmanagerv1.Certificate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      certName,
+			Namespace: constants.GatewayNamespace,
+			Labels: map[string]string{
+				"nebari.dev/nebariapp-name":      "other-app",
+				"nebari.dev/nebariapp-namespace": "other-ns",
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(app, foreignCert, newGateway(constants.PublicGatewayName)).
+		Build()
+	reconciler := &TLSReconciler{
+		Client:            fakeClient,
+		Scheme:            scheme,
+		Recorder:          record.NewFakeRecorder(10),
+		ClusterIssuerName: "letsencrypt-prod",
+	}
+
+	if err := reconciler.CleanupTLS(context.Background(), app); err != nil {
+		t.Fatalf("CleanupTLS returned error: %v", err)
+	}
+
+	got := &certmanagerv1.Certificate{}
+	err := fakeClient.Get(context.Background(), types.NamespacedName{
+		Name:      certName,
+		Namespace: constants.GatewayNamespace,
+	}, got)
+	if err != nil {
+		t.Fatalf("expected unowned Certificate to be preserved, but Get returned: %v", err)
+	}
+	if got.Labels["nebari.dev/nebariapp-name"] != "other-app" {
+		t.Errorf("expected preserved Certificate's owner label to remain 'other-app', got %q",
+			got.Labels["nebari.dev/nebariapp-name"])
+	}
+}
+
+// TestUserProvidedSecretEventDedup verifies that user-provided-secret events are
+// emitted only when the TLSReady condition reason transitions, not on every
+// reconcile pass. This protects against event spam (~30s-1m reconcile cadence)
+// drowning out actual state transitions in `kubectl describe`.
+func TestUserProvidedSecretEventDedup(t *testing.T) {
+	scheme := newScheme()
+
+	app := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{Name: "byo-event-dedup", Namespace: "default"},
+		Spec: appsv1.NebariAppSpec{
+			Hostname: "byo-event-dedup.example.com",
+			Service:  appsv1.ServiceReference{Name: "svc", Port: 8080},
+			Routing: &appsv1.RoutingConfig{
+				TLS: &appsv1.RoutingTLSConfig{
+					Enabled:    boolPtr(true),
+					SecretName: "byo-tls",
+				},
+			},
+		},
+	}
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "byo-tls", Namespace: constants.GatewayNamespace},
+		Type:       corev1.SecretTypeTLS,
+		Data: map[string][]byte{
+			corev1.TLSCertKey:       []byte("stubcert"),
+			corev1.TLSPrivateKeyKey: []byte("stubkey"),
+		},
+	}
+	gw := newGateway(constants.PublicGatewayName)
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(app, secret, gw).
+		Build()
+	recorder := record.NewFakeRecorder(20)
+	reconciler := &TLSReconciler{
+		Client:            fakeClient,
+		Scheme:            scheme,
+		Recorder:          recorder,
+		ClusterIssuerName: "letsencrypt-prod",
+	}
+
+	// First reconcile: condition transitions from absent -> UserProvidedSecretReady.
+	// Expect one InUse event.
+	if _, err := reconciler.ReconcileTLS(context.Background(), app); err != nil {
+		t.Fatalf("first reconcile: unexpected error: %v", err)
+	}
+	if got := countEventsWithReason(recorder, appsv1.EventReasonUserProvidedSecretInUse); got != 1 {
+		t.Errorf("after first reconcile: expected exactly 1 UserProvidedSecretInUse event, got %d", got)
+	}
+
+	// Drain the recorder so the next assertion is independent.
+	drainRecorder(recorder)
+
+	// Second reconcile with the secret unchanged: reason should be the same and
+	// no new InUse event should fire.
+	if _, err := reconciler.ReconcileTLS(context.Background(), app); err != nil {
+		t.Fatalf("second reconcile: unexpected error: %v", err)
+	}
+	if got := countEventsWithReason(recorder, appsv1.EventReasonUserProvidedSecretInUse); got != 0 {
+		t.Errorf("after no-op reconcile: expected 0 UserProvidedSecretInUse events (dedup), got %d", got)
+	}
+
+	// Delete the secret. Next reconcile should transition reason to NotFound
+	// and fire exactly one NotFound event.
+	if err := fakeClient.Delete(context.Background(), secret); err != nil {
+		t.Fatalf("delete secret: %v", err)
+	}
+	drainRecorder(recorder)
+	if _, err := reconciler.ReconcileTLS(context.Background(), app); err != nil {
+		t.Fatalf("third reconcile: unexpected error: %v", err)
+	}
+	if got := countEventsWithReason(recorder, appsv1.EventReasonUserProvidedSecretNotFound); got != 1 {
+		t.Errorf("after secret delete: expected 1 UserProvidedSecretNotFound event, got %d", got)
+	}
+	// The condition itself must have moved off Ready.
+	if c := conditions.GetCondition(app, appsv1.ConditionTypeTLSReady); c == nil ||
+		c.Reason != appsv1.ReasonUserProvidedSecretNotFound {
+		t.Errorf("expected TLSReady reason UserProvidedSecretNotFound after secret delete, got %+v", c)
+	}
+}
+
+// countEventsWithReason drains the FakeRecorder's channel and counts how many
+// of the buffered events contain the given reason substring. FakeRecorder
+// formats each event as "<type> <reason> <message>", so a substring match on
+// the reason is reliable.
+func countEventsWithReason(r *record.FakeRecorder, reason string) int {
+	count := 0
+	for {
+		select {
+		case ev := <-r.Events:
+			if strings.Contains(ev, reason) {
+				count++
+			}
+		default:
+			return count
+		}
+	}
+}
+
+func drainRecorder(r *record.FakeRecorder) {
+	for {
+		select {
+		case <-r.Events:
+		default:
+			return
+		}
 	}
 }
 

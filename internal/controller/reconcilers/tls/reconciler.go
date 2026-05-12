@@ -195,18 +195,30 @@ func (r *TLSReconciler) reconcileUserProvidedTLS(ctx context.Context, nebariApp 
 		return nil, err
 	}
 
+	// Capture the previous TLSReady reason before SetCondition mutates it, so we
+	// only emit an event when the reason actually transitions. ReconcileTLS runs
+	// on every reconcile (~30s-1m), so unconditionally emitting would push the
+	// same event repeatedly and make the event timeline useless for spotting
+	// state changes.
+	var prevReason string
+	if prev := conditions.GetCondition(nebariApp, appsv1.ConditionTypeTLSReady); prev != nil {
+		prevReason = prev.Reason
+	}
+
 	status, reason, msg := r.checkUserProvidedSecret(ctx, secretName)
 	conditions.SetCondition(nebariApp, appsv1.ConditionTypeTLSReady, status, reason, msg)
 
-	switch reason {
-	case appsv1.ReasonUserProvidedSecretReady:
-		r.Recorder.Event(nebariApp, corev1.EventTypeNormal, appsv1.EventReasonUserProvidedSecretInUse, msg)
-	case appsv1.ReasonUserProvidedSecretNotFound:
-		r.Recorder.Event(nebariApp, corev1.EventTypeWarning, appsv1.EventReasonUserProvidedSecretNotFound, msg)
-	case appsv1.ReasonUserProvidedSecretInvalidType:
-		r.Recorder.Event(nebariApp, corev1.EventTypeWarning, appsv1.EventReasonUserProvidedSecretInvalid, msg)
-	case appsv1.ReasonUserProvidedSecretCheckFailed:
-		r.Recorder.Event(nebariApp, corev1.EventTypeWarning, appsv1.EventReasonUserProvidedSecretCheckFailed, msg)
+	if reason != prevReason {
+		switch reason {
+		case appsv1.ReasonUserProvidedSecretReady:
+			r.Recorder.Event(nebariApp, corev1.EventTypeNormal, appsv1.EventReasonUserProvidedSecretInUse, msg)
+		case appsv1.ReasonUserProvidedSecretNotFound:
+			r.Recorder.Event(nebariApp, corev1.EventTypeWarning, appsv1.EventReasonUserProvidedSecretNotFound, msg)
+		case appsv1.ReasonUserProvidedSecretInvalidType:
+			r.Recorder.Event(nebariApp, corev1.EventTypeWarning, appsv1.EventReasonUserProvidedSecretInvalid, msg)
+		case appsv1.ReasonUserProvidedSecretCheckFailed:
+			r.Recorder.Event(nebariApp, corev1.EventTypeWarning, appsv1.EventReasonUserProvidedSecretCheckFailed, msg)
+		}
 	}
 
 	return &TLSResult{
@@ -217,20 +229,22 @@ func (r *TLSReconciler) reconcileUserProvidedTLS(ctx context.Context, nebariApp 
 }
 
 // CleanupTLS removes TLS resources for a NebariApp.
-// It removes the per-app listener from the Gateway and deletes the Certificate.
-// Both operations are attempted even if one fails, to minimize orphaned resources.
+// It removes the per-app listener from the Gateway and deletes the owned
+// Certificate (if any). Both operations are attempted even if one fails, to
+// minimize orphaned resources. Certificate deletion goes through
+// cleanupOwnedCertificate, which only removes Certificates whose ownership
+// labels match this NebariApp, so an unowned Certificate that happens to share
+// the derived name is left alone.
 func (r *TLSReconciler) CleanupTLS(ctx context.Context, nebariApp *appsv1.NebariApp) error {
 	logger := log.FromContext(ctx)
 	var errs []error
 
-	// Step 1: Remove the per-app listener from the Gateway
 	if err := r.removeGatewayListener(ctx, nebariApp); err != nil {
 		logger.Error(err, "Failed to remove Gateway listener during cleanup")
 		errs = append(errs, err)
 	}
 
-	// Step 2: Delete the Certificate from the Gateway namespace
-	if err := r.deleteCertificate(ctx, nebariApp); err != nil {
+	if err := r.cleanupOwnedCertificate(ctx, nebariApp); err != nil {
 		logger.Error(err, "Failed to delete Certificate during cleanup")
 		errs = append(errs, err)
 	}
@@ -567,30 +581,18 @@ func (r *TLSReconciler) checkUserProvidedSecret(ctx context.Context, secretName 
 				constants.GatewayNamespace, secretName, secret.Type)
 	}
 
+	// `kubectl create secret tls` enforces non-empty tls.crt and tls.key, but
+	// nothing prevents a raw `kubectl apply -f` from creating a kubernetes.io/tls
+	// secret with missing or empty data. Envoy would silently fail to serve TLS
+	// in that case, so report it the same way as a wrong type.
+	if len(secret.Data[corev1.TLSCertKey]) == 0 || len(secret.Data[corev1.TLSPrivateKeyKey]) == 0 {
+		return metav1.ConditionFalse,
+			appsv1.ReasonUserProvidedSecretInvalidType,
+			fmt.Sprintf("TLS secret %s/%s has type kubernetes.io/tls but is missing tls.crt or tls.key data",
+				constants.GatewayNamespace, secretName)
+	}
+
 	return metav1.ConditionTrue,
 		appsv1.ReasonUserProvidedSecretReady,
 		fmt.Sprintf("using pre-provisioned TLS secret %s/%s", constants.GatewayNamespace, secretName)
-}
-
-// deleteCertificate removes the cert-manager Certificate from the Gateway namespace.
-func (r *TLSReconciler) deleteCertificate(ctx context.Context, nebariApp *appsv1.NebariApp) error {
-	logger := log.FromContext(ctx)
-
-	certName := naming.CertificateName(nebariApp)
-	cert := &certmanagerv1.Certificate{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      certName,
-			Namespace: constants.GatewayNamespace,
-		},
-	}
-
-	if err := client.IgnoreNotFound(r.Client.Delete(ctx, cert)); err != nil {
-		return fmt.Errorf("failed to delete Certificate: %w", err)
-	}
-
-	logger.Info("Deleted Certificate", "name", certName, "namespace", constants.GatewayNamespace)
-	r.Recorder.Event(nebariApp, corev1.EventTypeNormal, appsv1.EventReasonCertificateDeleted,
-		fmt.Sprintf("Deleted cert-manager Certificate %s/%s", constants.GatewayNamespace, certName))
-
-	return nil
 }
