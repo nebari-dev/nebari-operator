@@ -115,42 +115,57 @@ func ValidateNamespaceOptIn(ctx context.Context, c client.Client, nebariApp *app
 	return nil
 }
 
-// ValidateService checks if the referenced service exists in the namespace and has the specified port.
-// Returns an error if the service doesn't exist or the port is not exposed.
+// ValidateService checks that spec.service exists in the NebariApp's namespace
+// and exposes both the default port (spec.service.port) and any per-route port
+// overrides declared in routing.routes[].port and routing.publicRoutes[].port.
+// Cross-namespace backends are not supported; the Service is always looked up
+// in the NebariApp's own namespace.
 func ValidateService(ctx context.Context, c client.Client, nebariApp *appsv1.NebariApp) error {
 	service := &corev1.Service{}
-
-	// Use specified service namespace, or default to NebariApp's namespace
-	serviceNamespace := nebariApp.Spec.Service.Namespace
-	if serviceNamespace == "" {
-		serviceNamespace = nebariApp.Namespace
-	}
-
 	serviceKey := client.ObjectKey{
 		Name:      nebariApp.Spec.Service.Name,
-		Namespace: serviceNamespace,
+		Namespace: nebariApp.Namespace,
 	}
 
 	if err := c.Get(ctx, serviceKey, service); err != nil {
 		if errors.IsNotFound(err) {
 			return fmt.Errorf("service %s not found in namespace %s",
-				nebariApp.Spec.Service.Name, serviceNamespace)
+				nebariApp.Spec.Service.Name, nebariApp.Namespace)
 		}
 		return fmt.Errorf("failed to get service: %w", err)
 	}
 
-	// Validate that the specified port exists on the service
-	portFound := false
+	exposed := map[int32]struct{}{}
 	for _, port := range service.Spec.Ports {
-		if port.Port == nebariApp.Spec.Service.Port {
-			portFound = true
-			break
-		}
+		exposed[port.Port] = struct{}{}
 	}
 
-	if !portFound {
+	if _, ok := exposed[nebariApp.Spec.Service.Port]; !ok {
 		return fmt.Errorf("service %s does not expose port %d",
 			nebariApp.Spec.Service.Name, nebariApp.Spec.Service.Port)
+	}
+
+	if nebariApp.Spec.Routing == nil {
+		return nil
+	}
+
+	for _, route := range nebariApp.Spec.Routing.Routes {
+		if route.Port == nil {
+			continue
+		}
+		if _, ok := exposed[*route.Port]; !ok {
+			return fmt.Errorf("route %q: service %s does not expose port %d",
+				route.PathPrefix, nebariApp.Spec.Service.Name, *route.Port)
+		}
+	}
+	for _, route := range nebariApp.Spec.Routing.PublicRoutes {
+		if route.Port == nil {
+			continue
+		}
+		if _, ok := exposed[*route.Port]; !ok {
+			return fmt.Errorf("public route %q: service %s does not expose port %d",
+				route.PathPrefix, nebariApp.Spec.Service.Name, *route.Port)
+		}
 	}
 
 	return nil

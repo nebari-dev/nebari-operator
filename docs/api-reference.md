@@ -232,8 +232,8 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `hostname` _string_ | Hostname is the fully qualified domain name where the application should be accessible.<br />This will be used to generate HTTPRoute.<br />Example: "myapp.nebari.local" or "api.example.com" |  | MinLength: 1 <br />Pattern: `^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$` <br />Required: \{\} <br /> |
-| `service` _[ServiceReference](#servicereference)_ | Service defines the backend Kubernetes Service that should receive traffic. |  | Required: \{\} <br /> |
+| `hostname` _string_ | Hostname is the fully qualified domain name where the application should be accessible.<br />This will be used to generate HTTPRoute.<br />Example: "myapp.nebari.local" or "api.example.com"<br />Each NebariApp exposes exactly one public hostname and is backed by exactly<br />one Kubernetes Service (spec.service). Packs that need multiple hostnames,<br />or that genuinely need to fan out to multiple Services, must be split into<br />multiple NebariApps. This is an intentional boundary so a NebariApp's TLS,<br />auth, landing-page card, and routing concerns all scope to a single<br />user-visible URL backed by a single Service. To fan out by path under one<br />hostname to different ports on that Service, use routing.routes[].port. |  | MinLength: 1 <br />Pattern: `^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$` <br />Required: \{\} <br /> |
+| `service` _[ServiceReference](#servicereference)_ | Service defines the single backend Kubernetes Service that receives traffic<br />for this NebariApp. spec.service.port is the default backend port for routes<br />that don't override via routing.routes[].port. Multi-backend (multiple Services<br />per NebariApp) is not supported by design — use multiple NebariApps instead. |  | Required: \{\} <br /> |
 | `routing` _[RoutingConfig](#routingconfig)_ | Routing configures routing behavior including path-based rules and TLS. |  | Optional: \{\} <br /> |
 | `auth` _[AuthConfig](#authconfig)_ | Auth configures authentication/authorization for the application.<br />When enabled, the application will require OIDC authentication via supporting OIDC Provider. |  | Optional: \{\} <br /> |
 | `gateway` _string_ | Gateway specifies which shared Gateway to use for routing.<br />Valid values are "public" (default) or "internal". | public | Enum: [public internal] <br />Optional: \{\} <br /> |
@@ -287,8 +287,9 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `pathPrefix` _string_ | PathPrefix specifies the path prefix to match for routing.<br />Traffic matching this prefix will be routed to the service.<br />Must start with "/". Example: "/app-1", "/api/v1" |  | Pattern: `^/.*` <br />Required: \{\} <br /> |
+| `pathPrefix` _string_ | PathPrefix specifies the path prefix to match for routing.<br />Traffic matching this prefix will be routed to spec.service on the resolved port.<br />Must start with "/". Example: "/app-1", "/api/v1" |  | Pattern: `^/.*` <br />Required: \{\} <br /> |
 | `pathType` _string_ | PathType specifies how the path should be matched.<br />Valid values:<br />  - "PathPrefix": Match requests with the specified path prefix<br />  - "Exact": Match requests with the exact path<br />When used in routing.routes, defaults to "PathPrefix".<br />When used in routing.publicRoutes, defaults to "Exact" (safer for auth bypass). |  | Enum: [PathPrefix Exact] <br />Optional: \{\} <br /> |
+| `port` _integer_ | Port optionally overrides the default backend port (spec.service.port)<br />for this route. The referenced port must be exposed by spec.service.<br />When omitted, the route forwards to spec.service.port. This is the only<br />mechanism for path-based port differentiation; per-route backend Services<br />are not supported (use multiple NebariApps instead). |  | Maximum: 65535 <br />Minimum: 1 <br />Optional: \{\} <br /> |
 
 
 ---
@@ -373,16 +374,20 @@ _Appears in:_
 
 #### ServiceReference
 
-ServiceReference identifies the Kubernetes Service that backs this application.
+ServiceReference identifies a Kubernetes Service in the NebariApp's own
+namespace. Cross-namespace backends are not supported: the operator-generated
+HTTPRoute would require a Gateway API ReferenceGrant in the target namespace
+to actually carry traffic, and the operator does not create one. Workloads
+that need to talk across namespaces should do so via in-cluster DNS rather
+than via the public HTTPRoute.
 
 _Appears in:_
 - [NebariAppSpec](#nebariappspec)
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `name` _string_ | Name is the name of the Kubernetes Service in the same namespace. |  | MinLength: 1 <br />Required: \{\} <br /> |
-| `port` _integer_ | Port is the port number on the Service to route traffic to. |  | Maximum: 65535 <br />Minimum: 1 <br />Required: \{\} <br /> |
-| `namespace` _string_ | Namespace is the namespace of the Service (if different from the NebariApp).<br />If not specified, defaults to the NebariApp's namespace.<br />This allows referencing services in other namespaces for centralized service architectures.<br />Note: The operator has cluster-scoped permissions to read Services across all namespaces. |  | MinLength: 1 <br />Optional: \{\} <br /> |
+| `name` _string_ | Name is the name of the Kubernetes Service in the NebariApp's namespace. |  | MinLength: 1 <br />Required: \{\} <br /> |
+| `port` _integer_ | Port is the default port number on the Service to route traffic to.<br />Individual routes may override this via routing.routes[].port. |  | Maximum: 65535 <br />Minimum: 1 <br />Required: \{\} <br /> |
 
 
 ---

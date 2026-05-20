@@ -221,75 +221,78 @@ func (r *RoutingReconciler) buildHTTPRoute(nebariApp *appsv1.NebariApp, gatewayN
 	return route, nil
 }
 
-// buildHTTPRouteRules generates HTTPRoute rules based on NebariApp routes
+// buildHTTPRouteRules generates HTTPRoute rules based on NebariApp routes.
+//
+// When routing.routes is empty, the result is a single rule with no matches
+// (Gateway API treats this as "/" PathPrefix) and spec.service.port as the
+// backend port. When routing.routes is non-empty, the result is one rule per
+// route, each with its own match and its own resolved port (the route's port
+// override if set, else spec.service.port). All rules point at spec.service.
 func (r *RoutingReconciler) buildHTTPRouteRules(nebariApp *appsv1.NebariApp) []gatewayv1.HTTPRouteRule {
-	// Get routes from routing config if specified
 	var routes []appsv1.RouteMatch
 	if nebariApp.Spec.Routing != nil {
 		routes = nebariApp.Spec.Routing.Routes
 	}
 
-	// Build a single rule with multiple matches (one per route)
-	// All matches route to the same backend, so we use one rule
-	// If no routes specified, we create an empty matches array. Gateway API will automatically
-	// add a default path match of "/" (PathPrefix) when matches is empty or null.
-	matches := make([]gatewayv1.HTTPRouteMatch, 0, len(routes))
-	for _, route := range routes {
-		pathType := gatewayv1.PathMatchPathPrefix
-		if route.PathType == "Exact" {
-			pathType = gatewayv1.PathMatchExact
-		}
-
-		pathValue := route.PathPrefix
-		match := gatewayv1.HTTPRouteMatch{
-			Path: &gatewayv1.HTTPPathMatch{
-				Type:  &pathType,
-				Value: &pathValue,
+	if len(routes) == 0 {
+		return []gatewayv1.HTTPRouteRule{
+			{
+				Matches:     []gatewayv1.HTTPRouteMatch{},
+				BackendRefs: r.buildBackendRefs(nebariApp.Spec.Service.Name, nebariApp.Spec.Service.Port),
 			},
 		}
-		matches = append(matches, match)
 	}
 
-	return []gatewayv1.HTTPRouteRule{
-		{
-			Matches:     matches,
-			BackendRefs: r.buildBackendRefs(nebariApp),
+	rules := make([]gatewayv1.HTTPRouteRule, 0, len(routes))
+	for _, route := range routes {
+		rules = append(rules, gatewayv1.HTTPRouteRule{
+			Matches:     []gatewayv1.HTTPRouteMatch{routeToMatch(route, gatewayv1.PathMatchPathPrefix)},
+			BackendRefs: r.buildBackendRefs(nebariApp.Spec.Service.Name, resolveRoutePort(route, nebariApp.Spec.Service.Port)),
+		})
+	}
+	return rules
+}
+
+// routeToMatch converts a RouteMatch into a Gateway API HTTPRouteMatch.
+// defaultPathType is used when the route does not explicitly set PathType.
+func routeToMatch(route appsv1.RouteMatch, defaultPathType gatewayv1.PathMatchType) gatewayv1.HTTPRouteMatch {
+	pathType := defaultPathType
+	switch route.PathType {
+	case "Exact":
+		pathType = gatewayv1.PathMatchExact
+	case "PathPrefix":
+		pathType = gatewayv1.PathMatchPathPrefix
+	}
+	pathValue := route.PathPrefix
+	return gatewayv1.HTTPRouteMatch{
+		Path: &gatewayv1.HTTPPathMatch{
+			Type:  &pathType,
+			Value: &pathValue,
 		},
 	}
 }
 
-// buildBackendRefs generates backend references for the HTTPRoute
-func (r *RoutingReconciler) buildBackendRefs(nebariApp *appsv1.NebariApp) []gatewayv1.HTTPBackendRef {
-	// weight := int32(100)
-	// if nebariApp.Spec.Service.Weight != nil {
-	// 	weight = *nebariApp.Spec.Service.Weight
-	// }
-
-	port := nebariApp.Spec.Service.Port
-
-	// Use specified service namespace, or default to NebariApp's namespace
-	serviceNamespace := nebariApp.Spec.Service.Namespace
-	if serviceNamespace == "" {
-		serviceNamespace = nebariApp.Namespace
+// resolveRoutePort returns the route's per-route port override if set,
+// otherwise falls back to the NebariApp's default spec.service.port.
+func resolveRoutePort(route appsv1.RouteMatch, defaultPort int32) int32 {
+	if route.Port != nil {
+		return *route.Port
 	}
+	return defaultPort
+}
 
-	backendRef := gatewayv1.BackendObjectReference{
-		Name: gatewayv1.ObjectName(nebariApp.Spec.Service.Name),
-		Port: &port,
-	}
-
-	// Only set namespace if it's different from the HTTPRoute's namespace
-	// to support cross-namespace service references
-	if serviceNamespace != nebariApp.Namespace {
-		ns := gatewayv1.Namespace(serviceNamespace)
-		backendRef.Namespace = &ns
-	}
-
+// buildBackendRefs generates backend references for a single HTTPRouteRule
+// pointing at the given Service name and port. The Service must live in the
+// NebariApp's own namespace (cross-namespace backends are not supported), so
+// the generated BackendObjectReference never sets a namespace field.
+func (r *RoutingReconciler) buildBackendRefs(serviceName string, port int32) []gatewayv1.HTTPBackendRef {
 	return []gatewayv1.HTTPBackendRef{
 		{
 			BackendRef: gatewayv1.BackendRef{
-				BackendObjectReference: backendRef,
-				// Weight: &weight,
+				BackendObjectReference: gatewayv1.BackendObjectReference{
+					Name: gatewayv1.ObjectName(serviceName),
+					Port: &port,
+				},
 			},
 		},
 	}
@@ -403,19 +406,14 @@ func (r *RoutingReconciler) buildPublicHTTPRoute(nebariApp *appsv1.NebariApp, ga
 		sectionName = gatewayv1.SectionName(tlsListenerName)
 	}
 
-	// Build matches for each public route (default to Exact for safer auth bypass)
-	matches := make([]gatewayv1.HTTPRouteMatch, 0, len(nebariApp.Spec.Routing.PublicRoutes))
+	// One rule per public route, each with its own resolved port (the route's
+	// port override if set, else spec.service.port). PublicRoutes default to
+	// Exact matching for safer auth bypass.
+	rules := make([]gatewayv1.HTTPRouteRule, 0, len(nebariApp.Spec.Routing.PublicRoutes))
 	for _, route := range nebariApp.Spec.Routing.PublicRoutes {
-		pathType := gatewayv1.PathMatchExact
-		if route.PathType == "PathPrefix" {
-			pathType = gatewayv1.PathMatchPathPrefix
-		}
-		pathValue := route.PathPrefix
-		matches = append(matches, gatewayv1.HTTPRouteMatch{
-			Path: &gatewayv1.HTTPPathMatch{
-				Type:  &pathType,
-				Value: &pathValue,
-			},
+		rules = append(rules, gatewayv1.HTTPRouteRule{
+			Matches:     []gatewayv1.HTTPRouteMatch{routeToMatch(route, gatewayv1.PathMatchExact)},
+			BackendRefs: r.buildBackendRefs(nebariApp.Spec.Service.Name, resolveRoutePort(route, nebariApp.Spec.Service.Port)),
 		})
 	}
 
@@ -446,12 +444,7 @@ func (r *RoutingReconciler) buildPublicHTTPRoute(nebariApp *appsv1.NebariApp, ga
 			Hostnames: []gatewayv1.Hostname{
 				gatewayv1.Hostname(nebariApp.Spec.Hostname),
 			},
-			Rules: []gatewayv1.HTTPRouteRule{
-				{
-					Matches:     matches,
-					BackendRefs: r.buildBackendRefs(nebariApp),
-				},
-			},
+			Rules: rules,
 		},
 	}
 
