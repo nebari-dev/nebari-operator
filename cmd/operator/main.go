@@ -276,15 +276,21 @@ func main() {
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorderFor("nebariapp-routing"),
 	}
+	streamingReconciler := &routing.StreamingReconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("nebariapp-streaming"),
+	}
 
 	if err := (&controller.NebariAppReconciler{
-		Client:            mgr.GetClient(),
-		Scheme:            mgr.GetScheme(),
-		Recorder:          mgr.GetEventRecorderFor("nebariapp-controller"),
-		CoreReconciler:    coreReconciler,
-		TLSReconciler:     tlsReconciler,
-		RoutingReconciler: routingReconciler,
-		AuthReconciler:    authReconciler,
+		Client:              mgr.GetClient(),
+		Scheme:              mgr.GetScheme(),
+		Recorder:            mgr.GetEventRecorderFor("nebariapp-controller"),
+		CoreReconciler:      coreReconciler,
+		TLSReconciler:       tlsReconciler,
+		RoutingReconciler:   routingReconciler,
+		StreamingReconciler: streamingReconciler,
+		AuthReconciler:      authReconciler,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "NebariApp")
 		os.Exit(1)

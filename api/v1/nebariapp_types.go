@@ -120,6 +120,17 @@ type RoutingConfig struct {
 	// annotations always take precedence to avoid breaking internal behaviour.
 	// +optional
 	Annotations map[string]string `json:"annotations,omitempty"`
+
+	// Streaming enables long-lived connection support for this NebariApp.
+	// When true, the operator emits an Envoy Gateway BackendTrafficPolicy
+	// targeting this app's operator-owned HTTPRoutes that disables the default
+	// HTTP request timeout (15s -> no limit) and sets the connection idle
+	// timeout to 5 minutes. Use this for Server-Sent Events (SSE), long-poll
+	// endpoints, gRPC streaming, or any workload that holds a connection open
+	// beyond a few seconds. When false or omitted, no policy is created and
+	// Envoy's default timeouts apply.
+	// +optional
+	Streaming bool `json:"streaming,omitempty"`
 }
 
 // RouteMatch defines a path-based routing rule.
@@ -613,6 +624,13 @@ const (
 	// This includes the SecurityPolicy being created and the client secret being available.
 	ConditionTypeAuthReady = "AuthReady"
 
+	// ConditionTypeStreamingReady indicates that the Envoy Gateway
+	// BackendTrafficPolicy for long-lived connection support has been
+	// reconciled. False with a clear reason when streaming is requested but
+	// the policy could not be created (e.g. Envoy Gateway CRD missing, or a
+	// foreign policy already owns the target name).
+	ConditionTypeStreamingReady = "StreamingReady"
+
 	// ConditionTypeReady is an aggregate condition indicating all components are ready.
 	ConditionTypeReady = "Ready"
 )
@@ -702,6 +720,22 @@ const (
 
 	// EventReasonSecurityPolicyUpdated is used when SecurityPolicy is updated
 	EventReasonSecurityPolicyUpdated = "SecurityPolicyUpdated"
+
+	// EventReasonBackendTrafficPolicyCreated is used when the streaming
+	// BackendTrafficPolicy is created
+	EventReasonBackendTrafficPolicyCreated = "BackendTrafficPolicyCreated"
+
+	// EventReasonBackendTrafficPolicyUpdated is used when the streaming
+	// BackendTrafficPolicy is updated
+	EventReasonBackendTrafficPolicyUpdated = "BackendTrafficPolicyUpdated"
+
+	// EventReasonBackendTrafficPolicyDeleted is used when the streaming
+	// BackendTrafficPolicy is deleted (streaming disabled)
+	EventReasonBackendTrafficPolicyDeleted = "BackendTrafficPolicyDeleted"
+
+	// EventReasonBackendTrafficPolicyForeign is used when a foreign
+	// BackendTrafficPolicy already owns the operator's chosen name
+	EventReasonBackendTrafficPolicyForeign = "BackendTrafficPolicyForeign"
 
 	// EventReasonCertificateCreated is used when cert-manager Certificate is created
 	EventReasonCertificateCreated = "CertificateCreated"

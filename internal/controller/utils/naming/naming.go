@@ -21,6 +21,7 @@ func ValidateResourceNames(nebariApp *appsv1.NebariApp) error {
 		{"HTTPRoute", HTTPRouteName(nebariApp)},
 		{"PublicHTTPRoute", PublicHTTPRouteName(nebariApp)},
 		{"SecurityPolicy", SecurityPolicyName(nebariApp)},
+		{"BackendTrafficPolicy", BackendTrafficPolicyName(nebariApp)},
 		{"Certificate", CertificateName(nebariApp)},
 		{"CertificateSecret", CertificateSecretName(nebariApp)},
 		{"GatewayListener", ListenerName(nebariApp)},
@@ -51,6 +52,12 @@ func ResourceName(nebariApp *appsv1.NebariApp, resourceType string) string {
 // Pattern: <nebariapp-name>-security
 func SecurityPolicyName(nebariApp *appsv1.NebariApp) string {
 	return ResourceName(nebariApp, constants.SecurityPolicySuffix)
+}
+
+// BackendTrafficPolicyName generates the name for the streaming
+// BackendTrafficPolicy. Pattern: <nebariapp-name>-streaming
+func BackendTrafficPolicyName(nebariApp *appsv1.NebariApp) string {
+	return ResourceName(nebariApp, constants.BackendTrafficPolicySuffix)
 }
 
 // HTTPRouteName generates the name for an HTTPRoute.

@@ -56,6 +56,10 @@ const (
 
 	// ClientSecretSuffix is appended to NebariApp name for OIDC client secret resources
 	ClientSecretSuffix = "oidc-client"
+
+	// BackendTrafficPolicySuffix is appended to NebariApp name for the
+	// streaming BackendTrafficPolicy resource
+	BackendTrafficPolicySuffix = "streaming"
 )
 
 // Annotation constants

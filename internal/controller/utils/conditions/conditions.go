@@ -73,3 +73,9 @@ func IsConditionUnknown(nebariApp *appsv1.NebariApp, conditionType string) bool 
 	condition := GetCondition(nebariApp, conditionType)
 	return condition != nil && condition.Status == metav1.ConditionUnknown
 }
+
+// RemoveCondition removes a condition from the NebariApp status by type.
+// No-op when the condition does not exist.
+func RemoveCondition(nebariApp *appsv1.NebariApp, conditionType string) {
+	meta.RemoveStatusCondition(&nebariApp.Status.Conditions, conditionType)
+}

@@ -49,12 +49,13 @@ import (
 // NebariAppReconciler reconciles a NebariApp object
 type NebariAppReconciler struct {
 	client.Client
-	Scheme            *runtime.Scheme
-	Recorder          record.EventRecorder
-	CoreReconciler    *core.CoreReconciler
-	TLSReconciler     *tls.TLSReconciler
-	RoutingReconciler *routing.RoutingReconciler
-	AuthReconciler    *auth.AuthReconciler
+	Scheme              *runtime.Scheme
+	Recorder            record.EventRecorder
+	CoreReconciler      *core.CoreReconciler
+	TLSReconciler       *tls.TLSReconciler
+	RoutingReconciler   *routing.RoutingReconciler
+	StreamingReconciler *routing.StreamingReconciler
+	AuthReconciler      *auth.AuthReconciler
 }
 
 // +kubebuilder:rbac:groups=reconcilers.nebari.dev,resources=nebariapps,verbs=get;list;watch;create;update;patch;delete
@@ -68,6 +69,7 @@ type NebariAppReconciler struct {
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=cert-manager.io,resources=certificates,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gateway.envoyproxy.io,resources=securitypolicies,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=gateway.envoyproxy.io,resources=backendtrafficpolicies,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;list;watch;create;update;patch;delete
 
@@ -213,6 +215,11 @@ func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 
+	// Reconcile streaming BackendTrafficPolicy after HTTPRoutes exist so the
+	// policy's targetRefs resolve. Failures degrade gracefully via
+	// StreamingReady=False without blocking the rest of the reconcile.
+	r.reconcileStreaming(ctx, nebariApp)
+
 	// Reconcile authentication (SecurityPolicy creation/update) if auth is configured
 	if err := r.AuthReconciler.ReconcileAuth(ctx, nebariApp); err != nil {
 		logger.Error(err, "Auth reconciliation failed")
@@ -298,6 +305,19 @@ func buildServiceDiscoveryStatus(app *appsv1.NebariApp) *appsv1.ServiceDiscovery
 		Priority:       priority,
 		Visibility:     visibility,
 		RequiredGroups: requiredGroups,
+	}
+}
+
+// reconcileStreaming reconciles the streaming BackendTrafficPolicy.
+// Errors are logged but do not block the rest of the reconcile — the
+// StreamingReady condition surfaces failure for visibility.
+func (r *NebariAppReconciler) reconcileStreaming(ctx context.Context, nebariApp *appsv1.NebariApp) {
+	if r.StreamingReconciler == nil {
+		return
+	}
+	logger := logf.FromContext(ctx)
+	if err := r.StreamingReconciler.Reconcile(ctx, nebariApp); err != nil {
+		logger.Error(err, "Streaming reconciliation failed")
 	}
 }
 

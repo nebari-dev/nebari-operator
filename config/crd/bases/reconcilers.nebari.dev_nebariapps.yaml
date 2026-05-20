@@ -497,6 +497,17 @@ spec:
                       - pathPrefix
                       type: object
                     type: array
+                  streaming:
+                    description: |-
+                      Streaming enables long-lived connection support for this NebariApp.
+                      When true, the operator emits an Envoy Gateway BackendTrafficPolicy
+                      targeting this app's operator-owned HTTPRoutes that disables the default
+                      HTTP request timeout (15s -> no limit) and sets the connection idle
+                      timeout to 5 minutes. Use this for Server-Sent Events (SSE), long-poll
+                      endpoints, gRPC streaming, or any workload that holds a connection open
+                      beyond a few seconds. When false or omitted, no policy is created and
+                      Envoy's default timeouts apply.
+                    type: boolean
                   tls:
                     description: |-
                       TLS configures TLS certificate management and termination behavior.
