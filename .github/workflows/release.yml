@@ -142,8 +142,7 @@ jobs:
 
       - name: Generate Helm chart
         run: |
-          make build-installer IMG="${REGISTRY}/${IMAGE_NAME}:${GITHUB_REF_NAME}"
-          make helm-chart
+          make helm-chart IMG="${REGISTRY}/${IMAGE_NAME}:${GITHUB_REF_NAME}"
 
       - name: Update Chart version and appVersion
         run: |
@@ -188,8 +187,7 @@ jobs:
 
       - name: Generate Helm chart
         run: |
-          make build-installer IMG="${REGISTRY}/${IMAGE_NAME}:${GITHUB_REF_NAME}"
-          make helm-chart
+          make helm-chart IMG="${REGISTRY}/${IMAGE_NAME}:${GITHUB_REF_NAME}"
 
       - name: Update Chart version and appVersion
         run: |
