@@ -247,7 +247,59 @@ spec:
       enabled: true
 ```
 
+##### routing.tls.secretName
 
+**Type:** string (optional)
+**Default:** unset (cert-manager manages the certificate)
+
+When set, the operator will not create a cert-manager `Certificate` for
+this NebariApp. Instead, the per-app HTTPS listener on the shared
+Gateway points at the named TLS secret, which you must create and
+maintain yourself.
+
+**Requirements:**
+
+- The secret must live in the `envoy-gateway-system` namespace (the
+  Gateway's namespace).
+- The secret must be of type `kubernetes.io/tls` with `tls.crt` and
+  `tls.key` keys.
+- The operator checks for the secret on every reconcile. A missing or
+  wrong-type secret does not block reconciliation: the listener is
+  still attached so Envoy picks the secret up as soon as you create or
+  fix it. The `TLSReady` condition will report
+  `UserProvidedSecretNotFound` or `UserProvidedSecretInvalidType` until
+  the secret is valid.
+
+**Example:**
+
+```yaml
+apiVersion: reconcilers.nebari.dev/v1
+kind: NebariApp
+metadata:
+  name: myapp
+  namespace: myteam
+spec:
+  hostname: myapp.example.com
+  service:
+    name: myapp-backend
+    port: 8080
+  routing:
+    tls:
+      enabled: true
+      secretName: myteam-wildcard-tls
+```
+
+**When to use this instead of cert-manager:**
+
+- You have a wildcard certificate managed outside the cluster.
+- Your environment is air-gapped and cannot reach ACME providers.
+- Your organization rotates certificates via external tooling.
+- You cannot (or do not wish to) run cert-manager.
+
+**Migration:** Switching an existing NebariApp from cert-manager to
+`secretName` on the fly is supported. The operator will delete the
+owned cert-manager `Certificate` on the next reconcile and re-point
+the listener.
 
 ### auth
 

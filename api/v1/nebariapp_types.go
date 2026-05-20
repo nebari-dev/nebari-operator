@@ -151,6 +151,23 @@ type RoutingTLSConfig struct {
 	// +kubebuilder:default=true
 	// +optional
 	Enabled *bool `json:"enabled,omitempty"`
+
+	// SecretName optionally references a pre-existing Kubernetes TLS secret
+	// (type kubernetes.io/tls) in the Gateway's namespace (envoy-gateway-system).
+	// When set, the operator will not create a cert-manager Certificate; instead
+	// it points the per-app HTTPS listener at this secret. Use this for
+	// pre-provisioned or externally managed certificates (for example, wildcard
+	// certs or air-gapped environments without ACME access). The secret must be
+	// created and maintained by the user in the envoy-gateway-system namespace.
+	// Mutually exclusive with cert-manager-managed certificates: when set, the
+	// operator will not create or update a Certificate for this NebariApp and
+	// will clean up any existing owned Certificate.
+	// Ignored when enabled is false.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`
+	SecretName string `json:"secretName,omitempty"`
 }
 
 // AuthConfig specifies authentication/authorization configuration.
@@ -651,6 +668,21 @@ const (
 
 	// ReasonGatewayListenerConflict indicates the Gateway listener conflicts with another NebariApp
 	ReasonGatewayListenerConflict = "GatewayListenerConflict"
+
+	// ReasonUserProvidedSecretReady indicates a user-provided TLS secret exists and is valid.
+	ReasonUserProvidedSecretReady = "UserProvidedSecretReady"
+
+	// ReasonUserProvidedSecretNotFound indicates the user-provided TLS secret does not exist.
+	ReasonUserProvidedSecretNotFound = "UserProvidedSecretNotFound"
+
+	// ReasonUserProvidedSecretInvalidType indicates the user-provided secret is not type kubernetes.io/tls.
+	ReasonUserProvidedSecretInvalidType = "UserProvidedSecretInvalidType"
+
+	// ReasonUserProvidedSecretCheckFailed indicates the user-provided TLS secret could not be checked
+	// due to a transient error (for example, an API server timeout or RBAC failure). Distinct from
+	// UserProvidedSecretNotFound so operators can tell "the secret is missing" apart from "we could
+	// not tell whether the secret is missing".
+	ReasonUserProvidedSecretCheckFailed = "UserProvidedSecretCheckFailed"
 )
 
 // Event reasons for recording Kubernetes events
@@ -720,6 +752,19 @@ const (
 
 	// EventReasonGatewayListenerConflict is used when a listener conflicts with another app
 	EventReasonGatewayListenerConflict = "GatewayListenerConflict"
+
+	// EventReasonUserProvidedSecretInUse is used when a user-provided TLS secret is successfully attached.
+	EventReasonUserProvidedSecretInUse = "UserProvidedSecretInUse"
+
+	// EventReasonUserProvidedSecretNotFound is used when a referenced user-provided TLS secret is missing.
+	EventReasonUserProvidedSecretNotFound = "UserProvidedSecretNotFound"
+
+	// EventReasonUserProvidedSecretInvalid is used when a referenced TLS secret is not type kubernetes.io/tls.
+	EventReasonUserProvidedSecretInvalid = "UserProvidedSecretInvalid"
+
+	// EventReasonUserProvidedSecretCheckFailed is used when the operator could not determine the state
+	// of a user-provided TLS secret (for example, a transient API error).
+	EventReasonUserProvidedSecretCheckFailed = "UserProvidedSecretCheckFailed"
 )
 
 // +kubebuilder:object:root=true

@@ -451,6 +451,15 @@ spec:
 - **NebariApp**: Only controls whether HTTPRoute references HTTPS (`sectionName: https`) or HTTP (`sectionName: http`)
   listeners via the `routing.tls.enabled` field
 
+### User-provided TLS secrets
+
+Set `spec.routing.tls.secretName` to bypass cert-manager and use a
+pre-existing Kubernetes TLS secret. The secret must live in the
+`envoy-gateway-system` namespace and be of type `kubernetes.io/tls`.
+See `docs/configuration-reference.md` for full details. When `secretName`
+is set, the operator does not create or own a `Certificate` resource
+for this NebariApp, and it cleans up any previously owned Certificate.
+
 ### Disable TLS (HTTP Only - Uncommon)
 
 **Important:** This section describes disabling HTTPS entirely (using plain HTTP on port 80). This is different from the shared wildcard listener approach described above, which still provides HTTPS encryption.

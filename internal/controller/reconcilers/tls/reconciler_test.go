@@ -18,6 +18,8 @@ package tls
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 
 	certmanagerv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
@@ -26,11 +28,14 @@ import (
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/conditions"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/constants"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/naming"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
@@ -43,6 +48,7 @@ func newScheme() *runtime.Scheme {
 	_ = appsv1.AddToScheme(scheme)
 	_ = certmanagerv1.AddToScheme(scheme)
 	_ = gatewayv1.Install(scheme)
+	_ = corev1.AddToScheme(scheme)
 	return scheme
 }
 
@@ -68,10 +74,12 @@ func TestReconcileTLS(t *testing.T) { //nolint:gocyclo // table-driven test with
 		clusterIssuerName  string
 		gateway            *gatewayv1.Gateway
 		existingCert       *certmanagerv1.Certificate
+		existingSecret     *corev1.Secret
 		expectError        bool
 		expectNilResult    bool
 		validateResult     func(*testing.T, *TLSResult)
 		validateCert       func(*testing.T, *certmanagerv1.Certificate)
+		validateCertAbsent bool
 		validateGateway    func(*testing.T, *gatewayv1.Gateway)
 		validateConditions func(*testing.T, *appsv1.NebariApp)
 	}{
@@ -242,7 +250,7 @@ func TestReconcileTLS(t *testing.T) { //nolint:gocyclo // table-driven test with
 			},
 		},
 		{
-			name: "No ClusterIssuer configured returns error",
+			name: "No ClusterIssuer configured and no secretName: skip TLS, fall back to shared listener",
 			nebariApp: &appsv1.NebariApp{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-app",
@@ -256,7 +264,7 @@ func TestReconcileTLS(t *testing.T) { //nolint:gocyclo // table-driven test with
 			},
 			clusterIssuerName: "", // Empty - no ClusterIssuer configured
 			gateway:           newGateway(constants.PublicGatewayName),
-			expectError:       true,
+			expectError:       false,
 			expectNilResult:   true,
 			validateConditions: func(t *testing.T, app *appsv1.NebariApp) {
 				c := conditions.GetCondition(app, appsv1.ConditionTypeTLSReady)
@@ -265,6 +273,9 @@ func TestReconcileTLS(t *testing.T) { //nolint:gocyclo // table-driven test with
 				}
 				if c.Status != metav1.ConditionFalse {
 					t.Errorf("expected TLSReady=False, got %s", c.Status)
+				}
+				if c.Reason != "ClusterIssuerNotConfigured" {
+					t.Errorf("expected reason ClusterIssuerNotConfigured, got %s", c.Reason)
 				}
 			},
 		},
@@ -466,6 +477,224 @@ func TestReconcileTLS(t *testing.T) { //nolint:gocyclo // table-driven test with
 				}
 			},
 		},
+		{
+			name: "secretName set with valid TLS secret: listener added, no Certificate, TLSReady=True",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{Name: "bring-your-own", Namespace: "default"},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "byo.example.com",
+					Service:  appsv1.ServiceReference{Name: "svc", Port: 8080},
+					Routing: &appsv1.RoutingConfig{
+						TLS: &appsv1.RoutingTLSConfig{
+							Enabled:    boolPtr(true),
+							SecretName: "my-wildcard-tls",
+						},
+					},
+				},
+			},
+			clusterIssuerName: "letsencrypt-prod",
+			gateway:           newGateway(constants.PublicGatewayName),
+			existingSecret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: "my-wildcard-tls", Namespace: constants.GatewayNamespace},
+				Type:       corev1.SecretTypeTLS,
+				Data: map[string][]byte{
+					corev1.TLSCertKey:       []byte("stubcert"),
+					corev1.TLSPrivateKeyKey: []byte("stubkey"),
+				},
+			},
+			expectError:     false,
+			expectNilResult: false,
+			validateResult: func(t *testing.T, result *TLSResult) {
+				if result.SecretName != "my-wildcard-tls" {
+					t.Errorf("expected result.SecretName = my-wildcard-tls, got %s", result.SecretName)
+				}
+				if !result.CertReady {
+					t.Error("expected CertReady=true for a valid user-provided secret")
+				}
+			},
+			validateGateway: func(t *testing.T, gw *gatewayv1.Gateway) {
+				if len(gw.Spec.Listeners) != 1 {
+					t.Fatalf("expected 1 listener, got %d", len(gw.Spec.Listeners))
+				}
+				refs := gw.Spec.Listeners[0].TLS.CertificateRefs
+				if len(refs) != 1 || string(refs[0].Name) != "my-wildcard-tls" {
+					t.Errorf("expected listener cert ref my-wildcard-tls, got %+v", refs)
+				}
+			},
+			validateCertAbsent: true,
+			validateConditions: func(t *testing.T, app *appsv1.NebariApp) {
+				c := conditions.GetCondition(app, appsv1.ConditionTypeTLSReady)
+				if c == nil || c.Status != metav1.ConditionTrue || c.Reason != appsv1.ReasonUserProvidedSecretReady {
+					t.Errorf("expected TLSReady=True/UserProvidedSecretReady, got %+v", c)
+				}
+			},
+		},
+		{
+			name: "secretName set with missing secret: listener still added, TLSReady=False/NotFound",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{Name: "missing-secret", Namespace: "default"},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "missing.example.com",
+					Service:  appsv1.ServiceReference{Name: "svc", Port: 8080},
+					Routing: &appsv1.RoutingConfig{
+						TLS: &appsv1.RoutingTLSConfig{
+							Enabled:    boolPtr(true),
+							SecretName: "absent-tls",
+						},
+					},
+				},
+			},
+			clusterIssuerName: "letsencrypt-prod",
+			gateway:           newGateway(constants.PublicGatewayName),
+			existingSecret:    nil,
+			expectError:       false,
+			expectNilResult:   false,
+			validateGateway: func(t *testing.T, gw *gatewayv1.Gateway) {
+				if len(gw.Spec.Listeners) != 1 {
+					t.Fatalf("expected listener to be added even when secret missing, got %d", len(gw.Spec.Listeners))
+				}
+			},
+			validateCertAbsent: true,
+			validateConditions: func(t *testing.T, app *appsv1.NebariApp) {
+				c := conditions.GetCondition(app, appsv1.ConditionTypeTLSReady)
+				if c == nil || c.Status != metav1.ConditionFalse || c.Reason != appsv1.ReasonUserProvidedSecretNotFound {
+					t.Errorf("expected TLSReady=False/UserProvidedSecretNotFound, got %+v", c)
+				}
+			},
+		},
+		{
+			name: "secretName set with wrong-type secret: TLSReady=False/InvalidType",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{Name: "bad-type", Namespace: "default"},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "badtype.example.com",
+					Service:  appsv1.ServiceReference{Name: "svc", Port: 8080},
+					Routing: &appsv1.RoutingConfig{
+						TLS: &appsv1.RoutingTLSConfig{
+							Enabled:    boolPtr(true),
+							SecretName: "opaque-secret",
+						},
+					},
+				},
+			},
+			clusterIssuerName: "letsencrypt-prod",
+			gateway:           newGateway(constants.PublicGatewayName),
+			existingSecret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: "opaque-secret", Namespace: constants.GatewayNamespace},
+				Type:       corev1.SecretTypeOpaque,
+			},
+			expectError:        false,
+			expectNilResult:    false,
+			validateCertAbsent: true,
+			validateConditions: func(t *testing.T, app *appsv1.NebariApp) {
+				c := conditions.GetCondition(app, appsv1.ConditionTypeTLSReady)
+				if c == nil || c.Status != metav1.ConditionFalse || c.Reason != appsv1.ReasonUserProvidedSecretInvalidType {
+					t.Errorf("expected TLSReady=False/UserProvidedSecretInvalidType, got %+v", c)
+				}
+			},
+		},
+		{
+			name: "secretName set with empty ClusterIssuerName: reconcile succeeds",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{Name: "no-issuer", Namespace: "default"},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "noissuer.example.com",
+					Service:  appsv1.ServiceReference{Name: "svc", Port: 8080},
+					Routing: &appsv1.RoutingConfig{
+						TLS: &appsv1.RoutingTLSConfig{
+							Enabled:    boolPtr(true),
+							SecretName: "my-tls",
+						},
+					},
+				},
+			},
+			clusterIssuerName: "",
+			gateway:           newGateway(constants.PublicGatewayName),
+			existingSecret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: "my-tls", Namespace: constants.GatewayNamespace},
+				Type:       corev1.SecretTypeTLS,
+				Data: map[string][]byte{
+					corev1.TLSCertKey:       []byte("stubcert"),
+					corev1.TLSPrivateKeyKey: []byte("stubkey"),
+				},
+			},
+			expectError:        false,
+			expectNilResult:    false,
+			validateCertAbsent: true,
+			validateConditions: func(t *testing.T, app *appsv1.NebariApp) {
+				c := conditions.GetCondition(app, appsv1.ConditionTypeTLSReady)
+				if c == nil || c.Status != metav1.ConditionTrue {
+					t.Errorf("expected TLSReady=True when secretName supplied without ClusterIssuer, got %+v", c)
+				}
+			},
+		},
+		{
+			name: "enabled=false with secretName set: HTTP-only, secretName ignored",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{Name: "disabled-with-secret", Namespace: "default"},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "disabled.example.com",
+					Service:  appsv1.ServiceReference{Name: "svc", Port: 8080},
+					Routing: &appsv1.RoutingConfig{
+						TLS: &appsv1.RoutingTLSConfig{
+							Enabled:    boolPtr(false),
+							SecretName: "should-be-ignored",
+						},
+					},
+				},
+			},
+			clusterIssuerName:  "letsencrypt-prod",
+			gateway:            newGateway(constants.PublicGatewayName),
+			expectError:        false,
+			expectNilResult:    true,
+			validateCertAbsent: true,
+			validateConditions: func(t *testing.T, app *appsv1.NebariApp) {
+				c := conditions.GetCondition(app, appsv1.ConditionTypeTLSReady)
+				if c == nil || c.Status != metav1.ConditionFalse || c.Reason != "TLSDisabled" {
+					t.Errorf("expected TLSReady=False/TLSDisabled (secretName must be ignored when disabled), got %+v", c)
+				}
+			},
+		},
+		{
+			name: "secretName set with pre-existing owned Certificate: Certificate is cleaned up",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{Name: "migrate", Namespace: "default"},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "migrate.example.com",
+					Service:  appsv1.ServiceReference{Name: "svc", Port: 8080},
+					Routing: &appsv1.RoutingConfig{
+						TLS: &appsv1.RoutingTLSConfig{
+							Enabled:    boolPtr(true),
+							SecretName: "my-tls",
+						},
+					},
+				},
+			},
+			clusterIssuerName: "letsencrypt-prod",
+			gateway:           newGateway(constants.PublicGatewayName),
+			existingSecret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: "my-tls", Namespace: constants.GatewayNamespace},
+				Type:       corev1.SecretTypeTLS,
+				Data: map[string][]byte{
+					corev1.TLSCertKey:       []byte("stubcert"),
+					corev1.TLSPrivateKeyKey: []byte("stubkey"),
+				},
+			},
+			existingCert: &certmanagerv1.Certificate{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      naming.CertificateName(&appsv1.NebariApp{ObjectMeta: metav1.ObjectMeta{Name: "migrate", Namespace: "default"}}),
+					Namespace: constants.GatewayNamespace,
+					Labels: map[string]string{
+						"app.kubernetes.io/managed-by":   "nebari-operator",
+						"nebari.dev/nebariapp-name":      "migrate",
+						"nebari.dev/nebariapp-namespace": "default",
+					},
+				},
+			},
+			expectError:        false,
+			expectNilResult:    false,
+			validateCertAbsent: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -479,6 +708,9 @@ func TestReconcileTLS(t *testing.T) { //nolint:gocyclo // table-driven test with
 			}
 			if tt.existingCert != nil {
 				builder = builder.WithObjects(tt.existingCert)
+			}
+			if tt.existingSecret != nil {
+				builder = builder.WithObjects(tt.existingSecret)
 			}
 
 			fakeClient := builder.Build()
@@ -524,6 +756,17 @@ func TestReconcileTLS(t *testing.T) { //nolint:gocyclo // table-driven test with
 					t.Fatalf("expected Certificate to exist, got error: %v", err)
 				}
 				tt.validateCert(t, cert)
+			}
+
+			if tt.validateCertAbsent {
+				cert := &certmanagerv1.Certificate{}
+				err := fakeClient.Get(context.Background(), types.NamespacedName{
+					Name:      naming.CertificateName(tt.nebariApp),
+					Namespace: constants.GatewayNamespace,
+				}, cert)
+				if err == nil {
+					t.Error("expected Certificate to be absent (user-provided secret path), but it exists")
+				}
 			}
 
 			// Validate Gateway was patched
@@ -584,6 +827,10 @@ func TestCleanupTLS(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      naming.CertificateName(&appsv1.NebariApp{ObjectMeta: metav1.ObjectMeta{Name: "cleanup-app", Namespace: "default"}}),
 					Namespace: constants.GatewayNamespace,
+					Labels: map[string]string{
+						"nebari.dev/nebariapp-name":      "cleanup-app",
+						"nebari.dev/nebariapp-namespace": "default",
+					},
 				},
 			},
 			expectError: false,
@@ -651,6 +898,10 @@ func TestCleanupTLS(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      naming.CertificateName(&appsv1.NebariApp{ObjectMeta: metav1.ObjectMeta{Name: "internal-cleanup", Namespace: "default"}}),
 					Namespace: constants.GatewayNamespace,
+					Labels: map[string]string{
+						"nebari.dev/nebariapp-name":      "internal-cleanup",
+						"nebari.dev/nebariapp-namespace": "default",
+					},
 				},
 			},
 			expectError: false,
@@ -718,6 +969,405 @@ func TestCleanupTLS(t *testing.T) {
 				tt.validateGW(t, gw)
 			}
 		})
+	}
+}
+
+func TestCleanupOwnedCertificate(t *testing.T) {
+	scheme := newScheme()
+
+	app := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{Name: "migrate-app", Namespace: "default"},
+		Spec: appsv1.NebariAppSpec{
+			Hostname: "migrate.example.com",
+			Service:  appsv1.ServiceReference{Name: "svc", Port: 8080},
+		},
+	}
+	certName := naming.CertificateName(app)
+
+	tests := []struct {
+		name          string
+		existingCert  *certmanagerv1.Certificate
+		expectError   bool
+		expectDeleted bool
+	}{
+		{
+			name: "Owned Certificate is deleted",
+			existingCert: &certmanagerv1.Certificate{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      certName,
+					Namespace: constants.GatewayNamespace,
+					Labels: map[string]string{
+						"app.kubernetes.io/managed-by":   "nebari-operator",
+						"nebari.dev/nebariapp-name":      "migrate-app",
+						"nebari.dev/nebariapp-namespace": "default",
+					},
+				},
+			},
+			expectError:   false,
+			expectDeleted: true,
+		},
+		{
+			name:          "Absent Certificate is a no-op",
+			existingCert:  nil,
+			expectError:   false,
+			expectDeleted: false,
+		},
+		{
+			name: "Certificate with mismatched labels is preserved",
+			existingCert: &certmanagerv1.Certificate{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      certName,
+					Namespace: constants.GatewayNamespace,
+					Labels: map[string]string{
+						"nebari.dev/nebariapp-name":      "some-other-app",
+						"nebari.dev/nebariapp-namespace": "default",
+					},
+				},
+			},
+			expectError:   false,
+			expectDeleted: false,
+		},
+		{
+			name: "Certificate with no labels is preserved",
+			existingCert: &certmanagerv1.Certificate{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      certName,
+					Namespace: constants.GatewayNamespace,
+				},
+			},
+			expectError:   false,
+			expectDeleted: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			builder := fake.NewClientBuilder().WithScheme(scheme)
+			if tt.existingCert != nil {
+				builder = builder.WithObjects(tt.existingCert)
+			}
+			fakeClient := builder.Build()
+			reconciler := &TLSReconciler{
+				Client:   fakeClient,
+				Scheme:   scheme,
+				Recorder: record.NewFakeRecorder(10),
+			}
+
+			err := reconciler.cleanupOwnedCertificate(context.Background(), app)
+
+			if tt.expectError && err == nil {
+				t.Error("expected error, got nil")
+			}
+			if !tt.expectError && err != nil {
+				t.Errorf("expected no error, got %v", err)
+			}
+
+			if tt.existingCert != nil {
+				cert := &certmanagerv1.Certificate{}
+				getErr := fakeClient.Get(context.Background(), types.NamespacedName{
+					Name:      certName,
+					Namespace: constants.GatewayNamespace,
+				}, cert)
+				if tt.expectDeleted && getErr == nil {
+					t.Error("expected Certificate to be deleted but it still exists")
+				}
+				if !tt.expectDeleted && getErr != nil {
+					t.Errorf("expected Certificate to be preserved but got error: %v", getErr)
+				}
+			}
+		})
+	}
+}
+
+func TestCheckUserProvidedSecret(t *testing.T) {
+	scheme := newScheme()
+
+	tests := []struct {
+		name           string
+		secretName     string
+		existingSecret *corev1.Secret
+		getErr         error
+		expectStatus   metav1.ConditionStatus
+		expectReason   string
+	}{
+		{
+			name:       "Valid kubernetes.io/tls secret yields Ready=True",
+			secretName: "my-tls",
+			existingSecret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "my-tls",
+					Namespace: constants.GatewayNamespace,
+				},
+				Type: corev1.SecretTypeTLS,
+				Data: map[string][]byte{
+					corev1.TLSCertKey:       []byte("-----BEGIN CERTIFICATE-----\nstub\n-----END CERTIFICATE-----\n"),
+					corev1.TLSPrivateKeyKey: []byte("-----BEGIN PRIVATE KEY-----\nstub\n-----END PRIVATE KEY-----\n"),
+				},
+			},
+			expectStatus: metav1.ConditionTrue,
+			expectReason: appsv1.ReasonUserProvidedSecretReady,
+		},
+		{
+			name:       "kubernetes.io/tls secret with empty data yields InvalidType",
+			secretName: "empty-tls",
+			existingSecret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "empty-tls",
+					Namespace: constants.GatewayNamespace,
+				},
+				Type: corev1.SecretTypeTLS,
+				// Data intentionally nil: simulates `kubectl apply -f` of a
+				// kubernetes.io/tls secret without the required PEM keys.
+			},
+			expectStatus: metav1.ConditionFalse,
+			expectReason: appsv1.ReasonUserProvidedSecretInvalidType,
+		},
+		{
+			name:       "kubernetes.io/tls secret missing tls.key yields InvalidType",
+			secretName: "no-key-tls",
+			existingSecret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "no-key-tls",
+					Namespace: constants.GatewayNamespace,
+				},
+				Type: corev1.SecretTypeTLS,
+				Data: map[string][]byte{
+					corev1.TLSCertKey: []byte("-----BEGIN CERTIFICATE-----\nstub\n-----END CERTIFICATE-----\n"),
+				},
+			},
+			expectStatus: metav1.ConditionFalse,
+			expectReason: appsv1.ReasonUserProvidedSecretInvalidType,
+		},
+		{
+			name:           "Missing secret yields NotFound",
+			secretName:     "absent-tls",
+			existingSecret: nil,
+			expectStatus:   metav1.ConditionFalse,
+			expectReason:   appsv1.ReasonUserProvidedSecretNotFound,
+		},
+		{
+			name:       "Opaque secret yields InvalidType",
+			secretName: "opaque-tls",
+			existingSecret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "opaque-tls",
+					Namespace: constants.GatewayNamespace,
+				},
+				Type: corev1.SecretTypeOpaque,
+			},
+			expectStatus: metav1.ConditionFalse,
+			expectReason: appsv1.ReasonUserProvidedSecretInvalidType,
+		},
+		{
+			name:         "Transient API error yields CheckFailed (not NotFound)",
+			secretName:   "any-tls",
+			getErr:       fmt.Errorf("etcdserver: request timed out"),
+			expectStatus: metav1.ConditionFalse,
+			expectReason: appsv1.ReasonUserProvidedSecretCheckFailed,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			builder := fake.NewClientBuilder().WithScheme(scheme)
+			if tt.existingSecret != nil {
+				builder = builder.WithObjects(tt.existingSecret)
+			}
+			if tt.getErr != nil {
+				builder = builder.WithInterceptorFuncs(interceptor.Funcs{
+					Get: func(_ context.Context, _ client.WithWatch, _ client.ObjectKey, _ client.Object, _ ...client.GetOption) error {
+						return tt.getErr
+					},
+				})
+			}
+			fakeClient := builder.Build()
+			reconciler := &TLSReconciler{
+				Client:   fakeClient,
+				Scheme:   scheme,
+				Recorder: record.NewFakeRecorder(10),
+			}
+
+			status, reason, msg := reconciler.checkUserProvidedSecret(context.Background(), tt.secretName)
+			if status != tt.expectStatus {
+				t.Errorf("expected status %s, got %s", tt.expectStatus, status)
+			}
+			if reason != tt.expectReason {
+				t.Errorf("expected reason %s, got %s", tt.expectReason, reason)
+			}
+			if msg == "" {
+				t.Error("expected non-empty message")
+			}
+		})
+	}
+}
+
+// TestCleanupTLSLeavesUnownedCertificateAlone verifies that CleanupTLS does not
+// delete a Certificate whose name collides with this NebariApp's derived name
+// but whose ownership labels point at a different NebariApp. The previous
+// implementation deleted by name only, which could remove another app's
+// Certificate in the unlikely event of a name collision.
+func TestCleanupTLSLeavesUnownedCertificateAlone(t *testing.T) {
+	scheme := newScheme()
+
+	app := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{Name: "collide-app", Namespace: "default"},
+		Spec: appsv1.NebariAppSpec{
+			Hostname: "collide.example.com",
+			Service:  appsv1.ServiceReference{Name: "svc", Port: 8080},
+		},
+	}
+	certName := naming.CertificateName(app)
+
+	// A Certificate at the same derived name, but labeled as owned by a
+	// different NebariApp ("other-app"/"other-ns"). CleanupTLS for `app` must
+	// leave this Certificate in place.
+	foreignCert := &certmanagerv1.Certificate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      certName,
+			Namespace: constants.GatewayNamespace,
+			Labels: map[string]string{
+				"nebari.dev/nebariapp-name":      "other-app",
+				"nebari.dev/nebariapp-namespace": "other-ns",
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(app, foreignCert, newGateway(constants.PublicGatewayName)).
+		Build()
+	reconciler := &TLSReconciler{
+		Client:            fakeClient,
+		Scheme:            scheme,
+		Recorder:          record.NewFakeRecorder(10),
+		ClusterIssuerName: "letsencrypt-prod",
+	}
+
+	if err := reconciler.CleanupTLS(context.Background(), app); err != nil {
+		t.Fatalf("CleanupTLS returned error: %v", err)
+	}
+
+	got := &certmanagerv1.Certificate{}
+	err := fakeClient.Get(context.Background(), types.NamespacedName{
+		Name:      certName,
+		Namespace: constants.GatewayNamespace,
+	}, got)
+	if err != nil {
+		t.Fatalf("expected unowned Certificate to be preserved, but Get returned: %v", err)
+	}
+	if got.Labels["nebari.dev/nebariapp-name"] != "other-app" {
+		t.Errorf("expected preserved Certificate's owner label to remain 'other-app', got %q",
+			got.Labels["nebari.dev/nebariapp-name"])
+	}
+}
+
+// TestUserProvidedSecretEventDedup verifies that user-provided-secret events are
+// emitted only when the TLSReady condition reason transitions, not on every
+// reconcile pass. This protects against event spam (~30s-1m reconcile cadence)
+// drowning out actual state transitions in `kubectl describe`.
+func TestUserProvidedSecretEventDedup(t *testing.T) {
+	scheme := newScheme()
+
+	app := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{Name: "byo-event-dedup", Namespace: "default"},
+		Spec: appsv1.NebariAppSpec{
+			Hostname: "byo-event-dedup.example.com",
+			Service:  appsv1.ServiceReference{Name: "svc", Port: 8080},
+			Routing: &appsv1.RoutingConfig{
+				TLS: &appsv1.RoutingTLSConfig{
+					Enabled:    boolPtr(true),
+					SecretName: "byo-tls",
+				},
+			},
+		},
+	}
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "byo-tls", Namespace: constants.GatewayNamespace},
+		Type:       corev1.SecretTypeTLS,
+		Data: map[string][]byte{
+			corev1.TLSCertKey:       []byte("stubcert"),
+			corev1.TLSPrivateKeyKey: []byte("stubkey"),
+		},
+	}
+	gw := newGateway(constants.PublicGatewayName)
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(app, secret, gw).
+		Build()
+	recorder := record.NewFakeRecorder(20)
+	reconciler := &TLSReconciler{
+		Client:            fakeClient,
+		Scheme:            scheme,
+		Recorder:          recorder,
+		ClusterIssuerName: "letsencrypt-prod",
+	}
+
+	// First reconcile: condition transitions from absent -> UserProvidedSecretReady.
+	// Expect one InUse event.
+	if _, err := reconciler.ReconcileTLS(context.Background(), app); err != nil {
+		t.Fatalf("first reconcile: unexpected error: %v", err)
+	}
+	if got := countEventsWithReason(recorder, appsv1.EventReasonUserProvidedSecretInUse); got != 1 {
+		t.Errorf("after first reconcile: expected exactly 1 UserProvidedSecretInUse event, got %d", got)
+	}
+
+	// Drain the recorder so the next assertion is independent.
+	drainRecorder(recorder)
+
+	// Second reconcile with the secret unchanged: reason should be the same and
+	// no new InUse event should fire.
+	if _, err := reconciler.ReconcileTLS(context.Background(), app); err != nil {
+		t.Fatalf("second reconcile: unexpected error: %v", err)
+	}
+	if got := countEventsWithReason(recorder, appsv1.EventReasonUserProvidedSecretInUse); got != 0 {
+		t.Errorf("after no-op reconcile: expected 0 UserProvidedSecretInUse events (dedup), got %d", got)
+	}
+
+	// Delete the secret. Next reconcile should transition reason to NotFound
+	// and fire exactly one NotFound event.
+	if err := fakeClient.Delete(context.Background(), secret); err != nil {
+		t.Fatalf("delete secret: %v", err)
+	}
+	drainRecorder(recorder)
+	if _, err := reconciler.ReconcileTLS(context.Background(), app); err != nil {
+		t.Fatalf("third reconcile: unexpected error: %v", err)
+	}
+	if got := countEventsWithReason(recorder, appsv1.EventReasonUserProvidedSecretNotFound); got != 1 {
+		t.Errorf("after secret delete: expected 1 UserProvidedSecretNotFound event, got %d", got)
+	}
+	// The condition itself must have moved off Ready.
+	if c := conditions.GetCondition(app, appsv1.ConditionTypeTLSReady); c == nil ||
+		c.Reason != appsv1.ReasonUserProvidedSecretNotFound {
+		t.Errorf("expected TLSReady reason UserProvidedSecretNotFound after secret delete, got %+v", c)
+	}
+}
+
+// countEventsWithReason drains the FakeRecorder's channel and counts how many
+// of the buffered events contain the given reason substring. FakeRecorder
+// formats each event as "<type> <reason> <message>", so a substring match on
+// the reason is reliable.
+func countEventsWithReason(r *record.FakeRecorder, reason string) int {
+	count := 0
+	for {
+		select {
+		case ev := <-r.Events:
+			if strings.Contains(ev, reason) {
+				count++
+			}
+		default:
+			return count
+		}
+	}
+}
+
+func drainRecorder(r *record.FakeRecorder) {
+	for {
+		select {
+		case <-r.Events:
+		default:
+			return
+		}
 	}
 }
 

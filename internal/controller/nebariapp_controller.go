@@ -145,10 +145,10 @@ func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// Core validation completed successfully (logged by CoreReconciler)
 
 	// Reconcile TLS certificates and Gateway listener.
-	// When TLSReconciler is nil (TLS_CLUSTER_ISSUER_NAME not set), no per-app Certificate
-	// or Gateway listener is created. The routing reconciler will fall back to the static
-	// "https" listener on the Gateway, which assumes a pre-existing shared HTTPS listener
-	// with a wildcard certificate is already configured.
+	// TLSReconciler is always wired up by main.go; the reconciler itself branches on
+	// spec.routing.tls and reports a ClusterIssuerNotConfigured condition when neither
+	// a ClusterIssuer nor routing.tls.secretName is available. The nil guard below is
+	// kept so tests can opt out of TLS reconciliation by leaving the field unset.
 	var tlsListenerName string
 	if r.TLSReconciler != nil {
 		tlsResult, err := r.TLSReconciler.ReconcileTLS(ctx, nebariApp)
@@ -164,10 +164,12 @@ func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		if tlsResult != nil {
 			tlsListenerName = tlsResult.ListenerName
 			if !tlsResult.CertReady {
-				logger.Info("TLS Certificate not ready yet, will requeue")
+				logger.Info("TLS secret not ready yet, will requeue")
 				// Save status so TLSReady=False is visible, then requeue.
-				// The Certificate watch will also trigger re-reconciliation
-				// when the cert becomes ready.
+				// On the cert-manager path the Certificate watch will also
+				// trigger re-reconciliation when the cert becomes ready; on
+				// the user-provided-secret path we rely on the periodic
+				// requeue below since there is no Secret watch.
 				nebariApp.Status.ObservedGeneration = nebariApp.Generation
 				if err := r.Status().Update(ctx, nebariApp); err != nil {
 					return ctrl.Result{}, err
