@@ -27,6 +27,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
+	"github.com/nebari-dev/nebari-operator/internal/controller/utils/ptr"
 )
 
 func TestValidateNamespaceOptIn(t *testing.T) {
@@ -184,11 +185,11 @@ func TestValidateService(t *testing.T) {
 			expectError: true,
 		},
 		{
-			name: "Cross-namespace service reference",
+			name: "Route port override not exposed by service",
 			service: &corev1.Service{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      "external-service",
-					Namespace: "other-namespace",
+					Name:      "test-service",
+					Namespace: "default",
 				},
 				Spec: corev1.ServiceSpec{
 					Ports: []corev1.ServicePort{
@@ -203,9 +204,52 @@ func TestValidateService(t *testing.T) {
 				},
 				Spec: appsv1.NebariAppSpec{
 					Service: appsv1.ServiceReference{
-						Name:      "external-service",
-						Namespace: "other-namespace",
-						Port:      8080,
+						Name: "test-service",
+						Port: 8080,
+					},
+					Routing: &appsv1.RoutingConfig{
+						Routes: []appsv1.RouteMatch{
+							{
+								PathPrefix: "/api",
+								Port:       ptr.To(int32(8000)), // not exposed by the Service
+							},
+						},
+					},
+				},
+			},
+			expectError: true,
+		},
+		{
+			name: "Route port override exposed by service passes",
+			service: &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-service",
+					Namespace: "default",
+				},
+				Spec: corev1.ServiceSpec{
+					Ports: []corev1.ServicePort{
+						{Port: 80},
+						{Port: 8000},
+					},
+				},
+			},
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app",
+					Namespace: "default",
+				},
+				Spec: appsv1.NebariAppSpec{
+					Service: appsv1.ServiceReference{
+						Name: "test-service",
+						Port: 80,
+					},
+					Routing: &appsv1.RoutingConfig{
+						Routes: []appsv1.RouteMatch{
+							{
+								PathPrefix: "/api",
+								Port:       ptr.To(int32(8000)),
+							},
+						},
 					},
 				},
 			},

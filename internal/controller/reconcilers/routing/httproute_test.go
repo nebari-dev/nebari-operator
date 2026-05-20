@@ -196,7 +196,7 @@ func TestBuildHTTPRoute(t *testing.T) {
 			gatewayName:         constants.PublicGatewayName,
 			expectedHostname:    "test.nebari.local",
 			expectedBackendPort: 8080,
-			expectedRulesCount:  1, // Single rule with multiple matches
+			expectedRulesCount:  2, // One rule per route
 		},
 	}
 
@@ -346,7 +346,7 @@ func TestBuildHTTPRouteRules(t *testing.T) {
 			expectedPathType:     gatewayv1.PathMatchPathPrefix, // Not checked when checkPathType=false
 		},
 		{
-			name: "Multiple custom routes with different path types",
+			name: "Multiple custom routes emit one rule per route",
 			nebariApp: &appsv1.NebariApp{
 				Spec: appsv1.NebariAppSpec{
 					Service: appsv1.ServiceReference{
@@ -367,8 +367,8 @@ func TestBuildHTTPRouteRules(t *testing.T) {
 					},
 				},
 			},
-			expectedRulesCount:   1, // Single rule with multiple matches
-			expectedMatchesCount: 2,
+			expectedRulesCount:   2, // One rule per route
+			expectedMatchesCount: 1, // Each rule carries a single match
 			checkPathType:        false,
 		},
 	}
@@ -381,10 +381,10 @@ func TestBuildHTTPRouteRules(t *testing.T) {
 				t.Errorf("expected %d rules, got %d", tt.expectedRulesCount, len(rules))
 			}
 
-			// Check matches count for first rule
-			if len(rules) > 0 {
-				if len(rules[0].Matches) != tt.expectedMatchesCount {
-					t.Errorf("expected %d matches in first rule, got %d", tt.expectedMatchesCount, len(rules[0].Matches))
+			// Check matches count for each rule
+			for i, rule := range rules {
+				if len(rule.Matches) != tt.expectedMatchesCount {
+					t.Errorf("rule %d: expected %d matches, got %d", i, tt.expectedMatchesCount, len(rule.Matches))
 				}
 			}
 
@@ -729,29 +729,31 @@ func TestBuildPublicHTTPRoute(t *testing.T) {
 			if len(route.Spec.Hostnames) != 1 || string(route.Spec.Hostnames[0]) != tt.nebariApp.Spec.Hostname {
 				t.Errorf("expected hostname=%s, got hostnames=%v", tt.nebariApp.Spec.Hostname, route.Spec.Hostnames)
 			}
-			if len(route.Spec.Rules) != 1 {
-				t.Fatalf("expected 1 rule, got %d", len(route.Spec.Rules))
+			// Each public route emits its own rule with a single match.
+			if len(route.Spec.Rules) != tt.expectedMatchesCount {
+				t.Fatalf("expected %d rules (one per public route), got %d", tt.expectedMatchesCount, len(route.Spec.Rules))
 			}
-			rule := route.Spec.Rules[0]
-			if len(rule.Matches) != tt.expectedMatchesCount {
-				t.Errorf("expected %d matches, got %d", tt.expectedMatchesCount, len(rule.Matches))
-			}
-			for i, match := range rule.Matches {
+			for i, rule := range route.Spec.Rules {
+				if len(rule.Matches) != 1 {
+					t.Errorf("rule %d: expected 1 match, got %d", i, len(rule.Matches))
+					continue
+				}
+				match := rule.Matches[0]
 				if match.Path == nil {
-					t.Errorf("match %d: path is nil", i)
+					t.Errorf("rule %d: path is nil", i)
 					continue
 				}
 				if i < len(tt.expectedPathTypes) && *match.Path.Type != tt.expectedPathTypes[i] {
-					t.Errorf("match %d: expected %s, got %s", i, tt.expectedPathTypes[i], *match.Path.Type)
+					t.Errorf("rule %d: expected %s, got %s", i, tt.expectedPathTypes[i], *match.Path.Type)
 				}
 				if i < len(tt.expectedPaths) && *match.Path.Value != tt.expectedPaths[i] {
-					t.Errorf("match %d: expected path=%s, got=%s", i, tt.expectedPaths[i], *match.Path.Value)
+					t.Errorf("rule %d: expected path=%s, got=%s", i, tt.expectedPaths[i], *match.Path.Value)
 				}
-			}
-			if len(rule.BackendRefs) != 1 {
-				t.Errorf("expected 1 backend ref, got %d", len(rule.BackendRefs))
-			} else if string(rule.BackendRefs[0].Name) != tt.nebariApp.Spec.Service.Name {
-				t.Errorf("expected backend name=%s, got=%s", tt.nebariApp.Spec.Service.Name, rule.BackendRefs[0].Name)
+				if len(rule.BackendRefs) != 1 {
+					t.Errorf("rule %d: expected 1 backend ref, got %d", i, len(rule.BackendRefs))
+				} else if string(rule.BackendRefs[0].Name) != tt.nebariApp.Spec.Service.Name {
+					t.Errorf("rule %d: expected backend name=%s, got=%s", i, tt.nebariApp.Spec.Service.Name, rule.BackendRefs[0].Name)
+				}
 			}
 		})
 	}
@@ -1112,80 +1114,102 @@ func TestBuildBackendRefs(t *testing.T) {
 	}
 
 	tests := []struct {
-		name              string
-		nebariApp         *appsv1.NebariApp
-		expectNamespace   bool
-		expectedNamespace string
+		name    string
+		svcName string
+		port    int32
 	}{
-		{
-			name: "Same namespace - namespace not set in backend ref",
-			nebariApp: &appsv1.NebariApp{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-app",
-					Namespace: "default",
-				},
-				Spec: appsv1.NebariAppSpec{
-					Service: appsv1.ServiceReference{
-						Name: "test-service",
-						Port: 8080,
-					},
-				},
-			},
-			expectNamespace: false,
-		},
-		{
-			name: "Cross-namespace - namespace set in backend ref",
-			nebariApp: &appsv1.NebariApp{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-app",
-					Namespace: "default",
-				},
-				Spec: appsv1.NebariAppSpec{
-					Service: appsv1.ServiceReference{
-						Name:      "external-service",
-						Namespace: "other-namespace",
-						Port:      8080,
-					},
-				},
-			},
-			expectNamespace:   true,
-			expectedNamespace: "other-namespace",
-		},
+		{name: "Default service port", svcName: "test-service", port: 8080},
+		{name: "Per-route port override", svcName: "test-service", port: 9000},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			backendRefs := reconciler.buildBackendRefs(tt.nebariApp)
+			backendRefs := reconciler.buildBackendRefs(tt.svcName, tt.port)
 
 			if len(backendRefs) != 1 {
 				t.Fatalf("expected 1 backend ref, got %d", len(backendRefs))
 			}
 
 			backendRef := backendRefs[0]
-
-			// Check service name
-			if string(backendRef.Name) != tt.nebariApp.Spec.Service.Name {
-				t.Errorf("expected name=%s, got=%s", tt.nebariApp.Spec.Service.Name, backendRef.Name)
+			if string(backendRef.Name) != tt.svcName {
+				t.Errorf("expected name=%s, got=%s", tt.svcName, backendRef.Name)
 			}
-
-			// Check port
-			expectedPort := tt.nebariApp.Spec.Service.Port
-			if *backendRef.Port != expectedPort {
-				t.Errorf("expected port=%d, got=%d", expectedPort, *backendRef.Port)
+			if backendRef.Port == nil || *backendRef.Port != tt.port {
+				t.Errorf("expected port=%d, got=%v", tt.port, backendRef.Port)
 			}
-
-			// Check namespace
-			if tt.expectNamespace {
-				if backendRef.Namespace == nil {
-					t.Error("expected namespace to be set, but it was nil")
-				} else if string(*backendRef.Namespace) != tt.expectedNamespace {
-					t.Errorf("expected namespace=%s, got=%s", tt.expectedNamespace, *backendRef.Namespace)
-				}
-			} else {
-				if backendRef.Namespace != nil {
-					t.Errorf("expected namespace to be nil, got=%s", *backendRef.Namespace)
-				}
+			// Same-namespace contract: namespace must never be set on the rendered backendRef.
+			if backendRef.Namespace != nil {
+				t.Errorf("expected namespace to be nil, got=%s", *backendRef.Namespace)
 			}
 		})
+	}
+}
+
+func TestBuildHTTPRouteRules_PerRoutePort(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = appsv1.AddToScheme(scheme)
+
+	reconciler := &RoutingReconciler{Scheme: scheme}
+	apiPort := int32(8000)
+
+	nebariApp := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "default"},
+		Spec: appsv1.NebariAppSpec{
+			Hostname: "app.example.com",
+			Service:  appsv1.ServiceReference{Name: "app-svc", Port: 80},
+			Routing: &appsv1.RoutingConfig{
+				Routes: []appsv1.RouteMatch{
+					{PathPrefix: "/api", Port: &apiPort},
+					{PathPrefix: "/"},
+				},
+			},
+		},
+	}
+
+	rules := reconciler.buildHTTPRouteRules(nebariApp)
+	if len(rules) != 2 {
+		t.Fatalf("expected 2 rules (one per route), got %d", len(rules))
+	}
+
+	// First rule: /api → app-svc:8000 (port override)
+	if string(rules[0].BackendRefs[0].Name) != "app-svc" {
+		t.Errorf("expected first rule to point at app-svc, got %s", rules[0].BackendRefs[0].Name)
+	}
+	if rules[0].BackendRefs[0].Port == nil || *rules[0].BackendRefs[0].Port != 8000 {
+		t.Errorf("expected first rule port 8000, got %+v", rules[0].BackendRefs[0].Port)
+	}
+
+	// Second rule: / → app-svc:80 (fallback to spec.service.port)
+	if string(rules[1].BackendRefs[0].Name) != "app-svc" {
+		t.Errorf("expected second rule to point at app-svc, got %s", rules[1].BackendRefs[0].Name)
+	}
+	if rules[1].BackendRefs[0].Port == nil || *rules[1].BackendRefs[0].Port != 80 {
+		t.Errorf("expected second rule port 80 (default), got %+v", rules[1].BackendRefs[0].Port)
+	}
+}
+
+func TestBuildHTTPRouteRules_NoRoutes(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = appsv1.AddToScheme(scheme)
+
+	reconciler := &RoutingReconciler{Scheme: scheme}
+
+	nebariApp := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "default"},
+		Spec: appsv1.NebariAppSpec{
+			Hostname: "app.example.com",
+			Service:  appsv1.ServiceReference{Name: "svc", Port: 80},
+		},
+	}
+
+	rules := reconciler.buildHTTPRouteRules(nebariApp)
+	if len(rules) != 1 {
+		t.Fatalf("expected exactly 1 rule when no routes configured, got %d", len(rules))
+	}
+	if len(rules[0].Matches) != 0 {
+		t.Errorf("expected empty matches (Gateway API defaults to '/'), got %d", len(rules[0].Matches))
+	}
+	if len(rules[0].BackendRefs) != 1 || string(rules[0].BackendRefs[0].Name) != "svc" {
+		t.Errorf("expected single rule pointing at spec.service, got %+v", rules[0].BackendRefs)
 	}
 }

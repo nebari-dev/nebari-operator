@@ -25,12 +25,23 @@ type NebariAppSpec struct {
 	// Hostname is the fully qualified domain name where the application should be accessible.
 	// This will be used to generate HTTPRoute.
 	// Example: "myapp.nebari.local" or "api.example.com"
+	//
+	// Each NebariApp exposes exactly one public hostname and is backed by exactly
+	// one Kubernetes Service (spec.service). Packs that need multiple hostnames,
+	// or that genuinely need to fan out to multiple Services, must be split into
+	// multiple NebariApps. This is an intentional boundary so a NebariApp's TLS,
+	// auth, landing-page card, and routing concerns all scope to a single
+	// user-visible URL backed by a single Service. To fan out by path under one
+	// hostname to different ports on that Service, use routing.routes[].port.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`
 	Hostname string `json:"hostname"`
 
-	// Service defines the backend Kubernetes Service that should receive traffic.
+	// Service defines the single backend Kubernetes Service that receives traffic
+	// for this NebariApp. spec.service.port is the default backend port for routes
+	// that don't override via routing.routes[].port. Multi-backend (multiple Services
+	// per NebariApp) is not supported by design — use multiple NebariApps instead.
 	// +kubebuilder:validation:Required
 	Service ServiceReference `json:"service"`
 
@@ -63,26 +74,24 @@ type NebariAppSpec struct {
 	LandingPage *LandingPageConfig `json:"landingPage,omitempty"`
 }
 
-// ServiceReference identifies the Kubernetes Service that backs this application.
+// ServiceReference identifies a Kubernetes Service in the NebariApp's own
+// namespace. Cross-namespace backends are not supported: the operator-generated
+// HTTPRoute would require a Gateway API ReferenceGrant in the target namespace
+// to actually carry traffic, and the operator does not create one. Workloads
+// that need to talk across namespaces should do so via in-cluster DNS rather
+// than via the public HTTPRoute.
 type ServiceReference struct {
-	// Name is the name of the Kubernetes Service in the same namespace.
+	// Name is the name of the Kubernetes Service in the NebariApp's namespace.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	Name string `json:"name"`
 
-	// Port is the port number on the Service to route traffic to.
+	// Port is the default port number on the Service to route traffic to.
+	// Individual routes may override this via routing.routes[].port.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=65535
 	Port int32 `json:"port"`
-
-	// Namespace is the namespace of the Service (if different from the NebariApp).
-	// If not specified, defaults to the NebariApp's namespace.
-	// This allows referencing services in other namespaces for centralized service architectures.
-	// Note: The operator has cluster-scoped permissions to read Services across all namespaces.
-	// +optional
-	// +kubebuilder:validation:MinLength=1
-	Namespace string `json:"namespace,omitempty"`
 }
 
 // RoutingConfig configures routing behavior for the application.
@@ -125,7 +134,7 @@ type RoutingConfig struct {
 // RouteMatch defines a path-based routing rule.
 type RouteMatch struct {
 	// PathPrefix specifies the path prefix to match for routing.
-	// Traffic matching this prefix will be routed to the service.
+	// Traffic matching this prefix will be routed to spec.service on the resolved port.
 	// Must start with "/". Example: "/app-1", "/api/v1"
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Pattern=`^/.*`
@@ -140,6 +149,16 @@ type RouteMatch struct {
 	// +kubebuilder:validation:Enum=PathPrefix;Exact
 	// +optional
 	PathType string `json:"pathType,omitempty"`
+
+	// Port optionally overrides the default backend port (spec.service.port)
+	// for this route. The referenced port must be exposed by spec.service.
+	// When omitted, the route forwards to spec.service.port. This is the only
+	// mechanism for path-based port differentiation; per-route backend Services
+	// are not supported (use multiple NebariApps instead).
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	Port *int32 `json:"port,omitempty"`
 }
 
 // RoutingTLSConfig controls TLS termination for the HTTPRoute.
