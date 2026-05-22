@@ -296,6 +296,8 @@ func buildServiceDiscoveryStatus(app *appsv1.NebariApp) *appsv1.ServiceDiscovery
 		Description:    lp.Description,
 		URL:            url,
 		Icon:           lp.Icon,
+		IconLight:      lp.IconLight,
+		IconDark:       lp.IconDark,
 		Category:       lp.Category,
 		Priority:       priority,
 		Visibility:     visibility,

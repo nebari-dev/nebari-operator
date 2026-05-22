@@ -439,10 +439,21 @@ type LandingPageConfig struct {
 	Description string `json:"description,omitempty"`
 
 	// Icon is an identifier for the service icon (e.g., "jupyter", "grafana")
-	// or a URL to a custom icon image.
+	// or a URL to a custom icon image. Shown in both light and dark mode when
+	// IconLight/IconDark are not set.
 	// Supported built-in icons: jupyter, grafana, prometheus, keycloak, argocd, kubernetes
 	// +optional
 	Icon string `json:"icon,omitempty"`
+
+	// IconLight is the URL of the icon to display when the UI is in light mode.
+	// Takes precedence over Icon in light mode.
+	// +optional
+	IconLight string `json:"iconLight,omitempty"`
+
+	// IconDark is the URL of the icon to display when the UI is in dark mode.
+	// Takes precedence over Icon in dark mode.
+	// +optional
+	IconDark string `json:"iconDark,omitempty"`
 
 	// Category groups related services together on the landing page.
 	// Common categories: Development, Monitoring, Platform, Data Science
@@ -522,9 +533,17 @@ type ServiceDiscoveryStatus struct {
 	// +optional
 	URL string `json:"url,omitempty"`
 
-	// Icon identifies the service icon.
+	// Icon identifies the service icon (default, shown in both light and dark mode).
 	// +optional
 	Icon string `json:"icon,omitempty"`
+
+	// IconLight is the icon URL for light mode.
+	// +optional
+	IconLight string `json:"iconLight,omitempty"`
+
+	// IconDark is the icon URL for dark mode.
+	// +optional
+	IconDark string `json:"iconDark,omitempty"`
 
 	// Category groups related services on the landing page.
 	// +optional
