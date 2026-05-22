@@ -613,7 +613,19 @@ Supplementary text shown on the service card.
 
 **Type:** `string` (optional)
 
-Icon identifier or URL to a custom icon image. Supported built-in icons: `jupyter`, `grafana`, `prometheus`, `keycloak`, `argocd`, `kubernetes`.
+Default icon — shown in both light and dark mode when `iconLight`/`iconDark` are not set. Accepts an icon identifier or a URL to a custom icon image. Supported built-in icons: `jupyter`, `grafana`, `prometheus`, `keycloak`, `argocd`, `kubernetes`.
+
+#### landingPage.iconLight
+
+**Type:** `string` (optional)
+
+URL of the icon to display when the UI is in light mode. Takes precedence over `icon` in light mode.
+
+#### landingPage.iconDark
+
+**Type:** `string` (optional)
+
+URL of the icon to display when the UI is in dark mode. Takes precedence over `icon` in dark mode.
 
 #### landingPage.category
 
