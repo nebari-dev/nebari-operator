@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -246,13 +247,21 @@ func GetNonEmptyLines(output string) []string {
 // LoadTestDataFile reads a YAML file from the testdata directory and replaces placeholders.
 // The replacements map contains key-value pairs where keys are placeholders to be replaced
 // with their corresponding values.
+//
+// filename is constrained to stay within test/e2e/testdata/ — `..` traversal is rejected.
 func LoadTestDataFile(filename string, replacements map[string]string) (string, error) {
 	projectDir, err := GetProjectDir()
 	if err != nil {
 		return "", fmt.Errorf("failed to get project directory: %w", err)
 	}
 
-	filePath := fmt.Sprintf("%s/test/e2e/testdata/%s", projectDir, filename)
+	testdataDir := filepath.Join(projectDir, "test", "e2e", "testdata")
+	filePath := filepath.Clean(filepath.Join(testdataDir, filename))
+	rel, err := filepath.Rel(testdataDir, filePath)
+	if err != nil || strings.HasPrefix(rel, "..") || strings.Contains(rel, string(filepath.Separator)+"..") {
+		return "", fmt.Errorf("invalid filename %q: must be inside test/e2e/testdata/", filename)
+	}
+
 	content, err := os.ReadFile(filePath)
 	if err != nil {
 		return "", fmt.Errorf("failed to read file %s: %w", filePath, err)
@@ -330,9 +339,7 @@ func UncommentCode(filename, target, prefix string) error {
 		return fmt.Errorf("failed to write to output: %w", err)
 	}
 
-	// false positive
-	// nolint:gosec
-	if err = os.WriteFile(filename, out.Bytes(), 0644); err != nil {
+	if err = os.WriteFile(filename, out.Bytes(), 0600); err != nil {
 		return fmt.Errorf("failed to write file %q: %w", filename, err)
 	}
 
