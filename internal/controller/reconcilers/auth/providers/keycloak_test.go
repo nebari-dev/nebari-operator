@@ -18,6 +18,7 @@ package providers
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -34,6 +35,12 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+)
+
+// Path segment constants used in handler URL parsing in test mocks below.
+const (
+	clientsPathSegment         = "clients"
+	protocolMappersPathSegment = "protocol-mappers"
 )
 
 func TestKeycloakProvider_GetIssuerURL(t *testing.T) {
@@ -1559,4 +1566,218 @@ func TestKeycloakProvider_ConfigureTokenExchange(t *testing.T) {
 	// Will fail without a live Keycloak instance, but verifies the method
 	// has the correct signature and handles the call path
 	_ = provider.ConfigureTokenExchange(context.Background(), nebariApp, []string{"peer-client-uuid"})
+}
+
+// TestKeycloakProvider_ConfigureTokenExchange_SetsStandardTokenExchangeAttribute
+// asserts the operator enables Keycloak Standard Token Exchange (V2, RFC 8693)
+// on each peer client by setting the `standard.token.exchange.enabled=true`
+// client attribute via UpdateClient.
+//
+// Background: Keycloak 26.2+ ships TOKEN_EXCHANGE_STANDARD_V2 enabled by default
+// alongside the legacy TOKEN_EXCHANGE feature. When V2 is active, Keycloak
+// routes the urn:ietf:params:oauth:grant-type:token-exchange grant through V2,
+// which requires the *requesting* client to have the standard token exchange
+// attribute set; the V1 fine-grained-authz wiring on the *target* client is
+// ignored. Without this attribute, every exchange returns
+// 403 access_denied "Client not allowed to exchange".
+func TestKeycloakProvider_ConfigureTokenExchange_SetsStandardTokenExchangeAttribute(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = appsv1.AddToScheme(scheme)
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	peerClientIDs := []string{"peer-alpha", "peer-beta"}
+	// Capture every UpdateClient (PUT /admin/realms/{realm}/clients/{id})
+	// payload keyed by the path's client UUID so the assertion can scan the
+	// peer clients only (target client + realm-management may also be PUT).
+	updates := map[string][]byte{}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		// gocloak.LoginAdmin
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/realms/master/protocol/openid-connect/token"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"access_token":"admin-token","token_type":"Bearer","expires_in":300}`))
+			return
+
+		// gocloak.GetClients(?clientId=X) — return a single client whose
+		// internal UUID matches the clientId so downstream PUT paths are
+		// predictable in the assertion.
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/clients"):
+			clientID := r.URL.Query().Get("clientId")
+			if clientID == "" {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`[]`))
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[{"id":"` + clientID + `-uuid","clientId":"` + clientID + `","attributes":{}}]`))
+			return
+
+		// gocloak.UpdateClient — capture body for each PUT to a client UUID.
+		case r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/clients/"):
+			// Skip nested authz/realm-management resources by checking
+			// for a trailing /clients/{id} path with no further segments.
+			parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/"), "/")
+			// Expect ["admin","realms","test","clients","<id>"]
+			if len(parts) == 5 && parts[3] == clientsPathSegment {
+				body, _ := io.ReadAll(r.Body)
+				updates[parts[4]] = body
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+		}
+		// Any other Keycloak API the V1 wiring touches will 500; the V2
+		// attribute step must run first and complete before V1 errors out.
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	provider := &KeycloakProvider{
+		Config: config.KeycloakConfig{
+			URL:           server.URL,
+			Realm:         "test",
+			AdminUsername: "admin",
+			AdminPassword: "admin",
+		},
+		Client: k8sClient,
+	}
+
+	nebariApp := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-app",
+			Namespace: "default",
+			UID:       "test-uid",
+		},
+		Spec: appsv1.NebariAppSpec{
+			Hostname: "test.example.com",
+			Auth: &appsv1.AuthConfig{
+				Enabled: true,
+				TokenExchange: &appsv1.TokenExchangeConfig{
+					Enabled: true,
+				},
+			},
+		},
+	}
+
+	// Error from downstream V1 wiring (mock returns 500 for those endpoints)
+	// is expected and irrelevant — the V2 attribute step must run regardless.
+	_ = provider.ConfigureTokenExchange(context.Background(), nebariApp, peerClientIDs)
+
+	for _, peer := range peerClientIDs {
+		body, ok := updates[peer+"-uuid"]
+		if !ok {
+			t.Errorf("expected UpdateClient (PUT /admin/realms/test/clients/%s-uuid) for peer %q, got none", peer, peer)
+			continue
+		}
+		if !strings.Contains(string(body), `"standard.token.exchange.enabled":"true"`) {
+			t.Errorf("peer %q: expected attributes.standard.token.exchange.enabled=true in UpdateClient body, got: %s", peer, string(body))
+		}
+	}
+}
+
+// TestKeycloakProvider_ConfigureTokenExchange_AddsAudienceMapper asserts the
+// operator creates an oidc-audience-mapper protocol mapper on each peer client
+// targeting the target client's clientId. Required by Keycloak Standard Token
+// Exchange V2 in addition to the standard.token.exchange.enabled attribute:
+// without an audience entry in the requesting client's scope tree, every
+// exchange returns 400 invalid_request "Requested audience not available:
+// <target>".
+func TestKeycloakProvider_ConfigureTokenExchange_AddsAudienceMapper(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = appsv1.AddToScheme(scheme)
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	peerClientIDs := []string{"peer-alpha", "peer-beta"}
+	// Capture POSTs to /admin/realms/test/clients/<id>/protocol-mappers/models,
+	// keyed by client UUID (path segment), with the request body.
+	mapperPosts := map[string][]byte{}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/realms/master/protocol/openid-connect/token"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"access_token":"admin-token","token_type":"Bearer","expires_in":300}`))
+			return
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/clients"):
+			clientID := r.URL.Query().Get("clientId")
+			if clientID == "" {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`[]`))
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[{"id":"` + clientID + `-uuid","clientId":"` + clientID + `","attributes":{}}]`))
+			return
+		case r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/clients/"):
+			parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/"), "/")
+			if len(parts) == 5 && parts[3] == clientsPathSegment {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/protocol-mappers/models"):
+			// Path: /admin/realms/test/clients/<uuid>/protocol-mappers/models
+			parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/"), "/")
+			if len(parts) >= 7 && parts[3] == clientsPathSegment && parts[5] == protocolMappersPathSegment {
+				body, _ := io.ReadAll(r.Body)
+				mapperPosts[parts[4]] = body
+				w.WriteHeader(http.StatusCreated)
+				return
+			}
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	provider := &KeycloakProvider{
+		Config: config.KeycloakConfig{
+			URL:           server.URL,
+			Realm:         "test",
+			AdminUsername: "admin",
+			AdminPassword: "admin",
+		},
+		Client: k8sClient,
+	}
+
+	nebariApp := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-app",
+			Namespace: "default",
+			UID:       "test-uid",
+		},
+		Spec: appsv1.NebariAppSpec{
+			Hostname: "test.example.com",
+			Auth: &appsv1.AuthConfig{
+				Enabled: true,
+				TokenExchange: &appsv1.TokenExchangeConfig{
+					Enabled: true,
+				},
+			},
+		},
+	}
+
+	// Errors from the V1 wiring path are expected (mock returns 500); the V2
+	// audience mapper step must run regardless.
+	_ = provider.ConfigureTokenExchange(context.Background(), nebariApp, peerClientIDs)
+
+	// The target client's clientId is derived from the NebariApp via GetClientID;
+	// for "test-app" in the "default" namespace, the convention is
+	// "<namespace>-<name>" → "default-test-app".
+	wantTargetClientID := provider.GetClientID(context.Background(), nebariApp)
+
+	for _, peer := range peerClientIDs {
+		body, ok := mapperPosts[peer+"-uuid"]
+		if !ok {
+			t.Errorf("expected POST to /clients/%s-uuid/protocol-mappers/models for peer %q, got none", peer, peer)
+			continue
+		}
+		s := string(body)
+		if !strings.Contains(s, `"protocolMapper":"oidc-audience-mapper"`) {
+			t.Errorf("peer %q: expected protocolMapper=oidc-audience-mapper, body=%s", peer, s)
+		}
+		if !strings.Contains(s, `"included.client.audience":"`+wantTargetClientID+`"`) {
+			t.Errorf("peer %q: expected included.client.audience=%q, body=%s", peer, wantTargetClientID, s)
+		}
+	}
 }
