@@ -178,7 +178,9 @@ _Appears in:_
 | `enabled` _boolean_ | Enabled determines if this service appears on the landing page.<br />When false, the service is not shown on the landing page. | false |  |
 | `displayName` _string_ | DisplayName is the human-readable name shown on the landing page.<br />Required when Enabled is true. |  | MaxLength: 64 <br />Optional: \{\} <br /> |
 | `description` _string_ | Description provides additional context about the service.<br />Shown as supplementary text on the service card. |  | MaxLength: 256 <br />Optional: \{\} <br /> |
-| `icon` _string_ | Icon is an identifier for the service icon (e.g., "jupyter", "grafana")<br />or a URL to a custom icon image.<br />Supported built-in icons: jupyter, grafana, prometheus, keycloak, argocd, kubernetes |  | Optional: \{\} <br /> |
+| `icon` _string_ | Icon is an identifier for the service icon (e.g., "jupyter", "grafana")<br />or a URL to a custom icon image. Shown in both light and dark mode when<br />IconLight/IconDark are not set.<br />Supported built-in icons: jupyter, grafana, prometheus, keycloak, argocd, kubernetes |  | Optional: \{\} <br /> |
+| `iconLight` _string_ | IconLight is the URL of the icon to display when the UI is in light mode.<br />Takes precedence over Icon in light mode. |  | Optional: \{\} <br /> |
+| `iconDark` _string_ | IconDark is the URL of the icon to display when the UI is in dark mode.<br />Takes precedence over Icon in dark mode. |  | Optional: \{\} <br /> |
 | `category` _string_ | Category groups related services together on the landing page.<br />Common categories: Development, Monitoring, Platform, Data Science |  | Optional: \{\} <br /> |
 | `priority` _integer_ | Priority determines sort order within a category (lower number = higher priority).<br />Services are displayed in ascending priority order within each category. | 100 | Maximum: 1000 <br />Minimum: 0 <br />Optional: \{\} <br /> |
 | `externalUrl` _string_ | ExternalUrl overrides the default URL derived from the hostname.<br />Use this when the service URL differs from https://<hostname> |  | Optional: \{\} <br /> |
@@ -363,7 +365,9 @@ _Appears in:_
 | `displayName` _string_ | DisplayName is the human-readable name shown on the landing page. |  | Optional: \{\} <br /> |
 | `description` _string_ | Description is supplementary text for the service card. |  | Optional: \{\} <br /> |
 | `url` _string_ | URL is the effective service URL (derived from spec.hostname or<br />spec.landingPage.externalUrl by the controller). |  | Optional: \{\} <br /> |
-| `icon` _string_ | Icon identifies the service icon. |  | Optional: \{\} <br /> |
+| `icon` _string_ | Icon identifies the service icon (default, shown in both light and dark mode). |  | Optional: \{\} <br /> |
+| `iconLight` _string_ | IconLight is the icon URL for light mode. |  | Optional: \{\} <br /> |
+| `iconDark` _string_ | IconDark is the icon URL for dark mode. |  | Optional: \{\} <br /> |
 | `category` _string_ | Category groups related services on the landing page. |  | Optional: \{\} <br /> |
 | `priority` _integer_ | Priority controls sort order within a category (lower = higher priority). |  | Maximum: 1000 <br />Minimum: 0 <br />Optional: \{\} <br /> |
 | `visibility` _string_ | Visibility controls who can see this service (public/private). |  | Optional: \{\} <br /> |
