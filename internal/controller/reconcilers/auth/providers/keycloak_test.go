@@ -511,6 +511,47 @@ func TestKeycloakProvider_StoreClientSecret(t *testing.T) {
 	}
 }
 
+// TestKeycloakProvider_StoreClientSecret_SetsOwnerReference asserts the OIDC
+// client secret is created with a controller owner reference to the NebariApp,
+// so it is garbage-collected with the app and matched by the controller's
+// Owns(&corev1.Secret{}) watch (see #30).
+func TestKeycloakProvider_StoreClientSecret_SetsOwnerReference(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = appsv1.AddToScheme(scheme)
+
+	nebariApp := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-app", Namespace: "default", UID: "test-uid"},
+	}
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(nebariApp).Build()
+
+	provider := &KeycloakProvider{
+		Config: config.KeycloakConfig{},
+		Client: k8sClient,
+		Scheme: scheme,
+	}
+
+	if err := provider.storeClientSecret(context.Background(), nebariApp, "default-test-app", "secret-value", "", "", ""); err != nil {
+		t.Fatalf("storeClientSecret returned error: %v", err)
+	}
+
+	secret := &corev1.Secret{}
+	if err := k8sClient.Get(context.Background(), types.NamespacedName{
+		Name:      naming.ClientSecretName(nebariApp),
+		Namespace: nebariApp.Namespace,
+	}, secret); err != nil {
+		t.Fatalf("failed to get secret: %v", err)
+	}
+
+	owner := metav1.GetControllerOf(secret)
+	if owner == nil {
+		t.Fatal("expected a controller owner reference on the OIDC client secret, got none")
+	}
+	if owner.Kind != "NebariApp" || owner.Name != nebariApp.Name {
+		t.Errorf("expected controller owner NebariApp/%s, got %s/%s", nebariApp.Name, owner.Kind, owner.Name)
+	}
+}
+
 func TestKeycloakProvider_LoadCredentials(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
