@@ -212,6 +212,7 @@ func main() {
 		// Initialize provider with config - credentials will be loaded from secret when needed
 		keycloakProvider := &providers.KeycloakProvider{
 			Client: mgr.GetClient(),
+			Scheme: mgr.GetScheme(),
 			Config: authConfig.Keycloak,
 		}
 		oidcProviders[constants.ProviderKeycloak] = keycloakProvider

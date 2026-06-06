@@ -22,6 +22,7 @@ import (
 	"time"
 
 	certmanagerv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
+	egv1alpha1 "github.com/envoyproxy/gateway/api/v1alpha1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
@@ -30,11 +31,14 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
 
@@ -382,22 +386,70 @@ func (r *NebariAppReconciler) cleanup(ctx context.Context, nebariApp *appsv1.Neb
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *NebariAppReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	builder := ctrl.NewControllerManagedBy(mgr).
+	b := ctrl.NewControllerManagedBy(mgr).
 		For(&appsv1.NebariApp{}).
-		Named("nebariapp")
+		Named("nebariapp").
+		// Watch the resources the operator owns so that external edits or
+		// deletions trigger prompt reconciliation (re-creation / drift repair)
+		// instead of waiting up to the periodic requeue interval. Owned objects
+		// are mapped back to their NebariApp via controller owner references:
+		// HTTPRoutes and SecurityPolicies set them at construction; the OIDC
+		// client Secret now sets one in storeClientSecret.
+		Owns(&gatewayv1.HTTPRoute{}).
+		Owns(&egv1alpha1.SecurityPolicy{}).
+		Owns(&corev1.Secret{})
 
 	// Watch cert-manager Certificates so that Certificate readiness transitions
 	// trigger NebariApp reconciliation without waiting for the periodic requeue.
 	// Certificates are matched to NebariApps via the nebari.dev/nebariapp-name
 	// and nebari.dev/nebariapp-namespace labels.
 	if r.TLSReconciler != nil {
-		builder = builder.Watches(
+		b = b.Watches(
 			&certmanagerv1.Certificate{},
 			handler.EnqueueRequestsFromMapFunc(r.certificateToNebariApp),
 		)
 	}
 
-	return builder.Complete(r)
+	// Watch user-provided TLS secrets in the Gateway namespace. When a NebariApp
+	// references routing.tls.secretName for a secret that does not yet exist (or
+	// has the wrong type), TLSReady stays False; creating or fixing the secret
+	// should flip it promptly rather than on the next periodic requeue. The
+	// predicate restricts the watch to the Gateway namespace, the only place a
+	// user-provided secret is read from. The OIDC client Secret in app namespaces
+	// is handled by Owns above; this watch is for the unowned, user-managed secret.
+	b = b.Watches(
+		&corev1.Secret{},
+		handler.EnqueueRequestsFromMapFunc(r.secretToNebariApp),
+		builder.WithPredicates(predicate.NewPredicateFuncs(func(obj client.Object) bool {
+			return obj.GetNamespace() == constants.GatewayNamespace
+		})),
+	)
+
+	return b.Complete(r)
+}
+
+// secretToNebariApp maps a user-provided TLS Secret in the Gateway namespace to
+// any NebariApp that references it via routing.tls.secretName. The NebariApp list
+// is served from the controller cache, so the per-event cost is negligible.
+func (r *NebariAppReconciler) secretToNebariApp(ctx context.Context, obj client.Object) []reconcile.Request {
+	var apps appsv1.NebariAppList
+	if err := r.List(ctx, &apps); err != nil {
+		return nil
+	}
+
+	var requests []reconcile.Request
+	for i := range apps.Items {
+		app := &apps.Items[i]
+		if app.Spec.Routing == nil || app.Spec.Routing.TLS == nil {
+			continue
+		}
+		if app.Spec.Routing.TLS.SecretName == obj.GetName() {
+			requests = append(requests, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: app.Name, Namespace: app.Namespace},
+			})
+		}
+	}
+	return requests
 }
 
 // certificateToNebariApp maps a cert-manager Certificate to the NebariApp that owns it
