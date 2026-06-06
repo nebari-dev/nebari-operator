@@ -25,6 +25,7 @@ import (
 
 	egv1alpha1 "github.com/envoyproxy/gateway/api/v1alpha1"
 	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
+	"github.com/nebari-dev/nebari-operator/internal/config"
 	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/auth/providers"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/constants"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/naming"
@@ -676,6 +677,69 @@ func TestBuildSecurityPolicySpec_ForwardAccessToken(t *testing.T) {
 				t.Errorf("ForwardAccessToken = %s, want %s", got, wantStr)
 			}
 		})
+	}
+}
+
+// TestBuildSecurityPolicySpec_KeycloakSplitEndpoints exercises the split-endpoint
+// behavior end to end through the reconciler using a real KeycloakProvider (not the
+// mock). A provider configured with both an in-cluster service and a public
+// KEYCLOAK_EXTERNAL_URL must yield a SecurityPolicy whose back-channel Token
+// endpoint stays in-cluster while the browser-facing Authorization and EndSession
+// endpoints point at the public URL. Guards against a refactor of the
+// override-application logic in reconciler.go silently diverging from the
+// provider's GetEndpointOverrides (see #113).
+func TestBuildSecurityPolicySpec_KeycloakSplitEndpoints(t *testing.T) {
+	provider := &providers.KeycloakProvider{
+		Config: config.KeycloakConfig{
+			Realm:                  "nebari",
+			IssuerServiceName:      "keycloak-keycloakx-http",
+			IssuerServiceNamespace: "keycloak",
+			IssuerServicePort:      80,
+			IssuerContextPath:      "/auth",
+			ExternalURL:            "https://keycloak.example.com/auth",
+		},
+	}
+
+	nebariApp := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-app",
+			Namespace: "demo",
+		},
+		Spec: appsv1.NebariAppSpec{
+			Hostname: "test-app.example.com",
+			Auth: &appsv1.AuthConfig{
+				Enabled:  true,
+				Provider: constants.ProviderKeycloak,
+			},
+		},
+	}
+
+	reconciler := &AuthReconciler{
+		Recorder: record.NewFakeRecorder(10),
+	}
+
+	spec, err := reconciler.buildSecurityPolicySpec(context.Background(), nebariApp, provider)
+	if err != nil {
+		t.Fatalf("buildSecurityPolicySpec returned error: %v", err)
+	}
+	if spec.OIDC == nil {
+		t.Fatal("OIDC config is nil")
+	}
+
+	// Token stays on the in-cluster service URL (port 80 + /auth, the keycloakx
+	// layout); Authorization and EndSession move to the public ExternalURL host.
+	// Full-URL assertions also guard the #136 issuer fix (port 80 and /auth prefix).
+	verifyEndpointOverrides(t, &egv1alpha1.SecurityPolicy{Spec: spec}, providers.OIDCEndpointOverrides{
+		Token:         ptr.To("http://keycloak-keycloakx-http.keycloak.svc.cluster.local:80/auth/realms/nebari/protocol/openid-connect/token"),
+		Authorization: ptr.To("https://keycloak.example.com/auth/realms/nebari/protocol/openid-connect/auth"),
+		EndSession:    ptr.To("https://keycloak.example.com/auth/realms/nebari/protocol/openid-connect/logout"),
+	})
+
+	// The SecurityPolicy issuer deliberately remains the in-cluster URL. Whether it
+	// must instead track ExternalURL when Keycloak uses a public frontendUrl is the
+	// open question tracked in #112; this assertion pins current behavior.
+	if got, want := spec.OIDC.Provider.Issuer, "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:80/auth/realms/nebari"; got != want {
+		t.Errorf("issuer: expected %q, got %q", want, got)
 	}
 }
 
