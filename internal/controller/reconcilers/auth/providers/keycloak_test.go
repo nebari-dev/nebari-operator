@@ -344,6 +344,36 @@ func TestKeycloakProvider_BuildRedirectURLs(t *testing.T) {
 	}
 }
 
+// TestKeycloakProvider_BuildWebOrigins asserts that the client's CORS WebOrigins
+// are scoped to the NebariApp hostname (both schemes) rather than a "*" wildcard
+// (see #37).
+func TestKeycloakProvider_BuildWebOrigins(t *testing.T) {
+	provider := &KeycloakProvider{Config: config.KeycloakConfig{}}
+
+	nebariApp := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-app", Namespace: "default"},
+		Spec: appsv1.NebariAppSpec{
+			Hostname: "test.example.com",
+			Auth:     &appsv1.AuthConfig{Enabled: true},
+		},
+	}
+
+	got := provider.buildWebOrigins(nebariApp)
+	want := []string{"https://test.example.com", "http://test.example.com"}
+
+	if len(got) != len(want) {
+		t.Fatalf("expected %d origins, got %d: %v", len(want), len(got), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("origin[%d]: expected %s, got %s", i, want[i], got[i])
+		}
+		if got[i] == "*" {
+			t.Errorf("origin[%d] is the wildcard '*'; WebOrigins must be host-scoped", i)
+		}
+	}
+}
+
 func TestKeycloakProvider_StoreClientSecret(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
