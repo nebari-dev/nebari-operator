@@ -193,6 +193,33 @@ spec:
 - `redirectURL`: Defaults to `https://{hostname}/oauth2/callback`
 - `scopes`: Uses `spec.auth.scopes` or defaults to `["openid", "profile", "email"]`
 
+### Issuer Semantics (Keycloak)
+
+For Keycloak, `provider.issuer` is always the **in-cluster** realm URL, even when
+`KEYCLOAK_EXTERNAL_URL` is set and Keycloak (with a public `frontendUrl`) stamps the
+**public** URL into every token's `iss` claim. This mismatch is deliberate and harmless
+([investigation in #112](https://github.com/nebari-dev/nebari-operator/issues/112)):
+
+- Envoy Gateway uses the issuer **only at control-plane time** to fetch
+  `/.well-known/openid-configuration`, and only when `authorizationEndpoint` or
+  `tokenEndpoint` is not explicitly set. When `KEYCLOAK_EXTERNAL_URL` is configured the
+  operator sets both, so the issuer URL is never contacted and never reaches the data
+  plane.
+- The Envoy `oauth2` filter has no issuer field in its configuration and never inspects
+  the token's `iss` claim (its only JWT decode is an unverified `exp` read for cookie
+  lifetimes).
+- Envoy Gateway does not enforce the OIDC Discovery issuer-match rule: it reads only the
+  endpoint fields from the discovery document and ignores its `issuer` field.
+- Consumers that **do** strictly validate `iss` — e.g. a SecurityPolicy `spec.jwt`
+  provider configured by a downstream pack — must use the public issuer. They read it
+  from the client Secret's `issuer-url` key, which is populated from
+  `GetExternalIssuerURL()` (the public URL). That key is empty when
+  `KEYCLOAK_EXTERNAL_URL` is unset, so strict-`iss` consumers require it to be set.
+
+Keeping the issuer in-cluster means the discovery fallback (used when
+`KEYCLOAK_EXTERNAL_URL` is unset) runs from the envoy-gateway controller pod over
+cluster DNS, avoiding public TLS-chain trust and hairpin-routing requirements.
+
 **On Failure:**
 - Event: `Warning` with reason `SecurityPolicyFailed`
 - Condition: `AuthReady=False` with reason `SecurityPolicyFailed`
