@@ -464,7 +464,6 @@ spec:
                       pass-through, the filters are instead validated by Gateway API when the
                       operator applies them to the generated HTTPRoute. Each entry must still be
                       a valid HTTPRouteFilter object (it is decoded into the typed Go struct).
-                    type: array
                     x-kubernetes-preserve-unknown-fields: true
                   publicRoutes:
                     description: |-

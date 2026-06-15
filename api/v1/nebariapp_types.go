@@ -149,7 +149,6 @@ type RoutingConfig struct {
 	// a valid HTTPRouteFilter object (it is decoded into the typed Go struct).
 	// +optional
 	// +kubebuilder:validation:Schemaless
-	// +kubebuilder:validation:Type=array
 	// +kubebuilder:pruning:PreserveUnknownFields
 	Filters []gatewayv1.HTTPRouteFilter `json:"filters,omitempty"`
 }
