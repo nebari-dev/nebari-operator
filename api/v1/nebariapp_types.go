@@ -140,7 +140,17 @@ type RoutingConfig struct {
 	// response headers at the gateway (for example, stripping an overpermissive
 	// CORS header an upstream sets, or adding security headers) without forking
 	// the operator or rebuilding the backend image.
+	//
+	// The field is schemaless in the CRD: inlining the full HTTPRouteFilter
+	// OpenAPI schema would copy its nested x-kubernetes-validations (CEL) rules
+	// into the NebariApp CRD and blow the per-CRD CEL cost budget. As a
+	// pass-through, the filters are instead validated by Gateway API when the
+	// operator applies them to the generated HTTPRoute. Each entry must still be
+	// a valid HTTPRouteFilter object (it is decoded into the typed Go struct).
 	// +optional
+	// +kubebuilder:validation:Schemaless
+	// +kubebuilder:validation:Type=array
+	// +kubebuilder:pruning:PreserveUnknownFields
 	Filters []gatewayv1.HTTPRouteFilter `json:"filters,omitempty"`
 }
 
