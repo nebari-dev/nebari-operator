@@ -186,7 +186,8 @@ helm-package: ## Package the Helm chart (run helm-chart first).
 	@command -v helm >/dev/null 2>&1 || { echo >&2 "helm is required but not installed. See https://helm.sh/docs/intro/install/"; exit 1; }
 	@if [ ! -d "dist/chart" ]; then echo "Error: dist/chart/ not found. Run 'make helm-chart' first."; exit 1; fi
 	helm package dist/chart --destination dist/
-	@echo "✅ Helm chart packaged in dist/"
+	helm package charts/nebari-app --destination dist/
+	@echo "✅ Helm charts packaged in dist/"
 
 .PHONY: helm-chart-version
 helm-chart-version: ## Update Helm chart version and appVersion (requires VERSION and APP_VERSION vars).
@@ -199,7 +200,31 @@ helm-chart-version: ## Update Helm chart version and appVersion (requires VERSIO
 	sed -i.bak "s/^version:.*/version: $(VERSION)/" dist/chart/Chart.yaml
 	sed -i.bak "s/^appVersion:.*/appVersion: \"$(APP_VERSION)\"/" dist/chart/Chart.yaml
 	rm -f dist/chart/Chart.yaml.bak
-	@echo "✅ Updated chart version to $(VERSION) and appVersion to $(APP_VERSION)"
+	sed -i.bak "s/^version:.*/version: $(VERSION)/" charts/nebari-app/Chart.yaml
+	sed -i.bak "s/^appVersion:.*/appVersion: \"$(APP_VERSION)\"/" charts/nebari-app/Chart.yaml
+	rm -f charts/nebari-app/Chart.yaml.bak
+	@echo "✅ Updated chart versions to $(VERSION) and appVersion to $(APP_VERSION)"
+
+.PHONY: helm-lint
+helm-lint: ## Lint the nebari-app library chart.
+	@command -v helm >/dev/null 2>&1 || { echo >&2 "helm is required but not installed. See https://helm.sh/docs/intro/install/"; exit 1; }
+	helm lint charts/nebari-app
+
+.PHONY: helm-test
+helm-test: helm-lint ## Render the nebari-app fixture chart for all cases and verify required-field guards.
+	@command -v helm >/dev/null 2>&1 || { echo >&2 "helm is required but not installed. See https://helm.sh/docs/intro/install/"; exit 1; }
+	helm dependency build test/fixture >/dev/null
+	@for c in static computed multi; do \
+		helm template t test/fixture --set cases.$$c.enabled=true >/dev/null \
+			|| { echo >&2 "case $$c failed to render"; exit 1; }; \
+		echo "  case $$c: ok"; \
+	done
+	@for f in spec.hostname metadata.name metadata.namespace spec.service.name spec.service.port; do \
+		helm template t test/fixture --set cases.static.enabled=true --set $$f= >/dev/null 2>&1 \
+			&& { echo >&2 "expected required failure for $$f"; exit 1; }; \
+		echo "  required guard $$f: ok"; \
+	done
+	@echo "✅ nebari-app chart tests passed"
 
 .PHONY: generate-dev
 generate-dev: ## Generate for development (CRDs + deepcopy code only)

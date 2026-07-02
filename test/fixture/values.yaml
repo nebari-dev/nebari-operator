@@ -1,0 +1,86 @@
+cases:
+  static:
+    enabled: false
+  computed:
+    enabled: false
+    component: frontend
+    servicePort: 8080
+    nebariApp:
+      hostname: computed.nebari.local
+      auth:
+        enabled: false
+  multi:
+    enabled: false
+    apps:
+      - component: frontend
+        servicePort: 80
+        nebariApp:
+          hostname: chat.nebari.local
+          auth:
+            enabled: true
+            provider: keycloak
+            provisionClient: true
+            enforceAtGateway: false
+            redirectURI: /*
+            scopes:
+              - openid
+              - profile
+              - email
+          routing:
+            routes:
+              - pathPrefix: /
+                pathType: PathPrefix
+          landingPage:
+            enabled: true
+            displayName: Chat
+            description: Chat with AI models
+            category: AI
+            priority: 1
+            healthCheck:
+              enabled: true
+              path: /health
+      - component: api
+        servicePort: 8000
+        nebariApp:
+          hostname: api.nebari.local
+          routing:
+            routes:
+              - pathPrefix: /
+                pathType: PathPrefix
+
+# Static-case data (rendered when cases.static.enabled=true).
+# Kept at top level so the required-field validation tests can omit a
+# single field via `--set spec.hostname=` etc.
+metadata:
+  name: static-app
+  namespace: default
+  labels:
+    app.kubernetes.io/name: static-app
+spec:
+  hostname: static.nebari.local
+  service:
+    name: static-svc
+    port: 80
+  auth:
+    enabled: true
+    provider: keycloak
+    provisionClient: true
+    enforceAtGateway: false
+    redirectURI: /*
+    scopes:
+      - openid
+      - profile
+      - email
+  routing:
+    routes:
+      - pathPrefix: /
+        pathType: PathPrefix
+  landingPage:
+    enabled: true
+    displayName: Static
+    description: Static fixture app
+    category: misc
+    priority: 1
+    healthCheck:
+      enabled: true
+      path: /health

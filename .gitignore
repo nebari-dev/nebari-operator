@@ -68,3 +68,7 @@ landingpage
 /webapi
 *-coverage.out
 *-coverage.html
+
+# Helm dependency vendoring (repopulated by `helm dependency build`)
+test/fixture/charts/
+test/fixture/Chart.lock
