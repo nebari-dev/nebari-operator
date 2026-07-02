@@ -220,7 +220,7 @@ helm-test: helm-lint ## Render the nebari-app fixture chart for all cases and ve
 		echo "  case $$c: ok"; \
 	done
 	@for f in spec.hostname metadata.name metadata.namespace spec.service.name spec.service.port; do \
-		helm template t test/fixture --set cases.static.enabled=true --set $$f= >/dev/null 2>&1 \
+		helm template t test/fixture --set cases.static.enabled=true --set cases.static.$$f= >/dev/null 2>&1 \
 			&& { echo >&2 "expected required failure for $$f"; exit 1; }; \
 		echo "  required guard $$f: ok"; \
 	done
