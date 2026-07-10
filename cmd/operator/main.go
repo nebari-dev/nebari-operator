@@ -26,6 +26,7 @@ import (
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
 	certmanagerv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
+	cnpgv1 "github.com/cloudnative-pg/api/pkg/api/v1"
 	egv1alpha1 "github.com/envoyproxy/gateway/api/v1alpha1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -44,6 +45,7 @@ import (
 	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/auth"
 	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/auth/providers"
 	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/core"
+	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/database"
 	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/routing"
 	tlsreconciler "github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/tls"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/constants"
@@ -62,6 +64,10 @@ func init() {
 	utilruntime.Must(gatewayapiv1.Install(scheme))
 	utilruntime.Must(egv1alpha1.AddToScheme(scheme))
 	utilruntime.Must(certmanagerv1.AddToScheme(scheme))
+	// CNPG types are registered unconditionally: scheme registration is
+	// client-side and harmless when the CRD is absent; the database
+	// reconciler degrades to a condition at request time in that case.
+	utilruntime.Must(cnpgv1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -279,15 +285,21 @@ func main() {
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorderFor("nebariapp-routing"),
 	}
+	databaseReconciler := &database.DatabaseReconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("nebariapp-database"),
+	}
 
 	if err := (&controller.NebariAppReconciler{
-		Client:            mgr.GetClient(),
-		Scheme:            mgr.GetScheme(),
-		Recorder:          mgr.GetEventRecorderFor("nebariapp-controller"),
-		CoreReconciler:    coreReconciler,
-		TLSReconciler:     tlsReconciler,
-		RoutingReconciler: routingReconciler,
-		AuthReconciler:    authReconciler,
+		Client:             mgr.GetClient(),
+		Scheme:             mgr.GetScheme(),
+		Recorder:           mgr.GetEventRecorderFor("nebariapp-controller"),
+		CoreReconciler:     coreReconciler,
+		TLSReconciler:      tlsReconciler,
+		RoutingReconciler:  routingReconciler,
+		AuthReconciler:     authReconciler,
+		DatabaseReconciler: databaseReconciler,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "NebariApp")
 		os.Exit(1)

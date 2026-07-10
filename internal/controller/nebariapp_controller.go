@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	certmanagerv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
@@ -40,6 +41,7 @@ import (
 
 	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/auth"
 	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/core"
+	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/database"
 	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/routing"
 	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/tls"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/conditions"
@@ -49,12 +51,13 @@ import (
 // NebariAppReconciler reconciles a NebariApp object
 type NebariAppReconciler struct {
 	client.Client
-	Scheme            *runtime.Scheme
-	Recorder          record.EventRecorder
-	CoreReconciler    *core.CoreReconciler
-	TLSReconciler     *tls.TLSReconciler
-	RoutingReconciler *routing.RoutingReconciler
-	AuthReconciler    *auth.AuthReconciler
+	Scheme             *runtime.Scheme
+	Recorder           record.EventRecorder
+	CoreReconciler     *core.CoreReconciler
+	TLSReconciler      *tls.TLSReconciler
+	RoutingReconciler  *routing.RoutingReconciler
+	AuthReconciler     *auth.AuthReconciler
+	DatabaseReconciler *database.DatabaseReconciler
 }
 
 // +kubebuilder:rbac:groups=reconcilers.nebari.dev,resources=nebariapps,verbs=get;list;watch;create;update;patch;delete
@@ -70,9 +73,12 @@ type NebariAppReconciler struct {
 // +kubebuilder:rbac:groups=gateway.envoyproxy.io,resources=securitypolicies,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=clusters,verbs=get;list;watch;create;update;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
+//
+// nolint:gocyclo
 func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := logf.FromContext(ctx)
 
@@ -227,6 +233,17 @@ func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 	logger.Info("Auth reconciled successfully", "nebariapp", nebariApp.Name)
 
+	// Reconcile the managed database if configured. Extracted into its own
+	// method (like reconcilePublicRoutes) to keep Reconcile's cyclomatic
+	// complexity manageable. A non-nil result or error means the caller
+	// should return early.
+	if dbResult, err := r.reconcileDatabase(ctx, nebariApp); err != nil || dbResult != nil {
+		if dbResult != nil {
+			return *dbResult, err
+		}
+		return ctrl.Result{}, err
+	}
+
 	// Validation succeeded, set Ready condition to True
 	conditions.SetCondition(nebariApp, appsv1.ConditionTypeReady, metav1.ConditionTrue,
 		appsv1.ReasonReconcileSuccess, "NebariApp reconciled successfully")
@@ -334,6 +351,38 @@ func (r *NebariAppReconciler) reconcilePublicRoutes(ctx context.Context, nebariA
 	return nil, nil
 }
 
+// reconcileDatabase reconciles the managed database if configured. Nil guard
+// mirrors TLSReconciler so tests can opt out. A non-nil result means the
+// database is still provisioning (or CNPG is missing / the name is invalid):
+// the caller should persist status and return it (polling or backoff).
+func (r *NebariAppReconciler) reconcileDatabase(ctx context.Context, nebariApp *appsv1.NebariApp) (*ctrl.Result, error) {
+	logger := logf.FromContext(ctx)
+
+	if r.DatabaseReconciler == nil {
+		return nil, nil
+	}
+
+	dbResult, err := r.DatabaseReconciler.ReconcileDatabase(ctx, nebariApp)
+	if err != nil {
+		logger.Error(err, "Database reconciliation failed")
+		conditions.SetCondition(nebariApp, appsv1.ConditionTypeReady, metav1.ConditionFalse,
+			appsv1.ReasonFailed, fmt.Sprintf("Database reconciliation failed: %v", err))
+		if err := r.Status().Update(ctx, nebariApp); err != nil {
+			return &ctrl.Result{}, err
+		}
+		return &ctrl.Result{RequeueAfter: time.Minute}, nil
+	}
+	if dbResult != nil {
+		nebariApp.Status.ObservedGeneration = nebariApp.Generation
+		if err := r.Status().Update(ctx, nebariApp); err != nil {
+			return &ctrl.Result{}, err
+		}
+		return dbResult, nil
+	}
+	logger.Info("Database reconciled successfully", "nebariapp", nebariApp.Name)
+	return nil, nil
+}
+
 // cleanup removes resources created by this NebariApp
 func (r *NebariAppReconciler) cleanup(ctx context.Context, nebariApp *appsv1.NebariApp) error {
 	logger := logf.FromContext(ctx)
@@ -397,6 +446,16 @@ func (r *NebariAppReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		)
 	}
 
+	// Watch Secrets so CNPG password rotations propagate into the normalized
+	// credentials copy without waiting for the periodic requeue. Only
+	// CNPG-generated app secrets ("<app>-db-app") map back to a NebariApp.
+	if r.DatabaseReconciler != nil {
+		builder = builder.Watches(
+			&corev1.Secret{},
+			handler.EnqueueRequestsFromMapFunc(r.databaseSecretToNebariApp),
+		)
+	}
+
 	return builder.Complete(r)
 }
 
@@ -410,5 +469,23 @@ func (r *NebariAppReconciler) certificateToNebariApp(_ context.Context, obj clie
 	}
 	return []reconcile.Request{
 		{NamespacedName: types.NamespacedName{Name: name, Namespace: namespace}},
+	}
+}
+
+// databaseSecretToNebariApp maps a CNPG-generated app-user Secret
+// ("<app>-db-app") to the NebariApp whose database it belongs to. A false
+// positive (an unrelated secret matching the suffix) only triggers a
+// reconcile of a NebariApp that may not exist, which Reconcile ignores.
+func (r *NebariAppReconciler) databaseSecretToNebariApp(_ context.Context, obj client.Object) []reconcile.Request {
+	const suffix = "-db-app"
+	name := obj.GetName()
+	if !strings.HasSuffix(name, suffix) {
+		return nil
+	}
+	return []reconcile.Request{
+		{NamespacedName: types.NamespacedName{
+			Name:      strings.TrimSuffix(name, suffix),
+			Namespace: obj.GetNamespace(),
+		}},
 	}
 }
