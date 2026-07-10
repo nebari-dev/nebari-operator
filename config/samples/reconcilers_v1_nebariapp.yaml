@@ -45,6 +45,15 @@ spec:
   #           id.token.claim: "true"
   #           access.token.claim: "true"
   #           userinfo.token.claim: "true"
+  # Optional: request a managed PostgreSQL database (CloudNativePG).
+  # Credentials land in Secret "<name>-db-credentials" with keys:
+  # host, port, username, password, database, uri.
+  # Disabling later never deletes the database; deleting this NebariApp does.
+  # database:
+  #   enabled: true
+  #   provider: cloudnativepg   # default and only supported value
+  #   instances: 1              # default
+  #   size: 1Gi                 # default; cannot be decreased
 ---
 # Example: Cross-namespace service reference
 # Useful for centralized service architectures where services live in different namespaces
