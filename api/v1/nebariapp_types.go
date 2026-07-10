@@ -51,8 +51,8 @@ type NebariAppSpec struct {
 	Gateway string `json:"gateway,omitempty"`
 
 	// ServiceAccountName is the name of the Kubernetes ServiceAccount used by the
-	// app's pods. Used for RBAC scoping of OIDC secrets so only the app's pods
-	// can read its credentials. Defaults to the NebariApp's name if omitted.
+	// app's pods. Used for RBAC scoping of OIDC and database credentials secrets
+	// so only the app's pods can read them. Defaults to the NebariApp's name if omitted.
 	// +optional
 	// +kubebuilder:validation:MinLength=1
 	ServiceAccountName string `json:"serviceAccountName,omitempty"`
@@ -61,6 +61,21 @@ type NebariAppSpec struct {
 	// When enabled, the service will be discoverable through the landing page portal.
 	// +optional
 	LandingPage *LandingPageConfig `json:"landingPage,omitempty"`
+
+	// Database requests a managed PostgreSQL database for this application.
+	// When enabled, the operator provisions a CloudNativePG Cluster named
+	// "<name>-db" and writes connection credentials to the Secret
+	// "<name>-db-credentials" with keys: host, port, username, password,
+	// database, uri. Read access is scoped to the app's ServiceAccount.
+	//
+	// Requires the CloudNativePG operator on the cluster (in Nebari, NIC's
+	// top-level database.enabled toggle installs it).
+	//
+	// Disabling later stops management but never deletes the database.
+	// Deleting the NebariApp deletes the database and its data via owner
+	// references.
+	// +optional
+	Database *DatabaseConfig `json:"database,omitempty"`
 }
 
 // ServiceReference identifies the Kubernetes Service that backs this application.
@@ -478,6 +493,36 @@ type LandingPageConfig struct {
 	HealthCheck *HealthCheckConfig `json:"healthCheck,omitempty"`
 }
 
+// DatabaseConfig specifies a managed database request backed by a database
+// operator (CloudNativePG).
+type DatabaseConfig struct {
+	// Enabled determines whether a managed database is provisioned.
+	// +kubebuilder:default=false
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// Provider selects the database operator backing this request.
+	// +kubebuilder:validation:Enum=cloudnativepg
+	// +kubebuilder:default=cloudnativepg
+	// +optional
+	Provider string `json:"provider,omitempty"`
+
+	// Instances is the number of PostgreSQL instances (1 primary plus N-1 replicas, maximum 9).
+	// +kubebuilder:default=1
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=9
+	// +optional
+	Instances int32 `json:"instances,omitempty"`
+
+	// Size is the storage request for each instance, as a Kubernetes quantity.
+	// Size cannot be decreased once set (CloudNativePG restriction).
+	// +kubebuilder:default="1Gi"
+	// +kubebuilder:validation:XValidation:rule="sign(quantity(self)) > 0",message="size must be greater than zero"
+	// +kubebuilder:validation:Pattern=`^[0-9]+(\.[0-9]+)?(Ki|Mi|Gi|Ti|Pi|Ei|k|M|G|T|P|E)?$`
+	// +optional
+	Size string `json:"size,omitempty"`
+}
+
 // HealthCheckConfig defines health check parameters for a service.
 type HealthCheckConfig struct {
 	// Enabled determines if health checks are performed.
@@ -574,6 +619,7 @@ type NebariAppStatus struct {
 	//   - "RoutingReady": HTTPRoute has been created and is functioning
 	//   - "TLSReady": TLS certificate is available and configured
 	//   - "AuthReady": Authentication policy is configured (if auth is enabled)
+	//   - "DatabaseReady": Managed database is provisioned and credentials are available (if database is enabled)
 	//   - "Ready": All components are ready (aggregate condition)
 	// +listType=map
 	// +listMapKey=type
@@ -597,6 +643,11 @@ type NebariAppStatus struct {
 	// ClientSecretRef identifies the Secret containing OIDC client credentials.
 	// +optional
 	ClientSecretRef *ResourceReference `json:"clientSecretRef,omitempty"`
+
+	// DatabaseSecretRef identifies the Secret containing database connection
+	// credentials (keys: host, port, username, password, database, uri).
+	// +optional
+	DatabaseSecretRef *ResourceReference `json:"databaseSecretRef,omitempty"`
 
 	// AuthConfigHash stores a SHA-256 hash of the last successfully provisioned OIDC
 	// client configuration. When this matches the hash of the current spec, and the
@@ -649,6 +700,10 @@ const (
 	// This includes the SecurityPolicy being created and the client secret being available.
 	ConditionTypeAuthReady = "AuthReady"
 
+	// ConditionTypeDatabaseReady indicates that the managed database is
+	// provisioned and its credentials Secret is available.
+	ConditionTypeDatabaseReady = "DatabaseReady"
+
 	// ConditionTypeReady is an aggregate condition indicating all components are ready.
 	ConditionTypeReady = "Ready"
 )
@@ -684,6 +739,18 @@ const (
 
 	// ReasonCertificateNotReady indicates the cert-manager Certificate is not ready
 	ReasonCertificateNotReady = "CertificateNotReady"
+
+	// ReasonDatabaseProvisioning indicates the database cluster is being created
+	ReasonDatabaseProvisioning = "DatabaseProvisioning"
+
+	// ReasonDatabaseDisabled indicates database management was disabled while a
+	// previously provisioned database still exists (it is never deleted by a
+	// toggle; see the spec.database field documentation)
+	ReasonDatabaseDisabled = "DatabaseDisabled"
+
+	// ReasonCNPGNotInstalled indicates the CloudNativePG operator (and its CRDs)
+	// is not installed on this cluster
+	ReasonCNPGNotInstalled = "CNPGNotInstalled"
 
 	// ReasonGatewayListenerConflict indicates the Gateway listener conflicts with another NebariApp
 	ReasonGatewayListenerConflict = "GatewayListenerConflict"
@@ -747,6 +814,16 @@ const (
 
 	// EventReasonClientProvisionFailed is used when OIDC client provisioning fails
 	EventReasonClientProvisionFailed = "ClientProvisionFailed"
+
+	// EventReasonDatabaseProvisioned is used when the managed database becomes ready
+	EventReasonDatabaseProvisioned = "DatabaseProvisioned"
+
+	// EventReasonDatabaseProvisionFailed is used when database provisioning fails
+	EventReasonDatabaseProvisionFailed = "DatabaseProvisionFailed"
+
+	// EventReasonDatabaseOrphaned is used when database management is disabled
+	// while the database still exists
+	EventReasonDatabaseOrphaned = "DatabaseOrphaned"
 
 	// EventReasonSecurityPolicyCreated is used when SecurityPolicy is created
 	EventReasonSecurityPolicyCreated = "SecurityPolicyCreated"

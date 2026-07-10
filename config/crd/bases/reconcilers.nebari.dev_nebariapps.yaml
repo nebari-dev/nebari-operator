@@ -311,6 +311,52 @@ spec:
                   rule: '!has(self.forwardAccessToken) || self.forwardAccessToken
                     == false || (has(self.enforceAtGateway) && self.enforceAtGateway
                     == true)'
+              database:
+                description: |-
+                  Database requests a managed PostgreSQL database for this application.
+                  When enabled, the operator provisions a CloudNativePG Cluster named
+                  "<name>-db" and writes connection credentials to the Secret
+                  "<name>-db-credentials" with keys: host, port, username, password,
+                  database, uri. Read access is scoped to the app's ServiceAccount.
+
+                  Requires the CloudNativePG operator on the cluster (in Nebari, NIC's
+                  top-level database.enabled toggle installs it).
+
+                  Disabling later stops management but never deletes the database.
+                  Deleting the NebariApp deletes the database and its data via owner
+                  references.
+                properties:
+                  enabled:
+                    default: false
+                    description: Enabled determines whether a managed database is
+                      provisioned.
+                    type: boolean
+                  instances:
+                    default: 1
+                    description: Instances is the number of PostgreSQL instances (1
+                      primary plus N-1 replicas, maximum 9).
+                    format: int32
+                    maximum: 9
+                    minimum: 1
+                    type: integer
+                  provider:
+                    default: cloudnativepg
+                    description: Provider selects the database operator backing this
+                      request.
+                    enum:
+                    - cloudnativepg
+                    type: string
+                  size:
+                    default: 1Gi
+                    description: |-
+                      Size is the storage request for each instance, as a Kubernetes quantity.
+                      Size cannot be decreased once set (CloudNativePG restriction).
+                    pattern: ^[0-9]+(\.[0-9]+)?(Ki|Mi|Gi|Ti|Pi|Ei|k|M|G|T|P|E)?$
+                    type: string
+                    x-kubernetes-validations:
+                    - message: size must be greater than zero
+                      rule: sign(quantity(self)) > 0
+                type: object
               gateway:
                 default: public
                 description: |-
@@ -572,8 +618,8 @@ spec:
               serviceAccountName:
                 description: |-
                   ServiceAccountName is the name of the Kubernetes ServiceAccount used by the
-                  app's pods. Used for RBAC scoping of OIDC secrets so only the app's pods
-                  can read its credentials. Defaults to the NebariApp's name if omitted.
+                  app's pods. Used for RBAC scoping of OIDC and database credentials secrets
+                  so only the app's pods can read them. Defaults to the NebariApp's name if omitted.
                 minLength: 1
                 type: string
             required:
@@ -613,6 +659,7 @@ spec:
                     - "RoutingReady": HTTPRoute has been created and is functioning
                     - "TLSReady": TLS certificate is available and configured
                     - "AuthReady": Authentication policy is configured (if auth is enabled)
+                    - "DatabaseReady": Managed database is provisioned and credentials are available (if database is enabled)
                     - "Ready": All components are ready (aggregate condition)
                 items:
                   description: Condition contains details for one aspect of the current
@@ -672,6 +719,20 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              databaseSecretRef:
+                description: |-
+                  DatabaseSecretRef identifies the Secret containing database connection
+                  credentials (keys: host, port, username, password, database, uri).
+                properties:
+                  name:
+                    description: Name of the resource.
+                    type: string
+                  namespace:
+                    description: Namespace of the resource (if namespaced).
+                    type: string
+                required:
+                - name
+                type: object
               gatewayRef:
                 description: GatewayRef identifies the Gateway resource that routes
                   traffic to this application.
