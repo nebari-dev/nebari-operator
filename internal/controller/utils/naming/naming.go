@@ -25,6 +25,9 @@ func ValidateResourceNames(nebariApp *appsv1.NebariApp) error {
 		{"CertificateSecret", CertificateSecretName(nebariApp)},
 		{"GatewayListener", ListenerName(nebariApp)},
 		{"OIDCClientSecret", ClientSecretName(nebariApp)},
+		{"DatabaseCluster", DatabaseClusterName(nebariApp)},
+		{"DatabaseAppSecret", DatabaseAppSecretName(nebariApp)},
+		{"DatabaseSecret", DatabaseSecretName(nebariApp)},
 	}
 
 	for _, c := range checks {
@@ -111,4 +114,41 @@ func GatewayName(nebariApp *appsv1.NebariApp) string {
 		return constants.InternalGatewayName
 	}
 	return constants.PublicGatewayName
+}
+
+// DatabaseClusterName returns the name of the CloudNativePG Cluster resource
+// provisioned for a NebariApp's managed database.
+func DatabaseClusterName(nebariApp *appsv1.NebariApp) string {
+	return ResourceName(nebariApp, constants.DatabaseSuffix)
+}
+
+// DatabaseAppSecretName returns the name of the connection Secret that
+// CloudNativePG generates for the Cluster's application user
+// ("<cluster>-app" by CNPG convention).
+func DatabaseAppSecretName(nebariApp *appsv1.NebariApp) string {
+	return DatabaseClusterName(nebariApp) + "-app"
+}
+
+// DatabaseSecretName returns the name of the normalized database credentials
+// Secret the operator writes for the app (keys: host, port, username,
+// password, database, uri).
+func DatabaseSecretName(nebariApp *appsv1.NebariApp) string {
+	return DatabaseClusterName(nebariApp) + "-credentials"
+}
+
+// maxCNPGClusterNameLength is CloudNativePG's validating-webhook cap on
+// Cluster names: the name seeds Service names like "<cluster>-rw" that must
+// fit 63-character DNS labels, so CNPG rejects names longer than 50.
+const maxCNPGClusterNameLength = 50
+
+// ValidateDatabaseClusterName rejects NebariApp names whose derived CNPG
+// Cluster name would be refused by CloudNativePG's admission webhook. Called
+// only when spec.database is enabled so long names without a database stay
+// valid.
+func ValidateDatabaseClusterName(nebariApp *appsv1.NebariApp) error {
+	name := DatabaseClusterName(nebariApp)
+	if len(name) > maxCNPGClusterNameLength {
+		return fmt.Errorf("database cluster name %q is %d characters; CloudNativePG requires at most %d (shorten the NebariApp name)", name, len(name), maxCNPGClusterNameLength)
+	}
+	return nil
 }

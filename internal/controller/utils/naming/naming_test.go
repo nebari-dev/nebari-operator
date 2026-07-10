@@ -265,6 +265,12 @@ func TestValidateResourceNames(t *testing.T) {
 			namespace:   strings.Repeat("b", 60),
 			expectError: false,
 		},
+		{
+			name:        "name that only exceeds limit via database credentials secret",
+			appName:     strings.Repeat("a", 240),
+			namespace:   "x",
+			expectError: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -306,5 +312,36 @@ func TestGatewayName(t *testing.T) {
 				t.Errorf("GatewayName(%q) = %q, want %q", tt.gateway, result, tt.expected)
 			}
 		})
+	}
+}
+
+func TestDatabaseNames(t *testing.T) {
+	app := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{Name: "myapp", Namespace: "team-a"},
+	}
+
+	if got := DatabaseClusterName(app); got != "myapp-db" {
+		t.Errorf("DatabaseClusterName() = %q, want %q", got, "myapp-db")
+	}
+	if got := DatabaseAppSecretName(app); got != "myapp-db-app" {
+		t.Errorf("DatabaseAppSecretName() = %q, want %q", got, "myapp-db-app")
+	}
+	if got := DatabaseSecretName(app); got != "myapp-db-credentials" {
+		t.Errorf("DatabaseSecretName() = %q, want %q", got, "myapp-db-credentials")
+	}
+}
+
+func TestValidateDatabaseClusterName(t *testing.T) {
+	ok := &appsv1.NebariApp{ObjectMeta: metav1.ObjectMeta{Name: strings.Repeat("a", 47)}}
+	if err := ValidateDatabaseClusterName(ok); err != nil {
+		t.Errorf("47-char name (50-char cluster name) should validate, got: %v", err)
+	}
+	long := &appsv1.NebariApp{ObjectMeta: metav1.ObjectMeta{Name: strings.Repeat("a", 48)}}
+	err := ValidateDatabaseClusterName(long)
+	if err == nil {
+		t.Fatal("48-char name (51-char cluster name) must fail")
+	}
+	if !strings.Contains(err.Error(), "50") {
+		t.Errorf("error should state the 50-character limit, got: %v", err)
 	}
 }
