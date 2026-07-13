@@ -320,8 +320,8 @@ func TestReconcileDatabase_CNPGNotInstalled(t *testing.T) {
 	if cond == nil || cond.Reason != appsv1.ReasonCNPGNotInstalled {
 		t.Fatalf("expected CNPGNotInstalled, got %+v", cond)
 	}
-	if !strings.Contains(cond.Message, "database.enabled") {
-		t.Errorf("message should point at NIC's database.enabled toggle, got %q", cond.Message)
+	if !strings.Contains(cond.Message, "CloudNativePG") {
+		t.Errorf("message should tell the user the CloudNativePG operator is missing, got %q", cond.Message)
 	}
 }
 

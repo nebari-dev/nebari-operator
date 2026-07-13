@@ -172,7 +172,7 @@ func (r *DatabaseReconciler) reconcileCluster(ctx context.Context, nebariApp *ap
 		if apimeta.IsNoMatchError(err) || runtime.IsNotRegisteredError(err) {
 			conditions.SetCondition(nebariApp, appsv1.ConditionTypeDatabaseReady, metav1.ConditionFalse,
 				appsv1.ReasonCNPGNotInstalled,
-				"CloudNativePG is not installed on this cluster; in Nebari, set the top-level database.enabled toggle in the NIC config to install it")
+				"CloudNativePG is not installed on this cluster; install the CloudNativePG operator (in Nebari, NIC installs it on every GitOps bootstrap)")
 			return nil, &ctrl.Result{RequeueAfter: settledRequeue}, nil
 		}
 		r.recordFailure(nebariApp, err)

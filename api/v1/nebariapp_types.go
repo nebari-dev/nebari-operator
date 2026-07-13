@@ -68,8 +68,8 @@ type NebariAppSpec struct {
 	// "<name>-db-credentials" with keys: host, port, username, password,
 	// database, uri. Read access is scoped to the app's ServiceAccount.
 	//
-	// Requires the CloudNativePG operator on the cluster (in Nebari, NIC's
-	// top-level database.enabled toggle installs it).
+	// Requires the CloudNativePG operator on the cluster (in Nebari, NIC
+	// installs it on every GitOps bootstrap as foundational infrastructure).
 	//
 	// Disabling later stops management but never deletes the database.
 	// Deleting the NebariApp deletes the database and its data via owner

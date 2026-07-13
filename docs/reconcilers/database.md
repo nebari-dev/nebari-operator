@@ -12,9 +12,9 @@ ready, publishes connection credentials in a well-known Secret, and scopes
 read access to the app's ServiceAccount. It is the NebariApp-side contract of
 the platform database infrastructure discussed in
 [https://github.com/nebari-dev/nebari-infrastructure-core/issues/303](https://github.com/nebari-dev/nebari-infrastructure-core/issues/303);
-the CloudNativePG operator itself is installed by NIC's top-level
-`database.enabled` config toggle (added in
-[nebari-infrastructure-core#455](https://github.com/nebari-dev/nebari-infrastructure-core/pull/455)).
+the CloudNativePG operator itself is installed by NIC on every GitOps
+bootstrap as foundational infrastructure (added in
+https://github.com/nebari-dev/nebari-infrastructure-core/pull/455).
 
 The logic is encapsulated in the `DatabaseReconciler` located at
 `internal/controller/reconcilers/database/`.
