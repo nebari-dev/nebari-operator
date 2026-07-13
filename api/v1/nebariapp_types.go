@@ -508,6 +508,7 @@ type DatabaseConfig struct {
 	Provider string `json:"provider,omitempty"`
 
 	// Instances is the number of PostgreSQL instances (1 primary plus N-1 replicas, maximum 9).
+	// The cap is a platform guardrail, not a CloudNativePG limit.
 	// +kubebuilder:default=1
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=9

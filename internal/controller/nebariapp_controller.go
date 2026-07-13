@@ -19,7 +19,6 @@ package controller
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	certmanagerv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
@@ -46,6 +45,7 @@ import (
 	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/tls"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/conditions"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/constants"
+	"github.com/nebari-dev/nebari-operator/internal/controller/utils/naming"
 )
 
 // NebariAppReconciler reconciles a NebariApp object
@@ -78,7 +78,7 @@ type NebariAppReconciler struct {
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
 //
-// nolint:gocyclo
+//nolint:gocyclo
 func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := logf.FromContext(ctx)
 
@@ -477,15 +477,11 @@ func (r *NebariAppReconciler) certificateToNebariApp(_ context.Context, obj clie
 // positive (an unrelated secret matching the suffix) only triggers a
 // reconcile of a NebariApp that may not exist, which Reconcile ignores.
 func (r *NebariAppReconciler) databaseSecretToNebariApp(_ context.Context, obj client.Object) []reconcile.Request {
-	const suffix = "-db-app"
-	name := obj.GetName()
-	if !strings.HasSuffix(name, suffix) {
+	appName, ok := naming.NebariAppNameForDatabaseSecret(obj.GetName())
+	if !ok {
 		return nil
 	}
 	return []reconcile.Request{
-		{NamespacedName: types.NamespacedName{
-			Name:      strings.TrimSuffix(name, suffix),
-			Namespace: obj.GetNamespace(),
-		}},
+		{NamespacedName: types.NamespacedName{Name: appName, Namespace: obj.GetNamespace()}},
 	}
 }

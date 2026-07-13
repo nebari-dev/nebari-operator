@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 
+	cnpgv1 "github.com/cloudnative-pg/api/pkg/api/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -45,7 +46,7 @@ var credentialKeys = map[string]string{
 // documented "<name>-db-credentials" contract. Returns requeue=true when the
 // source Secret does not exist yet (CNPG creates it shortly after the
 // Cluster), which is a provisioning state rather than an error.
-func (r *DatabaseReconciler) reconcileCredentialsSecret(ctx context.Context, nebariApp *appsv1.NebariApp) (requeue bool, err error) {
+func (r *DatabaseReconciler) reconcileCredentialsSecret(ctx context.Context, nebariApp *appsv1.NebariApp, cluster *cnpgv1.Cluster) (requeue bool, err error) {
 	source := &corev1.Secret{}
 	if err := r.Client.Get(ctx, types.NamespacedName{
 		Name:      naming.DatabaseAppSecretName(nebariApp),
@@ -55,6 +56,13 @@ func (r *DatabaseReconciler) reconcileCredentialsSecret(ctx context.Context, neb
 			return true, nil
 		}
 		return false, fmt.Errorf("failed to read CNPG connection secret: %w", err)
+	}
+
+	// Only republish credentials from the Secret CNPG generated for our
+	// Cluster. A pre-created same-named Secret must not become the app's
+	// official credentials.
+	if !isOwnedBy(source, cluster) {
+		return false, fmt.Errorf("refusing to publish credentials: secret %s is not owned by Cluster %s", source.Name, cluster.Name)
 	}
 
 	data, err := normalizeCredentials(source.Data)
@@ -76,6 +84,17 @@ func (r *DatabaseReconciler) reconcileCredentialsSecret(ctx context.Context, neb
 		return false, fmt.Errorf("failed to reconcile database credentials secret: %w", err)
 	}
 	return false, nil
+}
+
+// isOwnedBy reports whether obj carries an owner reference to owner's UID
+// (controller or not; CNPG sets ownership on its generated secrets).
+func isOwnedBy(obj metav1.Object, owner metav1.Object) bool {
+	for _, ref := range obj.GetOwnerReferences() {
+		if ref.UID == owner.GetUID() {
+			return true
+		}
+	}
+	return false
 }
 
 // normalizeCredentials maps CNPG source keys to the documented contract keys.

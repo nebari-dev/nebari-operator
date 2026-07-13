@@ -333,8 +333,9 @@ spec:
                     type: boolean
                   instances:
                     default: 1
-                    description: Instances is the number of PostgreSQL instances (1
-                      primary plus N-1 replicas, maximum 9).
+                    description: |-
+                      Instances is the number of PostgreSQL instances (1 primary plus N-1 replicas, maximum 9).
+                      The cap is a platform guardrail, not a CloudNativePG limit.
                     format: int32
                     maximum: 9
                     minimum: 1

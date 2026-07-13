@@ -345,3 +345,27 @@ func TestValidateDatabaseClusterName(t *testing.T) {
 		t.Errorf("error should state the 50-character limit, got: %v", err)
 	}
 }
+
+func TestNebariAppNameForDatabaseSecret(t *testing.T) {
+	tests := []struct {
+		secretName string
+		wantName   string
+		wantOK     bool
+	}{
+		{"foo-db-app", "foo", true},
+		{"foo-db-credentials", "", false},
+		{"-db-app", "", false},
+		{"foo-db-app-db-app", "foo-db-app", true},
+		{"unrelated", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.secretName, func(t *testing.T) {
+			gotName, gotOK := NebariAppNameForDatabaseSecret(tt.secretName)
+			if gotName != tt.wantName || gotOK != tt.wantOK {
+				t.Errorf("NebariAppNameForDatabaseSecret(%q) = (%q, %v), want (%q, %v)",
+					tt.secretName, gotName, gotOK, tt.wantName, tt.wantOK)
+			}
+		})
+	}
+}

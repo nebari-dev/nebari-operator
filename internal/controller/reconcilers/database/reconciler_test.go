@@ -78,7 +78,7 @@ func newReconciler(c client.Client, scheme *runtime.Scheme) *DatabaseReconciler 
 func readyCluster(app *appsv1.NebariApp, scheme *runtime.Scheme, t *testing.T) *cnpgv1.Cluster {
 	t.Helper()
 	cluster := &cnpgv1.Cluster{
-		ObjectMeta: metav1.ObjectMeta{Name: app.Name + "-db", Namespace: app.Namespace},
+		ObjectMeta: metav1.ObjectMeta{Name: app.Name + "-db", Namespace: app.Namespace, UID: "cluster-uid-1"},
 		Spec: cnpgv1.ClusterSpec{
 			Instances:            1,
 			StorageConfiguration: cnpgv1.StorageConfiguration{Size: "1Gi"},
@@ -98,8 +98,9 @@ func readyCluster(app *appsv1.NebariApp, scheme *runtime.Scheme, t *testing.T) *
 	return cluster
 }
 
-func cnpgAppSecret(app *appsv1.NebariApp) *corev1.Secret {
-	return &corev1.Secret{
+func cnpgAppSecret(t *testing.T, app *appsv1.NebariApp, cluster *cnpgv1.Cluster, scheme *runtime.Scheme) *corev1.Secret {
+	t.Helper()
+	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: app.Name + "-db-app", Namespace: app.Namespace},
 		Data: map[string][]byte{
 			"host":     []byte("myapp-db-rw"),
@@ -110,6 +111,10 @@ func cnpgAppSecret(app *appsv1.NebariApp) *corev1.Secret {
 			"uri":      []byte("postgresql://app:hunter2@myapp-db-rw.team-a:5432/app"),
 		},
 	}
+	if err := controllerReference(cluster, secret, scheme); err != nil {
+		t.Fatalf("set owner ref: %v", err)
+	}
+	return secret
 }
 
 func TestReconcileDatabase_CreatesCluster(t *testing.T) {
@@ -170,8 +175,9 @@ func TestReconcileDatabase_Defaults(t *testing.T) {
 func TestReconcileDatabase_ReadyWritesSecretAndRBAC(t *testing.T) {
 	scheme := newScheme(t, true)
 	app := newApp(&appsv1.DatabaseConfig{Enabled: true})
+	cluster := readyCluster(app, scheme, t)
 	c := fake.NewClientBuilder().WithScheme(scheme).
-		WithObjects(readyCluster(app, scheme, t), cnpgAppSecret(app)).
+		WithObjects(cluster, cnpgAppSecret(t, app, cluster, scheme)).
 		Build()
 
 	result, err := newReconciler(c, scheme).ReconcileDatabase(context.Background(), app)
@@ -252,7 +258,7 @@ func TestReconcileDatabase_DisabledKeepsExistingCluster(t *testing.T) {
 	enabledApp := newApp(&appsv1.DatabaseConfig{Enabled: true})
 	cluster := readyCluster(enabledApp, scheme, t)
 	c := fake.NewClientBuilder().WithScheme(scheme).
-		WithObjects(cluster, cnpgAppSecret(enabledApp)).
+		WithObjects(cluster, cnpgAppSecret(t, enabledApp, cluster, scheme)).
 		Build()
 
 	app := newApp(&appsv1.DatabaseConfig{Enabled: false})
@@ -375,8 +381,9 @@ func TestReconcileDatabase_DisabledForeignClusterClearsStatus(t *testing.T) {
 func TestReconcileDatabase_ReadySteadyStateNoDuplicateEvent(t *testing.T) {
 	scheme := newScheme(t, true)
 	app := newApp(&appsv1.DatabaseConfig{Enabled: true})
+	cluster := readyCluster(app, scheme, t)
 	c := fake.NewClientBuilder().WithScheme(scheme).
-		WithObjects(readyCluster(app, scheme, t), cnpgAppSecret(app)).
+		WithObjects(cluster, cnpgAppSecret(t, app, cluster, scheme)).
 		Build()
 	recorder := record.NewFakeRecorder(16)
 	r := &DatabaseReconciler{Client: c, Scheme: scheme, Recorder: recorder}
@@ -409,8 +416,9 @@ func TestReconcileDatabase_CustomServiceAccount(t *testing.T) {
 	scheme := newScheme(t, true)
 	app := newApp(&appsv1.DatabaseConfig{Enabled: true})
 	app.Spec.ServiceAccountName = "custom-sa"
+	cluster := readyCluster(app, scheme, t)
 	c := fake.NewClientBuilder().WithScheme(scheme).
-		WithObjects(readyCluster(app, scheme, t), cnpgAppSecret(app)).
+		WithObjects(cluster, cnpgAppSecret(t, app, cluster, scheme)).
 		Build()
 
 	if _, err := newReconciler(c, scheme).ReconcileDatabase(context.Background(), app); err != nil {
@@ -429,5 +437,25 @@ func TestNormalizeCredentials_MissingKey(t *testing.T) {
 	src := map[string][]byte{"host": []byte("h"), "port": []byte("5432")}
 	if _, err := normalizeCredentials(src); err == nil {
 		t.Fatal("expected error for missing source keys")
+	}
+}
+
+func TestReconcileDatabase_ForeignSourceSecretRejected(t *testing.T) {
+	scheme := newScheme(t, true)
+	app := newApp(&appsv1.DatabaseConfig{Enabled: true})
+	cluster := readyCluster(app, scheme, t)
+	unowned := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "myapp-db-app", Namespace: "team-a"},
+		Data:       map[string][]byte{"host": []byte("h"), "port": []byte("5432"), "username": []byte("u"), "password": []byte("p"), "dbname": []byte("d"), "uri": []byte("postgresql://u:p@h:5432/d")},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster, unowned).Build()
+
+	_, err := newReconciler(c, scheme).ReconcileDatabase(context.Background(), app)
+	if err == nil {
+		t.Fatal("expected error for a source secret not owned by our Cluster")
+	}
+	cond := conditions.GetCondition(app, appsv1.ConditionTypeDatabaseReady)
+	if cond == nil || cond.Reason != appsv1.ReasonFailed {
+		t.Errorf("expected DatabaseReady=False/Failed, got %+v", cond)
 	}
 }

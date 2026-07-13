@@ -65,7 +65,7 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `enabled` _boolean_ | Enabled determines whether a managed database is provisioned. | false | Optional: \{\} <br /> |
 | `provider` _string_ | Provider selects the database operator backing this request. | cloudnativepg | Enum: [cloudnativepg] <br />Optional: \{\} <br /> |
-| `instances` _integer_ | Instances is the number of PostgreSQL instances (1 primary plus N-1 replicas, maximum 9). | 1 | Maximum: 9 <br />Minimum: 1 <br />Optional: \{\} <br /> |
+| `instances` _integer_ | Instances is the number of PostgreSQL instances (1 primary plus N-1 replicas, maximum 9).<br />The cap is a platform guardrail, not a CloudNativePG limit. | 1 | Maximum: 9 <br />Minimum: 1 <br />Optional: \{\} <br /> |
 | `size` _string_ | Size is the storage request for each instance, as a Kubernetes quantity.<br />Size cannot be decreased once set (CloudNativePG restriction). | 1Gi | Pattern: `^[0-9]+(\.[0-9]+)?(Ki\|Mi\|Gi\|Ti\|Pi\|Ei\|k\|M\|G\|T\|P\|E)?$` <br />Optional: \{\} <br /> |
 
 

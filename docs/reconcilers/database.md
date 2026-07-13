@@ -51,6 +51,9 @@ spec:
     size: 1Gi                 # default 1Gi; cannot be decreased
 ```
 
+The `size` field's positivity check uses CEL's `quantity()` library, which
+requires Kubernetes 1.29 or newer to install the CRD.
+
 ## Credentials contract
 
 The operator writes Secret `<name>-db-credentials` in the NebariApp's

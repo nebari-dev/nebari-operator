@@ -106,7 +106,7 @@ func (r *DatabaseReconciler) ReconcileDatabase(ctx context.Context, nebariApp *a
 		return &ctrl.Result{RequeueAfter: provisioningRequeue}, nil
 	}
 
-	if requeue, err := r.reconcileCredentialsSecret(ctx, nebariApp); requeue || err != nil {
+	if requeue, err := r.reconcileCredentialsSecret(ctx, nebariApp, cluster); requeue || err != nil {
 		if err != nil {
 			r.recordFailure(nebariApp, err)
 			return nil, err

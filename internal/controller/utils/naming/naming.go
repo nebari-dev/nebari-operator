@@ -2,6 +2,7 @@ package naming
 
 import (
 	"fmt"
+	"strings"
 
 	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/constants"
@@ -148,7 +149,18 @@ const maxCNPGClusterNameLength = 50
 func ValidateDatabaseClusterName(nebariApp *appsv1.NebariApp) error {
 	name := DatabaseClusterName(nebariApp)
 	if len(name) > maxCNPGClusterNameLength {
-		return fmt.Errorf("database cluster name %q is %d characters; CloudNativePG requires at most %d (shorten the NebariApp name)", name, len(name), maxCNPGClusterNameLength)
+		return fmt.Errorf("database cluster name %q is %d characters; CloudNativePG requires at most %d (NebariApp names are immutable; recreate the app with a shorter name)", name, len(name), maxCNPGClusterNameLength)
 	}
 	return nil
+}
+
+// NebariAppNameForDatabaseSecret maps the name of a CloudNativePG-generated
+// app-user Secret ("<app>-db-app") back to its NebariApp name. ok is false
+// for names that are not database app secrets.
+func NebariAppNameForDatabaseSecret(secretName string) (appName string, ok bool) {
+	const suffix = "-" + constants.DatabaseSuffix + "-app"
+	if !strings.HasSuffix(secretName, suffix) || len(secretName) == len(suffix) {
+		return "", false
+	}
+	return strings.TrimSuffix(secretName, suffix), true
 }
