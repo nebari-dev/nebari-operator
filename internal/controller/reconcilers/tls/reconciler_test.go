@@ -1187,7 +1187,7 @@ func TestCheckUserProvidedSecret(t *testing.T) {
 				Recorder: record.NewFakeRecorder(10),
 			}
 
-			status, reason, msg := reconciler.checkUserProvidedSecret(context.Background(), tt.secretName)
+			status, reason, msg := reconciler.checkUserProvidedSecret(context.Background(), constants.GatewayNamespace, tt.secretName)
 			if status != tt.expectStatus {
 				t.Errorf("expected status %s, got %s", tt.expectStatus, status)
 			}
@@ -1470,4 +1470,130 @@ func TestIsCertificateReady(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestReconcileTLSPerAppGateway exercises the per-app Gateway strategy: the
+// operator creates a dedicated Gateway and a co-located Certificate in the
+// NebariApp's own namespace, both owner-referenced for garbage collection,
+// instead of appending a listener to the shared cluster Gateway.
+func TestReconcileTLSPerAppGateway(t *testing.T) {
+	scheme := newScheme()
+
+	app := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{Name: "chat", Namespace: "team-a", UID: "uid-chat"},
+		Spec: appsv1.NebariAppSpec{
+			Hostname: "chat.example.com",
+			Service:  appsv1.ServiceReference{Name: "svc", Port: 8080},
+			Routing: &appsv1.RoutingConfig{
+				TLS: &appsv1.RoutingTLSConfig{Enabled: boolPtr(true)},
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(app).Build()
+	r := &TLSReconciler{
+		Client:            fakeClient,
+		Scheme:            scheme,
+		Recorder:          record.NewFakeRecorder(10),
+		ClusterIssuerName: "letsencrypt-prod",
+		PerAppGateway:     true,
+	}
+
+	result, err := r.ReconcileTLS(context.Background(), app)
+	if err != nil {
+		t.Fatalf("ReconcileTLS returned error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil TLSResult")
+	}
+	if result.ListenerName != naming.ListenerName(app) {
+		t.Errorf("expected ListenerName %q, got %q", naming.ListenerName(app), result.ListenerName)
+	}
+
+	// The per-app Gateway must be created in the NebariApp's own namespace.
+	gw := &gatewayv1.Gateway{}
+	if err := fakeClient.Get(context.Background(), types.NamespacedName{
+		Name:      naming.PerAppGatewayName(app),
+		Namespace: app.Namespace,
+	}, gw); err != nil {
+		t.Fatalf("expected per-app Gateway in namespace %q: %v", app.Namespace, err)
+	}
+	if string(gw.Spec.GatewayClassName) != constants.GatewayClassName {
+		t.Errorf("expected gatewayClassName %q, got %q", constants.GatewayClassName, gw.Spec.GatewayClassName)
+	}
+	if len(gw.Spec.Listeners) != 1 {
+		t.Fatalf("expected 1 listener, got %d", len(gw.Spec.Listeners))
+	}
+	l := gw.Spec.Listeners[0]
+	if string(l.Name) != naming.ListenerName(app) {
+		t.Errorf("expected listener name %q, got %q", naming.ListenerName(app), l.Name)
+	}
+	if l.Protocol != gatewayv1.HTTPSProtocolType || l.Port != 443 {
+		t.Errorf("expected HTTPS:443 listener, got %s:%d", l.Protocol, l.Port)
+	}
+	if l.Hostname == nil || string(*l.Hostname) != app.Spec.Hostname {
+		t.Errorf("expected listener hostname %q, got %v", app.Spec.Hostname, l.Hostname)
+	}
+	if l.TLS == nil || len(l.TLS.CertificateRefs) != 1 ||
+		string(l.TLS.CertificateRefs[0].Name) != naming.CertificateSecretName(app) {
+		t.Errorf("expected cert ref %q, got %+v", naming.CertificateSecretName(app), l.TLS)
+	}
+	// The cert ref must resolve in the Gateway's own namespace (no cross-ns ref).
+	if l.TLS != nil && len(l.TLS.CertificateRefs) == 1 && l.TLS.CertificateRefs[0].Namespace != nil {
+		t.Errorf("expected same-namespace cert ref (nil namespace), got %v", *l.TLS.CertificateRefs[0].Namespace)
+	}
+	if !hasNebariAppOwner(gw.OwnerReferences, app.Name) {
+		t.Errorf("expected per-app Gateway to be owner-referenced to NebariApp, got %+v", gw.OwnerReferences)
+	}
+
+	// The Certificate must be co-located in the app namespace and owner-referenced.
+	cert := &certmanagerv1.Certificate{}
+	if err := fakeClient.Get(context.Background(), types.NamespacedName{
+		Name:      naming.CertificateName(app),
+		Namespace: app.Namespace,
+	}, cert); err != nil {
+		t.Fatalf("expected Certificate in namespace %q: %v", app.Namespace, err)
+	}
+	if !hasNebariAppOwner(cert.OwnerReferences, app.Name) {
+		t.Errorf("expected Certificate to be owner-referenced to NebariApp, got %+v", cert.OwnerReferences)
+	}
+
+	// No listener should have been appended to the shared cluster Gateway.
+	shared := &gatewayv1.Gateway{}
+	err = fakeClient.Get(context.Background(), types.NamespacedName{
+		Name:      constants.PublicGatewayName,
+		Namespace: constants.GatewayNamespace,
+	}, shared)
+	if err == nil {
+		t.Error("did not expect the shared cluster Gateway to be created/touched under the per-app strategy")
+	}
+}
+
+// TestCleanupTLSPerAppGatewayIsNoop verifies cleanup is a no-op under the per-app
+// strategy: the owner-referenced Gateway and Certificate are garbage collected.
+func TestCleanupTLSPerAppGatewayIsNoop(t *testing.T) {
+	scheme := newScheme()
+	app := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{Name: "chat", Namespace: "team-a", UID: "uid-chat"},
+		Spec:       appsv1.NebariAppSpec{Hostname: "chat.example.com"},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	r := &TLSReconciler{
+		Client:        fakeClient,
+		Scheme:        scheme,
+		Recorder:      record.NewFakeRecorder(10),
+		PerAppGateway: true,
+	}
+	if err := r.CleanupTLS(context.Background(), app); err != nil {
+		t.Errorf("expected CleanupTLS to be a no-op under per-app strategy, got error: %v", err)
+	}
+}
+
+func hasNebariAppOwner(refs []metav1.OwnerReference, name string) bool {
+	for _, o := range refs {
+		if o.Kind == "NebariApp" && o.Name == name {
+			return true
+		}
+	}
+	return false
 }
