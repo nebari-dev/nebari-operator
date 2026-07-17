@@ -35,6 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
 
@@ -65,7 +66,7 @@ type NebariAppReconciler struct {
 // +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=cert-manager.io,resources=certificates,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gateway.envoyproxy.io,resources=securitypolicies,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles,verbs=get;list;watch;create;update;patch;delete
@@ -384,6 +385,10 @@ func (r *NebariAppReconciler) cleanup(ctx context.Context, nebariApp *appsv1.Neb
 func (r *NebariAppReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	builder := ctrl.NewControllerManagedBy(mgr).
 		For(&appsv1.NebariApp{}).
+		// Per-app Gateways created under the per-app strategy are owner-referenced
+		// to the NebariApp (same namespace), so watch them to reconcile on drift.
+		// Shared-strategy Gateways are not owned and are unaffected by this.
+		Owns(&gatewayv1.Gateway{}).
 		Named("nebariapp")
 
 	// Watch cert-manager Certificates so that Certificate readiness transitions

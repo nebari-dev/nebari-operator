@@ -75,7 +75,7 @@ func TestValidateGateway(t *testing.T) {
 				Recorder: record.NewFakeRecorder(10),
 			}
 
-			err := reconciler.validateGateway(context.Background(), tt.gatewayName)
+			err := reconciler.validateGateway(context.Background(), tt.gatewayName, constants.GatewayNamespace)
 			if (err != nil) != tt.expectError {
 				t.Errorf("expected error=%v, got error=%v", tt.expectError, err)
 			}

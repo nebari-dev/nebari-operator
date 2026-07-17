@@ -59,15 +59,6 @@ rules:
   - gateway.networking.k8s.io
   resources:
   - gateways
-  verbs:
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - gateway.networking.k8s.io
-  resources:
   - httproutes
   verbs:
   - create

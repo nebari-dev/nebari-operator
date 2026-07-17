@@ -24,6 +24,7 @@ func ValidateResourceNames(nebariApp *appsv1.NebariApp) error {
 		{"Certificate", CertificateName(nebariApp)},
 		{"CertificateSecret", CertificateSecretName(nebariApp)},
 		{"GatewayListener", ListenerName(nebariApp)},
+		{"PerAppGateway", PerAppGatewayName(nebariApp)},
 		{"OIDCClientSecret", ClientSecretName(nebariApp)},
 	}
 
@@ -101,6 +102,13 @@ func CertificateSecretName(nebariApp *appsv1.NebariApp) string {
 // Pattern: tls-<nebariapp-name>-<namespace>
 func ListenerName(nebariApp *appsv1.NebariApp) string {
 	return fmt.Sprintf("tls-%s-%s", nebariApp.Name, nebariApp.Namespace)
+}
+
+// PerAppGatewayName generates the name for the per-app Gateway created in the
+// NebariApp's own namespace under the per-app Gateway strategy.
+// Pattern: <nebariapp-name>-gateway
+func PerAppGatewayName(nebariApp *appsv1.NebariApp) string {
+	return ResourceName(nebariApp, constants.PerAppGatewaySuffix)
 }
 
 // GatewayName returns the Gateway name for a NebariApp based on its gateway spec.

@@ -41,6 +41,23 @@ type RoutingReconciler struct {
 	Client   client.Client
 	Scheme   *runtime.Scheme
 	Recorder record.EventRecorder
+
+	// PerAppGateway must match the TLS reconciler's setting. When true and a
+	// per-app TLS listener exists, generated HTTPRoutes attach to the per-app
+	// Gateway in the NebariApp's own namespace instead of the shared cluster
+	// Gateway. See nebari-operator#484 and config.TLSConfig.PerAppGateway.
+	PerAppGateway bool
+}
+
+// gatewayTarget resolves the Gateway an HTTPRoute should attach to. Under the
+// per-app strategy, once the TLS reconciler has produced a per-app listener
+// (tlsListenerName non-empty), routes target the per-app Gateway co-located in
+// the NebariApp's namespace; otherwise they target the shared cluster Gateway.
+func (r *RoutingReconciler) gatewayTarget(nebariApp *appsv1.NebariApp, tlsListenerName string) (name string, namespace string) {
+	if r.PerAppGateway && tlsListenerName != "" {
+		return naming.PerAppGatewayName(nebariApp), nebariApp.Namespace
+	}
+	return naming.GatewayName(nebariApp), constants.GatewayNamespace
 }
 
 // ReconcileRouting creates or updates the HTTPRoute for a NebariApp.
@@ -50,12 +67,13 @@ type RoutingReconciler struct {
 func (r *RoutingReconciler) ReconcileRouting(ctx context.Context, nebariApp *appsv1.NebariApp, tlsListenerName string) error {
 	logger := log.FromContext(ctx)
 
-	// Determine which gateway to use
-	gatewayName := naming.GatewayName(nebariApp)
-	logger.Info("Reconciling routing", "gateway", gatewayName, "hostname", nebariApp.Spec.Hostname)
+	// Determine which gateway to use (shared cluster Gateway, or the per-app
+	// Gateway in this NebariApp's namespace under the per-app strategy).
+	gatewayName, gatewayNamespace := r.gatewayTarget(nebariApp, tlsListenerName)
+	logger.Info("Reconciling routing", "gateway", gatewayName, "gatewayNamespace", gatewayNamespace, "hostname", nebariApp.Spec.Hostname)
 
 	// Verify gateway exists
-	if err := r.validateGateway(ctx, gatewayName); err != nil {
+	if err := r.validateGateway(ctx, gatewayName, gatewayNamespace); err != nil {
 		logger.Error(err, "Gateway validation failed")
 		r.Recorder.Event(nebariApp, corev1.EventTypeWarning, appsv1.EventReasonGatewayNotFound, err.Error())
 		conditions.SetCondition(nebariApp, appsv1.ConditionTypeRoutingReady, metav1.ConditionFalse,
@@ -161,7 +179,12 @@ func (r *RoutingReconciler) CleanupHTTPRoute(ctx context.Context, nebariApp *app
 // and a per-app TLS listener has been created by the TLS reconciler.
 func (r *RoutingReconciler) buildHTTPRoute(nebariApp *appsv1.NebariApp, gatewayName string, tlsListenerName string) (*gatewayv1.HTTPRoute, error) {
 	routeName := naming.HTTPRouteName(nebariApp)
+	// Parent Gateway namespace must match gatewayTarget: the per-app Gateway lives
+	// in this NebariApp's namespace, the shared Gateway in the Gateway namespace.
 	namespace := gatewayv1.Namespace(constants.GatewayNamespace)
+	if r.PerAppGateway && tlsListenerName != "" {
+		namespace = gatewayv1.Namespace(nebariApp.Namespace)
+	}
 
 	// Determine which Gateway listener to use
 	// Priority: tlsListenerName (from TLS reconciler) > TLS enabled ("https") > TLS disabled ("http")
@@ -306,9 +329,9 @@ func (r *RoutingReconciler) ReconcilePublicRoute(ctx context.Context, nebariApp 
 		return r.CleanupPublicHTTPRoute(ctx, nebariApp)
 	}
 
-	gatewayName := naming.GatewayName(nebariApp)
-	logger.Info("Reconciling public route", "gateway", gatewayName, "hostname", nebariApp.Spec.Hostname,
-		"publicRoutes", nebariApp.Spec.Routing.PublicRoutes)
+	gatewayName, gatewayNamespace := r.gatewayTarget(nebariApp, tlsListenerName)
+	logger.Info("Reconciling public route", "gateway", gatewayName, "gatewayNamespace", gatewayNamespace,
+		"hostname", nebariApp.Spec.Hostname, "publicRoutes", nebariApp.Spec.Routing.PublicRoutes)
 
 	desiredRoute, err := r.buildPublicHTTPRoute(nebariApp, gatewayName, tlsListenerName)
 	if err != nil {
@@ -391,7 +414,11 @@ func (r *RoutingReconciler) CleanupPublicHTTPRoute(ctx context.Context, nebariAp
 // This route is separate from the main route so the SecurityPolicy only targets the main route.
 func (r *RoutingReconciler) buildPublicHTTPRoute(nebariApp *appsv1.NebariApp, gatewayName string, tlsListenerName string) (*gatewayv1.HTTPRoute, error) {
 	routeName := naming.PublicHTTPRouteName(nebariApp)
+	// Parent Gateway namespace must match gatewayTarget (see buildHTTPRoute).
 	namespace := gatewayv1.Namespace(constants.GatewayNamespace)
+	if r.PerAppGateway && tlsListenerName != "" {
+		namespace = gatewayv1.Namespace(nebariApp.Namespace)
+	}
 
 	sectionName := gatewayv1.SectionName("https")
 	tlsEnabled := true
@@ -462,17 +489,17 @@ func (r *RoutingReconciler) buildPublicHTTPRoute(nebariApp *appsv1.NebariApp, ga
 	return route, nil
 }
 
-// validateGateway checks if the specified gateway exists
-func (r *RoutingReconciler) validateGateway(ctx context.Context, gatewayName string) error {
+// validateGateway checks if the specified gateway exists in the given namespace.
+func (r *RoutingReconciler) validateGateway(ctx context.Context, gatewayName, gatewayNamespace string) error {
 	gateway := &gatewayv1.Gateway{}
 	gatewayKey := client.ObjectKey{
 		Name:      gatewayName,
-		Namespace: constants.GatewayNamespace,
+		Namespace: gatewayNamespace,
 	}
 
 	if err := r.Client.Get(ctx, gatewayKey, gateway); err != nil {
 		if errors.IsNotFound(err) {
-			return fmt.Errorf("gateway %s not found in namespace %s", gatewayName, constants.GatewayNamespace)
+			return fmt.Errorf("gateway %s not found in namespace %s", gatewayName, gatewayNamespace)
 		}
 		return fmt.Errorf("failed to get gateway: %w", err)
 	}

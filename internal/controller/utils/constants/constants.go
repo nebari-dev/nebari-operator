@@ -39,6 +39,10 @@ const (
 
 // Resource naming suffixes
 const (
+	// PerAppGatewaySuffix is appended to NebariApp name for the per-app Gateway
+	// resource created in the NebariApp's own namespace (per-app Gateway strategy).
+	PerAppGatewaySuffix = "gateway"
+
 	// HTTPRouteSuffix is appended to NebariApp name for HTTPRoute resources
 	HTTPRouteSuffix = "route"
 

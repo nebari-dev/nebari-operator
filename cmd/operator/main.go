@@ -259,6 +259,11 @@ func main() {
 		Scheme:            mgr.GetScheme(),
 		Recorder:          mgr.GetEventRecorderFor("nebariapp-tls"),
 		ClusterIssuerName: tlsConfig.ClusterIssuerName,
+		PerAppGateway:     tlsConfig.PerAppGateway,
+	}
+	if tlsConfig.PerAppGateway {
+		setupLog.Info("Per-app Gateway strategy enabled; each NebariApp gets a dedicated Gateway in its " +
+			"own namespace. Requires Envoy Gateway mergeGateways to be enabled cluster-wide.")
 	}
 	if tlsConfig.ClusterIssuerName != "" {
 		setupLog.Info("TLS reconciler initialized", "clusterIssuer", tlsConfig.ClusterIssuerName)
@@ -275,9 +280,10 @@ func main() {
 		Recorder: mgr.GetEventRecorderFor("nebariapp-core"),
 	}
 	routingReconciler := &routing.RoutingReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("nebariapp-routing"),
+		Client:        mgr.GetClient(),
+		Scheme:        mgr.GetScheme(),
+		Recorder:      mgr.GetEventRecorderFor("nebariapp-routing"),
+		PerAppGateway: tlsConfig.PerAppGateway,
 	}
 
 	if err := (&controller.NebariAppReconciler{
