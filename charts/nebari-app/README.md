@@ -12,7 +12,7 @@ Add the chart to your consumer chart's `Chart.yaml`:
 dependencies:
   - name: nebari-app
     version: 0.1.0
-    repository: https://nebari.dev/charts
+    repository: oci://quay.io/nebari/charts
 ```
 
 or via a local file path during development:
@@ -46,12 +46,11 @@ The template takes a dict with `metadata` and `spec` keys:
 The template enforces these required fields via Helm's `required` function (render aborts if any is missing or empty):
 
 - `metadata.name`
-- `metadata.namespace`
 - `spec.hostname`
 - `spec.service.name`
 - `spec.service.port`
 
-All other validation (the rest of the `NebariAppSpec` schema) happens API-server-side at apply time. Pipe `helm template` output through `kubectl --dry-run=client -f -` in CI to catch schema errors before deployment.
+All other validation (the rest of the `NebariAppSpec` schema) happens API-server-side at apply time. To catch schema errors before deployment, pipe `helm template` output through `kubectl apply --dry-run=server -f -`. This requires a cluster with the NebariApp CRD installed.
 
 ### Dynamic service values
 

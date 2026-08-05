@@ -1,0 +1,57 @@
+---
+# Source: fixture/templates/multi.yaml
+apiVersion: reconcilers.nebari.dev/v1
+kind: NebariApp
+metadata:
+  labels:
+    app.kubernetes.io/instance: t
+    app.kubernetes.io/name: frontend
+  name: frontend
+  namespace: default
+spec:
+  auth:
+    enabled: true
+    enforceAtGateway: false
+    provider: keycloak
+    provisionClient: true
+    redirectURI: /*
+    scopes:
+    - openid
+    - profile
+    - email
+  hostname: chat.nebari.local
+  landingPage:
+    category: AI
+    description: Chat with AI models
+    displayName: Chat
+    enabled: true
+    healthCheck:
+      enabled: true
+      path: /health
+    priority: 1
+  routing:
+    routes:
+    - pathPrefix: /
+      pathType: PathPrefix
+  service:
+    name: frontend
+    port: 80
+---
+# Source: fixture/templates/multi.yaml
+apiVersion: reconcilers.nebari.dev/v1
+kind: NebariApp
+metadata:
+  labels:
+    app.kubernetes.io/instance: t
+    app.kubernetes.io/name: api
+  name: api
+  namespace: default
+spec:
+  hostname: api.nebari.local
+  routing:
+    routes:
+    - pathPrefix: /
+      pathType: PathPrefix
+  service:
+    name: api
+    port: 8000

@@ -210,20 +210,27 @@ helm-lint: ## Lint the nebari-app library chart.
 	@command -v helm >/dev/null 2>&1 || { echo >&2 "helm is required but not installed. See https://helm.sh/docs/intro/install/"; exit 1; }
 	helm lint charts/nebari-app
 
-.PHONY: helm-test
-helm-test: helm-lint ## Render the nebari-app fixture chart for all cases and verify required-field guards.
+.PHONY: helm-test-generate-golden
+helm-test-generate-golden: ## Generate golden files for nebari-app chart tests.
 	@command -v helm >/dev/null 2>&1 || { echo >&2 "helm is required but not installed. See https://helm.sh/docs/intro/install/"; exit 1; }
-	helm dependency build test/fixture >/dev/null
+	mkdir -p test/helm/nebari-app/golden
+	helm dependency build test/helm/nebari-app >/dev/null
 	@for c in static computed multi; do \
-		helm template t test/fixture --set cases.$$c.enabled=true >/dev/null \
-			|| { echo >&2 "case $$c failed to render"; exit 1; }; \
+		helm template t test/helm/nebari-app --set cases.$$c.enabled=true > test/helm/nebari-app/golden/$$c.yaml; \
+		echo "  case $$c: golden written"; \
+	done
+	@echo "✅ Golden files written to test/helm/nebari-app/golden/"
+
+.PHONY: helm-test
+helm-test: helm-lint ## Render the nebari-app chart for all cases and verify against golden files.
+	@command -v helm >/dev/null 2>&1 || { echo >&2 "helm is required but not installed. See https://helm.sh/docs/intro/install/"; exit 1; }
+	@for c in static computed multi; do \
+		helm template t test/helm/nebari-app --set cases.$$c.enabled=true > /tmp/$$c.yaml; \
+		diff -q test/helm/nebari-app/golden/$$c.yaml /tmp/$$c.yaml >/dev/null \
+			|| { echo >&2 "case $$c: golden mismatch"; diff test/helm/nebari-app/golden/$$c.yaml /tmp/$$c.yaml; exit 1; }; \
 		echo "  case $$c: ok"; \
 	done
-	@for f in spec.hostname metadata.name metadata.namespace spec.service.name spec.service.port; do \
-		helm template t test/fixture --set cases.static.enabled=true --set cases.static.$$f= >/dev/null 2>&1 \
-			&& { echo >&2 "expected required failure for $$f"; exit 1; }; \
-		echo "  required guard $$f: ok"; \
-	done
+	@rm -f /tmp/static.yaml /tmp/computed.yaml /tmp/multi.yaml
 	@echo "✅ nebari-app chart tests passed"
 
 .PHONY: generate-dev

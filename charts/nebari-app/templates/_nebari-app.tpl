@@ -1,6 +1,5 @@
 {{- define "nebari-app.nebariApp" -}}
 {{- $_ := required "metadata.name is required" .metadata.name -}}
-{{- $_ := required "metadata.namespace is required" .metadata.namespace -}}
 {{- $_ := required "spec.hostname is required" .spec.hostname -}}
 {{- $_ := required "spec.service.name is required" .spec.service.name -}}
 {{- $_ := required "spec.service.port is required" .spec.service.port -}}

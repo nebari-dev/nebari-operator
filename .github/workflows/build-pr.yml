@@ -239,6 +239,9 @@ jobs:
       - name: Lint Helm Chart
         run: helm lint ./dist/chart
 
+      - name: Test nebari-app library chart
+        run: make helm-test
+
       - name: Create KinD Cluster
         id: kind
         uses: helm/kind-action@v1

@@ -6,5 +6,5 @@ version: 0.1.0
 appVersion: "0.1.0"
 dependencies:
   - name: nebari-app
-    version: 0.1.0
-    repository: file://../../charts/nebari-app
+    version: ">=0.1.0"
+    repository: file://../../../charts/nebari-app

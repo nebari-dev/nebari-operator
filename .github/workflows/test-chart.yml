@@ -55,9 +55,6 @@ jobs:
         run: |
           helm lint ./dist/chart
 
-      - name: Test nebari-app library chart
-        run: make helm-test
-
 # TODO: Uncomment if cert-manager is enabled
 #      - name: Install cert-manager via Helm (wait for readiness)
 #        run: |
