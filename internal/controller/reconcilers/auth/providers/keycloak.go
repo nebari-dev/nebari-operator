@@ -71,7 +71,29 @@ func (p *KeycloakProvider) externalRealmURL() string {
 }
 
 // GetIssuerURL returns the internal cluster URL for the Keycloak realm.
-// Envoy uses this to fetch OIDC configuration from within the cluster.
+//
+// This deliberately stays on the in-cluster URL even when Keycloak issues
+// tokens with a public `iss` claim (frontendUrl / KC_HOSTNAME configured).
+// Investigated in https://github.com/nebari-dev/nebari-operator/issues/112:
+//
+//   - Envoy Gateway uses SecurityPolicy.spec.oidc.provider.issuer only at
+//     control-plane time, to fetch /.well-known/openid-configuration — and
+//     only when authorizationEndpoint or tokenEndpoint is not explicitly set
+//     (gateway v1.6.3 internal/gatewayapi/securitypolicy.go). The issuer is
+//     never passed to the Envoy oauth2 filter; the filter's config proto has
+//     no issuer field and the filter never inspects the token's `iss` claim.
+//   - Envoy Gateway does not enforce the OIDC Discovery issuer-match rule
+//     either: it unmarshals only the endpoint fields from the discovery
+//     document, so a public `issuer` value in the document is ignored.
+//   - Consumers that DO strictly validate `iss` (e.g. SecurityPolicy
+//     spec.jwt providers configured by downstream packs) must use the public
+//     issuer, which they read from the client Secret's issuer-url key —
+//     populated from GetExternalIssuerURL, not from this method.
+//
+// Keeping the issuer in-cluster means the discovery fallback (when endpoint
+// overrides are incomplete) is fetched from the envoy-gateway controller pod
+// over cluster DNS, avoiding public TLS-chain trust and hairpin-routing
+// requirements.
 func (p *KeycloakProvider) GetIssuerURL(ctx context.Context, nebariApp *appsv1.NebariApp) (string, error) {
 	return p.internalRealmURL(), nil
 }
@@ -87,6 +109,11 @@ func (p *KeycloakProvider) GetIssuerURL(ctx context.Context, nebariApp *appsv1.N
 //     to these URLs, so they MUST be the publicly routable Keycloak URL. Using
 //     the in-cluster URL causes the browser to fail DNS resolution and dead-end
 //     the OAuth2 flow.
+//
+// When KEYCLOAK_EXTERNAL_URL is set, both Authorization and Token endpoints
+// are explicitly provided, so Envoy Gateway skips OIDC discovery entirely and
+// the issuer URL never leaves the control plane (see GetIssuerURL). Tests
+// assert this invariant; do not remove one override without the other.
 //
 // Fallback when KEYCLOAK_EXTERNAL_URL is unset: Authorization and EndSession
 // are returned as nil overrides. Envoy Gateway then triggers OIDC discovery
