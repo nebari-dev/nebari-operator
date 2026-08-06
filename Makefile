@@ -182,7 +182,7 @@ helm-chart: build-installer ## Generate Helm chart from manifests using kubebuil
 	@echo "  make helm-chart-version VERSION=1.0.0 APP_VERSION=v1.0.0"
 
 .PHONY: helm-package
-helm-package: ## Package the Helm chart (run helm-chart first).
+helm-package: ## Package the Helm charts (run helm-chart first).
 	@command -v helm >/dev/null 2>&1 || { echo >&2 "helm is required but not installed. See https://helm.sh/docs/intro/install/"; exit 1; }
 	@if [ ! -d "dist/chart" ]; then echo "Error: dist/chart/ not found. Run 'make helm-chart' first."; exit 1; fi
 	helm package dist/chart --destination dist/
@@ -206,8 +206,10 @@ helm-chart-version: ## Update Helm chart version and appVersion (requires VERSIO
 	@echo "✅ Updated chart versions to $(VERSION) and appVersion to $(APP_VERSION)"
 
 .PHONY: helm-lint
-helm-lint: ## Lint the nebari-app library chart.
+helm-lint: ## Lint the helm charts
 	@command -v helm >/dev/null 2>&1 || { echo >&2 "helm is required but not installed. See https://helm.sh/docs/intro/install/"; exit 1; }
+	@if [ ! -d "dist/chart" ]; then echo "Error: dist/chart/ not found. Run 'make helm-chart' first."; exit 1; fi
+	helm lint dist/chart
 	helm lint charts/nebari-app
 
 .PHONY: helm-test-generate-golden

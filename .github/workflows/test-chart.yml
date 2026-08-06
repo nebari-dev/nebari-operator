@@ -52,8 +52,10 @@ jobs:
         run: make helm-chart
 
       - name: Lint Helm Chart
-        run: |
-          helm lint ./dist/chart
+        run: make helm-lint
+
+      - name: Package Helm Chart
+        run: make helm-package
 
 # TODO: Uncomment if cert-manager is enabled
 #      - name: Install cert-manager via Helm (wait for readiness)
