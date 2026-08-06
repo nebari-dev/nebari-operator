@@ -99,6 +99,10 @@ jobs:
     name: E2E Tests
     runs-on: ubuntu-latest
     needs: lint
+    # Hard cap so a hung setup step (e.g. an unbounded wait while installing
+    # foundational services) fails the job in minutes instead of squatting a
+    # runner until GitHub's 6h default. A healthy run finishes well under this.
+    timeout-minutes: 30
     env:
       CLUSTER_NAME: test-cluster
     steps:
