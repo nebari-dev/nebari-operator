@@ -62,6 +62,14 @@ type TLSResult struct {
 	// on the user-provided-secret path it reflects whether the named secret exists
 	// and is of type kubernetes.io/tls.
 	CertReady bool
+
+	// UseListenerSet reports whether this app has cut over to the per-app
+	// ListenerSet path (ADR-0011 Option 2). When true, the app's HTTPS listener
+	// lives on a ListenerSet in the NebariApp's own namespace (attached to the
+	// shared Gateway via parentRef) and HTTPRoutes must attach to that ListenerSet
+	// rather than to a listener on the shared Gateway. When false, the legacy
+	// shared-Gateway listener is in use. See reconcileTLSAttachment.
+	UseListenerSet bool
 }
 
 // isTLSEnabled returns true if TLS is enabled for the NebariApp.
@@ -124,13 +132,20 @@ func (r *TLSReconciler) ReconcileTLS(ctx context.Context, nebariApp *appsv1.Neba
 		"clusterIssuer", r.ClusterIssuerName,
 		"gateway", naming.GatewayName(nebariApp))
 
-	if err := r.reconcileCertificate(ctx, nebariApp); err != nil {
+	secretName := naming.CertificateSecretName(nebariApp)
+
+	// App-namespace Certificate for the per-app ListenerSet (ADR-0011 Option 2).
+	// Reconciled regardless of phase so that, on an Envoy Gateway that supports
+	// ListenerSet, the listener has a secret to program against and can reach
+	// Programmed=True. Owner-referenced (same namespace) for garbage collection.
+	if err := r.reconcileCertificate(ctx, nebariApp, nebariApp.Namespace, true); err != nil {
 		conditions.SetCondition(nebariApp, appsv1.ConditionTypeTLSReady, metav1.ConditionFalse,
 			"CertificateFailed", fmt.Sprintf("Failed to reconcile Certificate: %v", err))
 		return nil, err
 	}
 
-	if err := r.reconcileGatewayListener(ctx, nebariApp, naming.CertificateSecretName(nebariApp)); err != nil {
+	useListenerSet, err := r.reconcileTLSAttachment(ctx, nebariApp, secretName)
+	if err != nil {
 		if containsListenerConflict(err) {
 			conditions.SetCondition(nebariApp, appsv1.ConditionTypeTLSReady, metav1.ConditionFalse,
 				appsv1.ReasonGatewayListenerConflict,
@@ -139,12 +154,30 @@ func (r *TLSReconciler) ReconcileTLS(ctx context.Context, nebariApp *appsv1.Neba
 					nebariApp.Spec.Hostname))
 		} else {
 			conditions.SetCondition(nebariApp, appsv1.ConditionTypeTLSReady, metav1.ConditionFalse,
-				"GatewayListenerFailed", fmt.Sprintf("Failed to reconcile Gateway listener: %v", err))
+				"GatewayListenerFailed", fmt.Sprintf("Failed to reconcile TLS listener: %v", err))
 		}
 		return nil, err
 	}
 
-	certReady, err := r.isCertificateReady(ctx, nebariApp)
+	// Once cut over to the ListenerSet, the legacy shared-Gateway Certificate is
+	// no longer referenced; drop it (idempotent, label-matched). Before cutover,
+	// keep it: it backs the shared-Gateway listener that is still serving.
+	if useListenerSet {
+		if err := r.cleanupOwnedCertificate(ctx, nebariApp); err != nil {
+			logger.Error(err, "failed to clean up legacy Gateway-namespace Certificate after ListenerSet cutover")
+		}
+	} else if err := r.reconcileCertificate(ctx, nebariApp, constants.GatewayNamespace, false); err != nil {
+		conditions.SetCondition(nebariApp, appsv1.ConditionTypeTLSReady, metav1.ConditionFalse,
+			"CertificateFailed", fmt.Sprintf("Failed to reconcile Certificate: %v", err))
+		return nil, err
+	}
+
+	// Certificate readiness reflects whichever namespace is actively serving.
+	certNS := constants.GatewayNamespace
+	if useListenerSet {
+		certNS = nebariApp.Namespace
+	}
+	certReady, err := r.isCertificateReady(ctx, nebariApp, certNS)
 	if err != nil {
 		conditions.SetCondition(nebariApp, appsv1.ConditionTypeTLSReady, metav1.ConditionFalse,
 			"CertificateCheckFailed", fmt.Sprintf("Failed to check Certificate readiness: %v", err))
@@ -153,16 +186,17 @@ func (r *TLSReconciler) ReconcileTLS(ctx context.Context, nebariApp *appsv1.Neba
 
 	if certReady {
 		conditions.SetCondition(nebariApp, appsv1.ConditionTypeTLSReady, metav1.ConditionTrue,
-			"TLSConfigured", "TLS certificate is ready and Gateway listener is configured")
+			"TLSConfigured", "TLS certificate is ready and the listener is configured")
 	} else {
 		conditions.SetCondition(nebariApp, appsv1.ConditionTypeTLSReady, metav1.ConditionFalse,
 			appsv1.ReasonCertificateNotReady, "Waiting for cert-manager Certificate to become ready")
 	}
 
 	return &TLSResult{
-		ListenerName: naming.ListenerName(nebariApp),
-		SecretName:   naming.CertificateSecretName(nebariApp),
-		CertReady:    certReady,
+		ListenerName:   naming.ListenerName(nebariApp),
+		SecretName:     secretName,
+		CertReady:      certReady,
+		UseListenerSet: useListenerSet,
 	}, nil
 }
 
@@ -181,7 +215,8 @@ func (r *TLSReconciler) reconcileUserProvidedTLS(ctx context.Context, nebariApp 
 		return nil, err
 	}
 
-	if err := r.reconcileGatewayListener(ctx, nebariApp, secretName); err != nil {
+	useListenerSet, err := r.reconcileTLSAttachment(ctx, nebariApp, secretName)
+	if err != nil {
 		if containsListenerConflict(err) {
 			conditions.SetCondition(nebariApp, appsv1.ConditionTypeTLSReady, metav1.ConditionFalse,
 				appsv1.ReasonGatewayListenerConflict,
@@ -190,9 +225,18 @@ func (r *TLSReconciler) reconcileUserProvidedTLS(ctx context.Context, nebariApp 
 					nebariApp.Spec.Hostname))
 		} else {
 			conditions.SetCondition(nebariApp, appsv1.ConditionTypeTLSReady, metav1.ConditionFalse,
-				"GatewayListenerFailed", fmt.Sprintf("Failed to reconcile Gateway listener: %v", err))
+				"GatewayListenerFailed", fmt.Sprintf("Failed to reconcile TLS listener: %v", err))
 		}
 		return nil, err
+	}
+
+	// The user-provided secret is looked up in whichever namespace is serving:
+	// the app namespace once cut over to the ListenerSet, else the Gateway
+	// namespace for the legacy shared listener. TODO(#168): finish the
+	// user-secret migration so a single app-namespace secret drives both phases.
+	secretNS := constants.GatewayNamespace
+	if useListenerSet {
+		secretNS = nebariApp.Namespace
 	}
 
 	// Capture the previous TLSReady reason before SetCondition mutates it, so we
@@ -205,7 +249,7 @@ func (r *TLSReconciler) reconcileUserProvidedTLS(ctx context.Context, nebariApp 
 		prevReason = prev.Reason
 	}
 
-	status, reason, msg := r.checkUserProvidedSecret(ctx, secretName)
+	status, reason, msg := r.checkUserProvidedSecret(ctx, secretNS, secretName)
 	conditions.SetCondition(nebariApp, appsv1.ConditionTypeTLSReady, status, reason, msg)
 
 	if reason != prevReason {
@@ -222,9 +266,10 @@ func (r *TLSReconciler) reconcileUserProvidedTLS(ctx context.Context, nebariApp 
 	}
 
 	return &TLSResult{
-		ListenerName: naming.ListenerName(nebariApp),
-		SecretName:   secretName,
-		CertReady:    status == metav1.ConditionTrue,
+		ListenerName:   naming.ListenerName(nebariApp),
+		SecretName:     secretName,
+		CertReady:      status == metav1.ConditionTrue,
+		UseListenerSet: useListenerSet,
 	}, nil
 }
 
@@ -255,8 +300,17 @@ func (r *TLSReconciler) CleanupTLS(ctx context.Context, nebariApp *appsv1.Nebari
 	return nil
 }
 
-// reconcileCertificate creates or updates a cert-manager Certificate for the NebariApp.
-func (r *TLSReconciler) reconcileCertificate(ctx context.Context, nebariApp *appsv1.NebariApp) error {
+// reconcileCertificate creates or updates a cert-manager Certificate for the
+// NebariApp in the given namespace.
+//
+// Two homes exist during the ListenerSet migration (ADR-0011 Option 2):
+//   - constants.GatewayNamespace (ownerRef=false): the legacy home, referenced by
+//     the shared-Gateway listener. Cross-namespace from the NebariApp, so ownership
+//     is tracked by labels (SetControllerReference cannot cross namespaces).
+//   - nebariApp.Namespace (ownerRef=true): the per-app ListenerSet's home. Same
+//     namespace as the NebariApp, so the Certificate is owner-referenced and
+//     garbage-collected with the NebariApp.
+func (r *TLSReconciler) reconcileCertificate(ctx context.Context, nebariApp *appsv1.NebariApp, namespace string, ownerRef bool) error {
 	logger := log.FromContext(ctx)
 
 	certName := naming.CertificateName(nebariApp)
@@ -265,12 +319,14 @@ func (r *TLSReconciler) reconcileCertificate(ctx context.Context, nebariApp *app
 	cert := &certmanagerv1.Certificate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      certName,
-			Namespace: constants.GatewayNamespace,
+			Namespace: namespace,
 		},
 	}
 
 	op, err := controllerutil.CreateOrUpdate(ctx, r.Client, cert, func() error {
-		// Set labels (cannot use SetControllerReference since Certificate is cross-namespace)
+		// Ownership labels are always set: the shared-Gateway (cross-namespace)
+		// home relies on them for cleanup, and they remain useful metadata on the
+		// app-namespace home where an ownerReference is also set.
 		if cert.Labels == nil {
 			cert.Labels = make(map[string]string)
 		}
@@ -287,6 +343,9 @@ func (r *TLSReconciler) reconcileCertificate(ctx context.Context, nebariApp *app
 			},
 		}
 
+		if ownerRef {
+			return controllerutil.SetControllerReference(nebariApp, cert, r.Scheme)
+		}
 		return nil
 	})
 
@@ -294,15 +353,15 @@ func (r *TLSReconciler) reconcileCertificate(ctx context.Context, nebariApp *app
 		return fmt.Errorf("failed to create or update Certificate: %w", err)
 	}
 
-	logger.Info("Certificate reconciled", "name", certName, "namespace", constants.GatewayNamespace, "operation", op)
+	logger.Info("Certificate reconciled", "name", certName, "namespace", namespace, "operation", op)
 
 	switch op {
 	case controllerutil.OperationResultCreated:
 		r.Recorder.Event(nebariApp, corev1.EventTypeNormal, appsv1.EventReasonCertificateCreated,
-			fmt.Sprintf("Created cert-manager Certificate %s/%s", constants.GatewayNamespace, certName))
+			fmt.Sprintf("Created cert-manager Certificate %s/%s", namespace, certName))
 	case controllerutil.OperationResultUpdated:
 		r.Recorder.Event(nebariApp, corev1.EventTypeNormal, appsv1.EventReasonCertificateUpdated,
-			fmt.Sprintf("Updated cert-manager Certificate %s/%s", constants.GatewayNamespace, certName))
+			fmt.Sprintf("Updated cert-manager Certificate %s/%s", namespace, certName))
 	}
 
 	return nil
@@ -442,12 +501,12 @@ func toLower(c byte) byte {
 
 // isCertificateReady checks whether the cert-manager Certificate has a Ready=True condition.
 // Returns (ready, error) so that transient API failures are distinguished from "cert not ready".
-func (r *TLSReconciler) isCertificateReady(ctx context.Context, nebariApp *appsv1.NebariApp) (bool, error) {
+func (r *TLSReconciler) isCertificateReady(ctx context.Context, nebariApp *appsv1.NebariApp, namespace string) (bool, error) {
 	certName := naming.CertificateName(nebariApp)
 	cert := &certmanagerv1.Certificate{}
 	if err := r.Client.Get(ctx, types.NamespacedName{
 		Name:      certName,
-		Namespace: constants.GatewayNamespace,
+		Namespace: namespace,
 	}, cert); err != nil {
 		return false, fmt.Errorf("failed to get Certificate for readiness check: %w", err)
 	}
@@ -556,29 +615,29 @@ func (r *TLSReconciler) cleanupOwnedCertificate(ctx context.Context, nebariApp *
 // its readiness. The check is best-effort: a missing or malformed secret yields
 // ConditionFalse but does not error, so the caller can still proceed to attach
 // the listener.
-func (r *TLSReconciler) checkUserProvidedSecret(ctx context.Context, secretName string) (metav1.ConditionStatus, string, string) {
+func (r *TLSReconciler) checkUserProvidedSecret(ctx context.Context, namespace, secretName string) (metav1.ConditionStatus, string, string) {
 	secret := &corev1.Secret{}
 	err := r.Client.Get(ctx, types.NamespacedName{
 		Name:      secretName,
-		Namespace: constants.GatewayNamespace,
+		Namespace: namespace,
 	}, secret)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			return metav1.ConditionFalse,
 				appsv1.ReasonUserProvidedSecretNotFound,
 				fmt.Sprintf("TLS secret %s/%s not found; create it and the listener will pick it up",
-					constants.GatewayNamespace, secretName)
+					namespace, secretName)
 		}
 		return metav1.ConditionFalse,
 			appsv1.ReasonUserProvidedSecretCheckFailed,
-			fmt.Sprintf("failed to check TLS secret %s/%s: %v", constants.GatewayNamespace, secretName, err)
+			fmt.Sprintf("failed to check TLS secret %s/%s: %v", namespace, secretName, err)
 	}
 
 	if secret.Type != corev1.SecretTypeTLS {
 		return metav1.ConditionFalse,
 			appsv1.ReasonUserProvidedSecretInvalidType,
 			fmt.Sprintf("TLS secret %s/%s is type %s, expected kubernetes.io/tls",
-				constants.GatewayNamespace, secretName, secret.Type)
+				namespace, secretName, secret.Type)
 	}
 
 	// `kubectl create secret tls` enforces non-empty tls.crt and tls.key, but
@@ -589,10 +648,10 @@ func (r *TLSReconciler) checkUserProvidedSecret(ctx context.Context, secretName 
 		return metav1.ConditionFalse,
 			appsv1.ReasonUserProvidedSecretInvalidType,
 			fmt.Sprintf("TLS secret %s/%s has type kubernetes.io/tls but is missing tls.crt or tls.key data",
-				constants.GatewayNamespace, secretName)
+				namespace, secretName)
 	}
 
 	return metav1.ConditionTrue,
 		appsv1.ReasonUserProvidedSecretReady,
-		fmt.Sprintf("using pre-provisioned TLS secret %s/%s", constants.GatewayNamespace, secretName)
+		fmt.Sprintf("using pre-provisioned TLS secret %s/%s", namespace, secretName)
 }
