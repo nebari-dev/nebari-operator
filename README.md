@@ -28,7 +28,7 @@
   href="https://github.com/nebari-dev/nebari-operator/releases/latest"><img
   src="https://img.shields.io/github/v/release/nebari-dev/nebari-operator?logo=github&label=release" alt="Latest
   Release"></a> <a href="https://golang.org"><img
-  src="https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go&logoColor=white" alt="Go 1.25+"></a> <a
+  src="https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go&logoColor=white" alt="Go 1.26+"></a> <a
   href="https://kubernetes.io"></a>
 </p>
 
@@ -191,7 +191,7 @@ See the [Configuration Reference](docs/configuration-reference.md) for all avail
 
 | Tool | Version | Notes |
 | --- | --- | --- |
-| `go` | 1.25+ | Controller and tests |
+| `go` | 1.26+ | Controller and tests |
 | `docker` or `podman` | 24+ | Image builds |
 | `kubectl` | 1.28+ | Cluster interaction |
 | `make` | any | Build automation |
