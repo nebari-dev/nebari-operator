@@ -36,6 +36,17 @@ linters:
           - dupl
           - lll
         path: internal/*
+      # Repeated fixture strings in tests are not worth extracting to constants.
+      - linters:
+          - goconst
+        path: _test\.go
+      # Deprecations surfaced by the controller-runtime 0.24 / apimachinery bump
+      # (old events API via GetEventRecorderFor, scheme.Builder). The migration
+      # off these is tracked separately and is out of scope for this change.
+      - linters:
+          - staticcheck
+        text: 'SA1019'
+        path: (cmd/operator/main\.go|api/v1/groupversion_info\.go)
     paths:
       - third_party$
       - builtin$

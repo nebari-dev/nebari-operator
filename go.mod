@@ -1,6 +1,6 @@
 module github.com/nebari-dev/nebari-operator
 
-go 1.26.4
+go 1.26.5
 
 require (
 	github.com/Nerzal/gocloak/v13 v13.9.0
