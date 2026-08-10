@@ -25,6 +25,7 @@ import (
 
 	egv1alpha1 "github.com/envoyproxy/gateway/api/v1alpha1"
 	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
+	"github.com/nebari-dev/nebari-operator/internal/config"
 	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/auth/providers"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/constants"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/naming"
@@ -597,6 +598,105 @@ func TestBuildSecurityPolicySpec(t *testing.T) {
 			if !tt.expectError && tt.validateSpec != nil {
 				tt.validateSpec(t, spec)
 			}
+		})
+	}
+}
+
+// TestBuildSecurityPolicySpec_KeycloakIssuerAndEndpointSplit exercises the
+// real KeycloakProvider end-to-end through buildSecurityPolicySpec (issues
+// #112 and #113): the issuer stays on the in-cluster URL, the token endpoint
+// stays on the in-cluster host (Envoy back-channel), and the browser-facing
+// authorization/end-session endpoints move to KEYCLOAK_EXTERNAL_URL.
+//
+// The "ExternalURL set" case also locks in the invariant that makes the
+// in-cluster issuer safe even when Keycloak emits a public `iss` claim
+// (frontendUrl configured): Envoy Gateway performs OIDC discovery against the
+// issuer only when authorizationEndpoint or tokenEndpoint is missing, so with
+// both explicitly set the issuer never leaves the control plane and is never
+// compared against the token's `iss` claim (the Envoy oauth2 filter has no
+// issuer field at all). See #112 for the full investigation.
+func TestBuildSecurityPolicySpec_KeycloakIssuerAndEndpointSplit(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = appsv1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+	_ = egv1alpha1.AddToScheme(scheme)
+
+	const internalRealm = "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/nebari"
+
+	tests := []struct {
+		name                  string
+		externalURL           string
+		expectedAuthorization *string
+		expectedEndSession    *string
+	}{
+		{
+			name:                  "ExternalURL set: browser endpoints public, token and issuer in-cluster",
+			externalURL:           "https://keycloak.example.com",
+			expectedAuthorization: ptr.To("https://keycloak.example.com/realms/nebari/protocol/openid-connect/auth"),
+			expectedEndSession:    ptr.To("https://keycloak.example.com/realms/nebari/protocol/openid-connect/logout"),
+		},
+		{
+			// Without an external URL the browser-facing endpoints are left
+			// unset so Envoy Gateway falls back to OIDC discovery against the
+			// in-cluster issuer; the token endpoint stays pinned in-cluster.
+			name:        "ExternalURL unset: only token override is set",
+			externalURL: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nebariApp := &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app",
+					Namespace: "default",
+				},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "test.example.com",
+					Auth: &appsv1.AuthConfig{
+						Enabled:  true,
+						Provider: constants.ProviderKeycloak,
+					},
+				},
+			}
+
+			client := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(nebariApp).
+				Build()
+
+			reconciler := &AuthReconciler{
+				Client:   client,
+				Scheme:   scheme,
+				Recorder: record.NewFakeRecorder(10),
+			}
+
+			provider := &providers.KeycloakProvider{
+				Config: config.KeycloakConfig{
+					Realm:                  "nebari",
+					IssuerServiceName:      "keycloak-keycloakx-http",
+					IssuerServiceNamespace: "keycloak",
+					IssuerServicePort:      8080,
+					ExternalURL:            tt.externalURL,
+				},
+			}
+
+			spec, err := reconciler.buildSecurityPolicySpec(context.Background(), nebariApp, provider)
+			if err != nil {
+				t.Fatalf("buildSecurityPolicySpec returned error: %v", err)
+			}
+			if spec.OIDC == nil {
+				t.Fatal("OIDC config is nil")
+			}
+
+			p := spec.OIDC.Provider
+			if p.Issuer != internalRealm {
+				t.Errorf("expected in-cluster issuer %q, got %q", internalRealm, p.Issuer)
+			}
+			expectedToken := ptr.To(internalRealm + "/protocol/openid-connect/token")
+			verifyOptionalEndpoint(t, "token", p.TokenEndpoint, expectedToken)
+			verifyOptionalEndpoint(t, "authorization", p.AuthorizationEndpoint, tt.expectedAuthorization)
+			verifyOptionalEndpoint(t, "endSession", p.EndSessionEndpoint, tt.expectedEndSession)
 		})
 	}
 }

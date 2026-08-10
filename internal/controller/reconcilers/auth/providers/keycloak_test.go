@@ -91,6 +91,23 @@ func TestKeycloakProvider_GetIssuerURL(t *testing.T) {
 			},
 			expectedURL: "http://custom-keycloak.auth.svc.cluster.local:9090/realms/custom-realm",
 		},
+		{
+			// Issue #112: the issuer deliberately stays in-cluster even when
+			// KEYCLOAK_EXTERNAL_URL is set. The external URL only affects
+			// browser-facing endpoint overrides and the client Secret's
+			// issuer-url key, never SecurityPolicy.spec.oidc.provider.issuer.
+			name: "ExternalURL set: issuer remains in-cluster",
+			kcConfig: config.KeycloakConfig{
+				URL:                    "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080",
+				Realm:                  "nebari",
+				IssuerServiceName:      "keycloak-keycloakx-http",
+				IssuerServiceNamespace: "keycloak",
+				IssuerServicePort:      8080,
+				IssuerContextPath:      "",
+				ExternalURL:            "https://keycloak.example.com",
+			},
+			expectedURL: "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/nebari",
+		},
 	}
 
 	for _, tt := range tests {
