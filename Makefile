@@ -217,7 +217,7 @@ helm-test-generate-golden: ## Generate golden files for nebari-app chart tests.
 	@command -v helm >/dev/null 2>&1 || { echo >&2 "helm is required but not installed. See https://helm.sh/docs/intro/install/"; exit 1; }
 	helm dependency build test/helm/nebari-app >/dev/null
 	mkdir -p test/helm/nebari-app/golden
-	@for c in static computed multi; do \
+	@for c in minimal static computed multi; do \
 		helm template t test/helm/nebari-app --set cases.$$c.enabled=true > test/helm/nebari-app/golden/$$c.yaml; \
 		echo "  case $$c: golden written"; \
 	done
@@ -234,6 +234,19 @@ helm-test: helm-lint ## Render the nebari-app chart for all cases and verify aga
 		echo "  case $$c: ok"; \
 	done
 	@rm -f /tmp/static.yaml /tmp/computed.yaml /tmp/multi.yaml
+	@# Verify required field guards: render without each field, expect error
+	@# Note: helm template returns non-zero on validation errors, which would cause the
+	@# pipeline to fail with pipefail even if grep finds the expected message. Disable
+	@# pipefail locally to ensure grep's exit code determines success.
+	@for f in metadata.name spec.hostname spec.service.name spec.service.port; do \
+		( set +o pipefail; \
+			helm template t test/helm/nebari-app \
+				--set cases.minimal.enabled=true \
+				--set "cases.minimal.$$f=" \
+				2>&1 >/dev/null | grep -q "$$f is required" \
+		) || { echo >&2 "expected required failure for $$f"; exit 1; }; \
+		echo "  required guard $$f: ok"; \
+	done
 	@echo "✅ nebari-app chart tests passed"
 
 .PHONY: generate-dev

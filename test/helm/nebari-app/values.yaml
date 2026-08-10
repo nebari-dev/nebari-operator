@@ -1,4 +1,13 @@
 cases:
+  minimal:
+    enabled: false
+    metadata:
+      name: "metatada.name"
+    spec:
+      hostname: "spec.hostname"
+      service:
+        name: "spec.service.name"
+        port: 0
   static:
     enabled: false
     metadata:
