@@ -11,7 +11,7 @@ Add the chart to your consumer chart's `Chart.yaml`:
 ```yaml
 dependencies:
   - name: nebari-app
-    version: 0.1.0
+    version: >=0.1.0-0
     repository: oci://quay.io/nebari/charts
 ```
 
@@ -20,7 +20,7 @@ or via a local file path during development:
 ```yaml
 dependencies:
   - name: nebari-app
-    version: 0.1.0
+    version: >=0.1.0-0
     repository: file://../nebari-app
 ```
 
