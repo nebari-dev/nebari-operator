@@ -205,12 +205,16 @@ helm-chart-version: ## Update Helm chart version and appVersion (requires VERSIO
 	rm -f charts/nebari-app/Chart.yaml.bak
 	@echo "✅ Updated chart versions to $(VERSION) and appVersion to $(APP_VERSION)"
 
+.PHONY: helm-lint-library
+helm-lint-library: ## Lint the nebari-app library chart.
+	@command -v helm >/dev/null 2>&1 || { echo >&2 "helm is required but not installed. See https://helm.sh/docs/intro/install/"; exit 1; }
+	helm lint charts/nebari-app
+
 .PHONY: helm-lint
-helm-lint: ## Lint the helm charts
+helm-lint: helm-lint-library ## Lint the helm charts
 	@command -v helm >/dev/null 2>&1 || { echo >&2 "helm is required but not installed. See https://helm.sh/docs/intro/install/"; exit 1; }
 	@if [ ! -d "dist/chart" ]; then echo "Error: dist/chart/ not found. Run 'make helm-chart' first."; exit 1; fi
 	helm lint dist/chart
-	helm lint charts/nebari-app
 
 .PHONY: helm-test-generate-golden
 helm-test-generate-golden: ## Generate golden files for nebari-app chart tests.
@@ -224,7 +228,7 @@ helm-test-generate-golden: ## Generate golden files for nebari-app chart tests.
 	@echo "✅ Golden files written to test/helm/nebari-app/golden/"
 
 .PHONY: helm-test
-helm-test: helm-lint ## Render the nebari-app chart for all cases and verify against golden files.
+helm-test: helm-lint-library ## Render the nebari-app library chart for all cases and verify against golden files.
 	@command -v helm >/dev/null 2>&1 || { echo >&2 "helm is required but not installed. See https://helm.sh/docs/intro/install/"; exit 1; }
 	helm dependency build test/helm/nebari-app >/dev/null
 	@for c in static computed multi; do \
