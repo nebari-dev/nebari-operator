@@ -112,7 +112,7 @@ kubectl apply -f https://github.com/nebari-dev/nebari-operator/releases/download
 
 ```bash
 helm upgrade --install nebari-operator \
-  oci://ghcr.io/nebari-dev/charts/nebari-operator \
+  oci://quay.io/nebari/charts/nebari-operator \
   --namespace nebari-operator-system \
   --create-namespace
 ```

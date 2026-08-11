@@ -136,8 +136,9 @@ A consolidated installation file:
 
 ### 4. Helm Chart (GitHub Release)
 
-The Helm chart package:
-- `nebari-operator-<version>.tgz` - Helm chart for deploying the operator
+The Helm chart packages:
+- `nebari-operator-<version>.tgz` - Operator Helm chart
+- `nebari-app-<version>.tgz` - Library Helm chart
 
 ### 5. Checksums
 
@@ -156,7 +157,7 @@ helm install nebari-operator oci://quay.io/nebari/charts/nebari-operator \
   --namespace nebari-operator-system
 ```
 
-Or install directly from the GitHub release artifact:
+Or install directly from the GitHub release artifact (operator chart):
 
 ```bash
 helm install nebari-operator \
@@ -165,7 +166,15 @@ helm install nebari-operator \
   --namespace nebari-operator-system
 ```
 
-### Using kubectl
+Or include the library chart in your own chart by adding it as a dependency:
+
+```yaml
+# In your chart's Chart.yaml
+dependencies:
+  - name: nebari-app
+    version: "1.0.0"
+    repository: oci://quay.io/nebari/charts/nebari-app
+```
 
 Install the operator using kubectl:
 
@@ -332,7 +341,8 @@ goreleaser release --clean
 Manually upload the files to the GitHub Release:
 - Go binaries from `dist/`
 - `dist/install.yaml`
-- `dist/nebari-operator-<version>.tgz`
+- `dist/nebari-operator-<version>.tgz` - Operator Helm chart
+- `dist/nebari-app-<version>.tgz` - Library Helm chart
 - `checksums.txt`
 
 ## Best Practices

@@ -182,9 +182,8 @@ helm-chart: build-installer ## Generate Helm chart from manifests using kubebuil
 	@echo "  make helm-chart-version VERSION=1.0.0 APP_VERSION=v1.0.0"
 
 .PHONY: helm-package
-helm-package: ## Package the Helm charts (run helm-chart first).
+helm-package: helm-chart ## Package the Helm charts.
 	@command -v helm >/dev/null 2>&1 || { echo >&2 "helm is required but not installed. See https://helm.sh/docs/intro/install/"; exit 1; }
-	@if [ ! -d "dist/chart" ]; then echo "Error: dist/chart/ not found. Run 'make helm-chart' first."; exit 1; fi
 	helm package dist/chart --destination dist/
 	helm package charts/nebari-app --destination dist/
 	@echo "✅ Helm charts packaged in dist/"
@@ -231,7 +230,7 @@ helm-test-generate-golden: ## Generate golden files for nebari-app chart tests.
 helm-test: helm-lint-library ## Render the nebari-app library chart for all cases and verify against golden files.
 	@command -v helm >/dev/null 2>&1 || { echo >&2 "helm is required but not installed. See https://helm.sh/docs/intro/install/"; exit 1; }
 	helm dependency build test/helm/nebari-app >/dev/null
-	@for c in static computed multi; do \
+	@for c in minimal static computed multi; do \
 		helm template t test/helm/nebari-app --set cases.$$c.enabled=true > /tmp/$$c.yaml; \
 		diff -q test/helm/nebari-app/golden/$$c.yaml /tmp/$$c.yaml >/dev/null \
 			|| { echo >&2 "case $$c: golden mismatch"; diff test/helm/nebari-app/golden/$$c.yaml /tmp/$$c.yaml; exit 1; }; \

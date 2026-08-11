@@ -16,6 +16,7 @@ on:
       - 'api/**'
       - 'internal/**'
       - 'hack/**'
+      - "charts/**"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

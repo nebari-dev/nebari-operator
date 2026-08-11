@@ -3,9 +3,9 @@
 apiVersion: reconcilers.nebari.dev/v1
 kind: NebariApp
 metadata:
-  name: metatada.name
+  name: metadata.name
 spec:
   hostname: spec.hostname
   service:
     name: spec.service.name
-    port: 0
+    port: 1
