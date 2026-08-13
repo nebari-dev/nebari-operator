@@ -5,7 +5,7 @@
 | Date        | 2026-08-10                          |
 | Status      | **Accepted**                        |
 | Deciders    | NIC maintainers                     |
-| Supersedes  | None                                |
+| Supersedes  | —                                |
 
 
 
@@ -65,18 +65,18 @@ Key implementation choices:
 
 ## Alternatives considered
 
-### A - Library chart consumed via `dependencies:` (chosen)
+### A — Library chart consumed via `dependencies:` (chosen)
 
 Ship `charts/nebari-app/` as a Helm library chart that consumer charts pull in via `dependencies:`. It has no install surface of its own, versions alongside the operator, and leaves each consumer to own its `metadata`/`spec` composition. Accepted trade-off: it is not runnable on its own, so it cannot be `helm install`-ed directly for a quick smoke test.
 
-### B - Standalone installable chart
+### B — Standalone installable chart
 
 Package the NebariApp wrapper as an application chart users install directly. Rejected: it would need its own values contract, release-name-to-resource mapping, and namespace opt-in handling, duplicating decisions that consumer charts already make; the library approach keeps that composition in the consumer's hands.
 
-### C - Fold into the operator's `dist/chart` application chart behind `enabled: false`
+### C — Fold into the operator's `dist/chart` application chart behind `enabled: false`
 
 Add the NebariApp templates to the generated `dist/chart` with an `enabled: false` kill switch. Rejected: `dist/chart` is Kubebuilder-generated deploy output for the controller itself; mixing user-facing NebariApp templates into it couples the chart's lifecycle to the operator deployment manifests and blurs the "generated, not source of truth" boundary.
 
-### D - Separate chart repository
+### D — Separate chart repository
 
 Publish the chart from its own dedicated repository. Rejected: it reintroduces the multi-repo release coordination ADR-001 worked to avoid, and decouples the chart version from the CRD schema it wraps.
