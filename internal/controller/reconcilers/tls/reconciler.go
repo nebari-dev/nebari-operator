@@ -99,6 +99,17 @@ func (r *TLSReconciler) ReconcileTLS(ctx context.Context, nebariApp *appsv1.Neba
 
 	if !isTLSEnabled(nebariApp) {
 		logger.Info("TLS not enabled, skipping TLS reconciliation")
+		// Tear down any per-app TLS listener left from when TLS was enabled. A
+		// cut-over ListenerSet in particular keeps terminating HTTPS and detaching
+		// the route from the shared Gateway, so it must go once TLS is off; the
+		// legacy listener removal is idempotent. Both are no-ops for an app that
+		// never had per-app TLS.
+		if err := r.removeListenerSet(ctx, nebariApp); err != nil {
+			return nil, err
+		}
+		if err := r.removeGatewayListener(ctx, nebariApp); err != nil {
+			return nil, err
+		}
 		conditions.SetCondition(nebariApp, appsv1.ConditionTypeTLSReady, metav1.ConditionFalse,
 			"TLSDisabled", "TLS is not enabled for this app")
 		return nil, nil
@@ -215,8 +226,25 @@ func (r *TLSReconciler) reconcileUserProvidedTLS(ctx context.Context, nebariApp 
 		return nil, err
 	}
 
-	useListenerSet, err := r.reconcileTLSAttachment(ctx, nebariApp, secretName)
-	if err != nil {
+	// User-provided secrets stay on the legacy shared-Gateway listener: the secret
+	// lives in the Gateway namespace, and copying it into the app namespace so a
+	// per-app ListenerSet could reference it is TODO(#168). Until that lands, this
+	// path deliberately does not create a ListenerSet (an unprogrammable ListenerSet
+	// would still claim the hostname and detach the route), it keeps serving from
+	// the shared Gateway.
+	//
+	// Drop any ListenerSet a prior cert-manager reconcile created and cut over to,
+	// before re-adding the legacy listener: a lingering ListenerSet would keep
+	// claiming the hostname and leave the re-added shared-Gateway listener serving
+	// nothing.
+	if err := r.removeListenerSet(ctx, nebariApp); err != nil {
+		conditions.SetCondition(nebariApp, appsv1.ConditionTypeTLSReady, metav1.ConditionFalse,
+			"ListenerSetCleanupFailed",
+			fmt.Sprintf("Failed to remove ListenerSet during switch to user-provided secret: %v", err))
+		return nil, err
+	}
+
+	if err := r.reconcileGatewayListener(ctx, nebariApp, secretName); err != nil {
 		if containsListenerConflict(err) {
 			conditions.SetCondition(nebariApp, appsv1.ConditionTypeTLSReady, metav1.ConditionFalse,
 				appsv1.ReasonGatewayListenerConflict,
@@ -230,14 +258,9 @@ func (r *TLSReconciler) reconcileUserProvidedTLS(ctx context.Context, nebariApp 
 		return nil, err
 	}
 
-	// The user-provided secret is looked up in whichever namespace is serving:
-	// the app namespace once cut over to the ListenerSet, else the Gateway
-	// namespace for the legacy shared listener. TODO(#168): finish the
-	// user-secret migration so a single app-namespace secret drives both phases.
+	// The user-provided secret lives in the Gateway namespace, the legacy shared
+	// listener's home.
 	secretNS := constants.GatewayNamespace
-	if useListenerSet {
-		secretNS = nebariApp.Namespace
-	}
 
 	// Capture the previous TLSReady reason before SetCondition mutates it, so we
 	// only emit an event when the reason actually transitions. ReconcileTLS runs
@@ -269,7 +292,7 @@ func (r *TLSReconciler) reconcileUserProvidedTLS(ctx context.Context, nebariApp 
 		ListenerName:   naming.ListenerName(nebariApp),
 		SecretName:     secretName,
 		CertReady:      status == metav1.ConditionTrue,
-		UseListenerSet: useListenerSet,
+		UseListenerSet: false,
 	}, nil
 }
 
@@ -279,7 +302,11 @@ func (r *TLSReconciler) reconcileUserProvidedTLS(ctx context.Context, nebariApp 
 // minimize orphaned resources. Certificate deletion goes through
 // cleanupOwnedCertificate, which only removes Certificates whose ownership
 // labels match this NebariApp, so an unowned Certificate that happens to share
-// the derived name is left alone.
+// the derived name is left alone. The per-app ListenerSet is not deleted here:
+// it is owner-referenced to the NebariApp and garbage-collected when the app is
+// deleted (this cleanup runs on app teardown). It is torn down explicitly only
+// when the app stays but leaves the ListenerSet path (TLS disabled or a
+// user-provided secret), via removeListenerSet.
 func (r *TLSReconciler) CleanupTLS(ctx context.Context, nebariApp *appsv1.NebariApp) error {
 	logger := log.FromContext(ctx)
 	var errs []error

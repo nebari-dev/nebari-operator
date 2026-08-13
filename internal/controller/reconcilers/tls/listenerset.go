@@ -25,17 +25,12 @@ import (
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/naming"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
-)
-
-// Gateway API standard-channel ListenerSet condition types (gateway.networking.k8s.io/v1).
-const (
-	listenerSetConditionAccepted   = "Accepted"
-	listenerSetConditionProgrammed = "Programmed"
 )
 
 // reconcileListenerSet creates or updates the per-app ListenerSet (ADR-0011
@@ -47,7 +42,8 @@ const (
 //
 // This is always reconciled, even on an Envoy Gateway that does not yet support
 // ListenerSet: there it simply never reaches Programmed=True and the caller keeps
-// serving via the legacy shared-Gateway listener (see reconcileTLS phase logic).
+// serving via the legacy shared-Gateway listener (see reconcileTLSAttachment /
+// shouldCutOver).
 func (r *TLSReconciler) reconcileListenerSet(ctx context.Context, nebariApp *appsv1.NebariApp, secretName string) error {
 	logger := log.FromContext(ctx)
 
@@ -122,16 +118,27 @@ func (r *TLSReconciler) reconcileListenerSet(ctx context.Context, nebariApp *app
 	return nil
 }
 
-// isListenerSetProgrammed reports whether this NebariApp's ListenerSet has been
-// accepted and programmed by the gateway controller. The staged migration only
-// cuts routes over to the ListenerSet (and tears down the legacy shared-Gateway
-// listener) once both conditions are True. On an Envoy Gateway that does not
-// reconcile ListenerSet (e.g. pre-v1.8), the conditions never flip and this
-// returns false, so the operator keeps serving via the legacy path.
+// shouldCutOver decides whether this NebariApp's HTTPS traffic should be served
+// by its per-app ListenerSet (ADR-0011 Option 2) rather than the legacy
+// shared-Gateway listener. It is reason-aware, keying off the ListenerSet status
+// the way Envoy Gateway actually reports it (validated on EG v1.8.2):
 //
-// A missing ListenerSet returns (false, nil): not yet created, treat as not
-// programmed rather than an error.
-func (r *TLSReconciler) isListenerSetProgrammed(ctx context.Context, nebariApp *appsv1.NebariApp) (bool, error) {
+//   - Programmed=True (set-level): the ListenerSet is live. Cut over.
+//   - The app's own listener reports Conflicted=True/HostnameConflict while its
+//     refs still resolve: the ListenerSet is blocked only by our own legacy
+//     listener holding the same (port, hostname). Cutting over removes that legacy
+//     listener so the ListenerSet can leave the conflict and program. A ListenerSet
+//     that merely claims a hostname already detaches that hostname's routes from
+//     the shared Gateway, so holding the legacy listener does not keep serving in
+//     the meantime, it only deadlocks the cutover.
+//   - Anything else (no status yet, Accepted=False/NotAllowed, unresolved refs):
+//     do NOT cut over, keep the legacy listener serving. NotAllowed in particular
+//     means the Gateway refuses the attachment (e.g. spec.allowedListeners unset),
+//     so the ListenerSet can never serve and removing the legacy listener would
+//     strand the app.
+//
+// A missing ListenerSet returns (false, nil): treat as not-yet-created.
+func (r *TLSReconciler) shouldCutOver(ctx context.Context, nebariApp *appsv1.NebariApp) (bool, error) {
 	ls := &gatewayv1.ListenerSet{}
 	if err := r.Client.Get(ctx, types.NamespacedName{
 		Name:      naming.ListenerSetName(nebariApp),
@@ -140,34 +147,53 @@ func (r *TLSReconciler) isListenerSetProgrammed(ctx context.Context, nebariApp *
 		if apierrors.IsNotFound(err) {
 			return false, nil
 		}
-		return false, fmt.Errorf("failed to get ListenerSet for status check: %w", err)
+		return false, fmt.Errorf("failed to get ListenerSet for cutover decision: %w", err)
 	}
 
-	accepted, programmed := false, false
-	for _, c := range ls.Status.Conditions {
-		switch c.Type {
-		case listenerSetConditionAccepted:
-			accepted = c.Status == metav1.ConditionTrue
-		case listenerSetConditionProgrammed:
-			programmed = c.Status == metav1.ConditionTrue
-		}
+	// Fully programmed: the ListenerSet is serving, cut over unconditionally.
+	if meta.IsStatusConditionTrue(ls.Status.Conditions, string(gatewayv1.ListenerSetConditionProgrammed)) {
+		return true, nil
 	}
-	return accepted && programmed, nil
+
+	// Not programmed yet: cut over only on our own hostname conflict with refs
+	// resolving (see docstring) — removing our legacy listener frees the tuple so
+	// the ListenerSet can program. Every other state (NotAllowed, unresolved refs)
+	// stays on legacy.
+	//
+	// NOTE: a HostnameConflict is indistinguishable by condition type/status/reason
+	// from a conflict with a *peer* app's ListenerSet on the same hostname (only the
+	// condition message names the culprit, validated on EG v1.8.2). Cutting over in
+	// that peer case would strand this app, and unlike the legacy path it no longer
+	// surfaces a conflict condition. Restoring a surfaced signal and discriminating
+	// the peer case is left to the conflict-handling rework (#168), not parsed here.
+	listenerName := gatewayv1.SectionName(naming.ListenerName(nebariApp))
+	for _, l := range ls.Status.Listeners {
+		if l.Name != listenerName {
+			continue
+		}
+		conflict := meta.FindStatusCondition(l.Conditions, string(gatewayv1.ListenerConditionConflicted))
+		hostnameConflict := conflict != nil && conflict.Status == metav1.ConditionTrue &&
+			conflict.Reason == string(gatewayv1.ListenerReasonHostnameConflict)
+		refsResolved := !meta.IsStatusConditionFalse(l.Conditions, string(gatewayv1.ListenerConditionResolvedRefs))
+		return hostnameConflict && refsResolved, nil
+	}
+
+	return false, nil
 }
 
 // reconcileTLSAttachment reconciles the per-app ListenerSet and decides which
-// listener actually serves this app's HTTPS traffic, returning whether the app
-// has cut over to the ListenerSet.
+// listener serves this app's HTTPS traffic, returning whether it has cut over to
+// the ListenerSet (ADR-0011 Option 2).
 //
-// Staged, status-gated migration (ADR-0011 Option 2):
-//   - The ListenerSet is always (re)created.
-//   - Until it reports Accepted+Programmed, the legacy per-app listener on the
-//     shared Gateway is kept in place, so TLS keeps working on an Envoy Gateway
-//     that does not yet reconcile ListenerSet (pre-v1.8) or has not programmed it
-//     yet.
-//   - Once Programmed, the shared-Gateway listener is removed and traffic is
-//     served by the ListenerSet. Cutover is per-NebariApp and driven by status,
-//     with no user-facing strategy flag.
+// The ListenerSet is always (re)created. Then, reason-aware (see shouldCutOver):
+//   - If the app should cut over, the legacy shared-Gateway listener is removed so
+//     the ListenerSet owns the (port, hostname) tuple, and routes are pointed at
+//     the ListenerSet. removeGatewayListener is idempotent.
+//   - Otherwise the legacy shared-Gateway listener is kept in place and serves,
+//     and routes stay on it. This covers the brief pre-status window right after
+//     creation and the genuinely-unsupported cluster (Gateway refusing the
+//     attachment). Cutover is per-NebariApp and driven by status, with no
+//     user-facing strategy flag.
 //
 // secretName is the TLS secret name; it is resolved in the app namespace for the
 // ListenerSet and in the Gateway namespace for the legacy shared listener.
@@ -178,14 +204,13 @@ func (r *TLSReconciler) reconcileTLSAttachment(ctx context.Context, nebariApp *a
 		return false, err
 	}
 
-	programmed, err := r.isListenerSetProgrammed(ctx, nebariApp)
+	cutover, err := r.shouldCutOver(ctx, nebariApp)
 	if err != nil {
 		return false, err
 	}
 
-	if programmed {
-		// Cut over: the ListenerSet is serving, so retire the legacy shared-Gateway
-		// listener. removeGatewayListener is idempotent (no-op once removed).
+	if cutover {
+		// removeGatewayListener is idempotent (no-op once removed / never created).
 		if err := r.removeGatewayListener(ctx, nebariApp); err != nil {
 			return false, err
 		}
@@ -194,9 +219,33 @@ func (r *TLSReconciler) reconcileTLSAttachment(ctx context.Context, nebariApp *a
 		return true, nil
 	}
 
-	// Not yet programmed: keep the legacy shared-Gateway listener serving.
+	// Keep the legacy shared-Gateway listener serving until the ListenerSet is
+	// usable.
 	if err := r.reconcileGatewayListener(ctx, nebariApp, secretName); err != nil {
 		return false, err
 	}
 	return false, nil
+}
+
+// removeListenerSet deletes this NebariApp's per-app ListenerSet if present, so an
+// app that moves off the ListenerSet path (e.g. switching to a user-provided TLS
+// secret) does not leave a ListenerSet still claiming the hostname and detaching
+// the route from the shared Gateway. Idempotent: a missing ListenerSet is a no-op.
+func (r *TLSReconciler) removeListenerSet(ctx context.Context, nebariApp *appsv1.NebariApp) error {
+	ls := &gatewayv1.ListenerSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      naming.ListenerSetName(nebariApp),
+			Namespace: nebariApp.Namespace,
+		},
+	}
+	err := r.Client.Delete(ctx, ls)
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("failed to delete ListenerSet: %w", err)
+	}
+	log.FromContext(ctx).V(1).Info("Removed per-app ListenerSet",
+		"listenerSet", ls.Name, "namespace", nebariApp.Namespace)
+	return nil
 }
