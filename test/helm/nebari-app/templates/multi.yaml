@@ -1,0 +1,15 @@
+{{- if .Values.cases.multi.enabled }}
+{{- range $app := .Values.cases.multi.apps }}
+{{- include "fixture.nebariApp" (dict
+    "top" $
+    "component" $app.component
+    "spec" (mergeOverwrite (dict
+        "service" (dict
+          "name" (include "fixture.component-name" (dict "top" $ "component" $app.component))
+          "port" $app.servicePort
+        )
+      ) $app.nebariApp)
+) }}
+---
+{{- end }}
+{{- end }}

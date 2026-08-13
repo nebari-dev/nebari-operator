@@ -1,0 +1,17 @@
+---
+# Source: fixture/templates/computed.yaml
+apiVersion: reconcilers.nebari.dev/v1
+kind: NebariApp
+metadata:
+  labels:
+    app.kubernetes.io/instance: t
+    app.kubernetes.io/name: frontend
+  name: frontend
+  namespace: default
+spec:
+  auth:
+    enabled: false
+  hostname: computed.nebari.local
+  service:
+    name: frontend
+    port: 8080

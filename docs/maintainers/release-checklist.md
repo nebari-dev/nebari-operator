@@ -81,7 +81,8 @@ Wait for all jobs to complete (typically 5-10 minutes):
 
 Check that all artifacts are attached to the release:
 - [ ] `install.yaml` - Kubernetes manifests for kubectl installation
-- [ ] `nebari-operator-<version>.tgz` - Helm chart package
+- [ ] `nebari-operator-<version>.tgz` - Operator Helm chart package
+- [ ] `nebari-app-<version>.tgz` - Library Helm chart package
 - [ ] `nebari-operator_<version>_<os>_<arch>.tar.gz` - Go binaries for each platform
 - [ ] `checksums.txt` - SHA256 checksums
 

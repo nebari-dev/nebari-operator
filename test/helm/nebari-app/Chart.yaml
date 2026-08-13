@@ -1,0 +1,10 @@
+apiVersion: v2
+name: fixture
+description: Test fixture consuming the nebari-app library chart.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+dependencies:
+  - name: nebari-app
+    version: ">=0.1.0-0"
+    repository: file://../../../charts/nebari-app

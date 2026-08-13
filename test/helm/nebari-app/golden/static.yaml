@@ -1,0 +1,37 @@
+---
+# Source: fixture/templates/static.yaml
+apiVersion: reconcilers.nebari.dev/v1
+kind: NebariApp
+metadata:
+  labels:
+    app.kubernetes.io/name: static-app
+  name: static-app
+  namespace: default
+spec:
+  auth:
+    enabled: true
+    enforceAtGateway: false
+    provider: keycloak
+    provisionClient: true
+    redirectURI: /*
+    scopes:
+    - openid
+    - profile
+    - email
+  hostname: static.nebari.local
+  landingPage:
+    category: misc
+    description: Static fixture app
+    displayName: Static
+    enabled: true
+    healthCheck:
+      enabled: true
+      path: /health
+    priority: 1
+  routing:
+    routes:
+    - pathPrefix: /
+      pathType: PathPrefix
+  service:
+    name: static-svc
+    port: 80

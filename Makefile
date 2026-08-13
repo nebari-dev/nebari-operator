@@ -182,11 +182,11 @@ helm-chart: build-installer ## Generate Helm chart from manifests using kubebuil
 	@echo "  make helm-chart-version VERSION=1.0.0 APP_VERSION=v1.0.0"
 
 .PHONY: helm-package
-helm-package: ## Package the Helm chart (run helm-chart first).
+helm-package: helm-chart ## Package the Helm charts.
 	@command -v helm >/dev/null 2>&1 || { echo >&2 "helm is required but not installed. See https://helm.sh/docs/intro/install/"; exit 1; }
-	@if [ ! -d "dist/chart" ]; then echo "Error: dist/chart/ not found. Run 'make helm-chart' first."; exit 1; fi
 	helm package dist/chart --destination dist/
-	@echo "✅ Helm chart packaged in dist/"
+	helm package charts/nebari-app --destination dist/
+	@echo "✅ Helm charts packaged in dist/"
 
 .PHONY: helm-chart-version
 helm-chart-version: ## Update Helm chart version and appVersion (requires VERSION and APP_VERSION vars).
@@ -199,7 +199,58 @@ helm-chart-version: ## Update Helm chart version and appVersion (requires VERSIO
 	sed -i.bak "s/^version:.*/version: $(VERSION)/" dist/chart/Chart.yaml
 	sed -i.bak "s/^appVersion:.*/appVersion: \"$(APP_VERSION)\"/" dist/chart/Chart.yaml
 	rm -f dist/chart/Chart.yaml.bak
-	@echo "✅ Updated chart version to $(VERSION) and appVersion to $(APP_VERSION)"
+	sed -i.bak "s/^version:.*/version: $(VERSION)/" charts/nebari-app/Chart.yaml
+	sed -i.bak "s/^appVersion:.*/appVersion: \"$(APP_VERSION)\"/" charts/nebari-app/Chart.yaml
+	rm -f charts/nebari-app/Chart.yaml.bak
+	@echo "✅ Updated chart versions to $(VERSION) and appVersion to $(APP_VERSION)"
+
+.PHONY: helm-lint-library
+helm-lint-library: ## Lint the nebari-app library chart.
+	@command -v helm >/dev/null 2>&1 || { echo >&2 "helm is required but not installed. See https://helm.sh/docs/intro/install/"; exit 1; }
+	helm lint charts/nebari-app
+
+.PHONY: helm-lint
+helm-lint: helm-lint-library ## Lint the helm charts
+	@command -v helm >/dev/null 2>&1 || { echo >&2 "helm is required but not installed. See https://helm.sh/docs/intro/install/"; exit 1; }
+	@if [ ! -d "dist/chart" ]; then echo "Error: dist/chart/ not found. Run 'make helm-chart' first."; exit 1; fi
+	helm lint dist/chart
+
+.PHONY: helm-test-generate-golden
+helm-test-generate-golden: ## Generate golden files for nebari-app chart tests.
+	@command -v helm >/dev/null 2>&1 || { echo >&2 "helm is required but not installed. See https://helm.sh/docs/intro/install/"; exit 1; }
+	helm dependency build test/helm/nebari-app >/dev/null
+	mkdir -p test/helm/nebari-app/golden
+	@for c in minimal static computed multi; do \
+		helm template t test/helm/nebari-app --set cases.$$c.enabled=true > test/helm/nebari-app/golden/$$c.yaml; \
+		echo "  case $$c: golden written"; \
+	done
+	@echo "✅ Golden files written to test/helm/nebari-app/golden/"
+
+.PHONY: helm-test
+helm-test: helm-lint-library ## Render the nebari-app library chart for all cases and verify against golden files.
+	@command -v helm >/dev/null 2>&1 || { echo >&2 "helm is required but not installed. See https://helm.sh/docs/intro/install/"; exit 1; }
+	helm dependency build test/helm/nebari-app >/dev/null
+	@for c in minimal static computed multi; do \
+		helm template t test/helm/nebari-app --set cases.$$c.enabled=true > /tmp/$$c.yaml; \
+		diff -q test/helm/nebari-app/golden/$$c.yaml /tmp/$$c.yaml >/dev/null \
+			|| { echo >&2 "case $$c: golden mismatch"; diff test/helm/nebari-app/golden/$$c.yaml /tmp/$$c.yaml; exit 1; }; \
+		echo "  case $$c: ok"; \
+	done
+	@rm -f /tmp/static.yaml /tmp/computed.yaml /tmp/multi.yaml
+	@# Verify required field guards: render without each field, expect error
+	@# Note: helm template returns non-zero on validation errors, which would cause the
+	@# pipeline to fail with pipefail even if grep finds the expected message. Disable
+	@# pipefail locally to ensure grep's exit code determines success.
+	@for f in metadata.name spec.hostname spec.service.name spec.service.port; do \
+		( set +o pipefail; \
+			helm template t test/helm/nebari-app \
+				--set cases.minimal.enabled=true \
+				--set "cases.minimal.$$f=" \
+				2>&1 >/dev/null | grep -q "$$f is required" \
+		) || { echo >&2 "expected required failure for $$f"; exit 1; }; \
+		echo "  required guard $$f: ok"; \
+	done
+	@echo "✅ nebari-app chart tests passed"
 
 .PHONY: generate-dev
 generate-dev: ## Generate for development (CRDs + deepcopy code only)

@@ -200,3 +200,10 @@ jobs:
           chart-path: dist/chart
           chart-name: nebari-operator
           token: ${{ secrets.NEBARI_HELM_REPO_TOKEN }}
+
+      - name: Sync library chart to helm-repository
+        uses: nebari-dev/helm-repository/.github/actions/sync-chart@main
+        with:
+          chart-path: charts/nebari-app
+          chart-name: nebari-app
+          token: ${{ secrets.NEBARI_HELM_REPO_TOKEN }}
