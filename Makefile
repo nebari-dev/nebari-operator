@@ -250,6 +250,22 @@ helm-test: helm-lint-library ## Render the nebari-app library chart for all case
 		) || { echo >&2 "expected required failure for $$f"; exit 1; }; \
 		echo "  required guard $$f: ok"; \
 	done
+	@# Verify the whole service block is guarded: render with an empty service, expect error
+	@( set +o pipefail; \
+		helm template t test/helm/nebari-app \
+			--set cases.minimal.enabled=true \
+			--set "cases.minimal.spec.service=" \
+			2>&1 >/dev/null | grep -q "spec.service is required" \
+	) || { echo >&2 "expected required failure for empty spec.service"; exit 1; }
+	@echo "  required guard spec.service: ok"
+	@# Verify port positivity is enforced client-side: port=0 must fail before the API server
+	@( set +o pipefail; \
+		helm template t test/helm/nebari-app \
+			--set cases.minimal.enabled=true \
+			--set "cases.minimal.spec.service.port=0" \
+			2>&1 >/dev/null | grep -q "must be >= 1" \
+	) || { echo >&2 "expected sub-minimum failure for spec.service.port=0"; exit 1; }
+	@echo "  positivity guard spec.service.port=0: ok"
 	@echo "✅ nebari-app chart tests passed"
 
 .PHONY: generate-dev
