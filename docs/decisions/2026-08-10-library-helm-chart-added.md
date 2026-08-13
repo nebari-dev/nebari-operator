@@ -5,13 +5,13 @@
 | Date        | 2026-08-10                          |
 | Status      | **Accepted**                        |
 | Deciders    | NIC maintainers                     |
-| Supersedes  | ADR-001                             |
+| Supersedes  | None                                |
 
 
 
 ## Context
 
-ADR-001 concluded that "The operator repository is now purely a Kubernetes controller." However, the nebari-operator repository now includes:
+ADR-001 noted, as a positive consequence of extracting the Web API, that "the operator repository is now purely a Kubernetes controller." This ADR nuances that note rather than overturning it (ADR-001 remains valid): the nebari-operator repository now also includes:
 
 1. A Helm library chart (`charts/nebari-app/`) — a reusable Helm chart that users can include in their own charts
 2. Helm tests (`test/helm/nebari-app/`) with golden file validation
@@ -30,7 +30,7 @@ The Helm chart serves as:
 ### Why keep it in nebari-operator?
 
 - **Version alignment** — The chart version should match the operator version because the CRD schema evolves with releases
-- **Single source of truth** — The chart templates reference the CRD schema; keeping them together avoids drift
+- **Version-tagged CRD target** - The template pins the target apiVersion (`reconcilers.nebari.dev/v1`) and enforces `required` guards on the fields the operator depends on; keeping the chart beside the CRD lets those pins track the schema as it is versioned across releases
 - **Simplified release process** — One repository to tag and release, rather than separate operator + chart repos
 
 ## Decision
@@ -42,6 +42,8 @@ Key implementation choices:
 - **Library chart only** — `charts/nebari-app/` can be referenced by users via `dependencies:` in their parent chart
 - **No `dist/chart/` dependency** — `helm-package` packages `charts/nebari-app` directly; `helm-chart` generates `dist/chart` but it's not the source of truth
 - **Golden file tests** — `make helm-test-generate-golden` and `make helm-test` ensure chart rendering matches expected output for all case configurations
+- **`dist/chart/` kept as generated output only** - `helm-chart` still generates `dist/chart` for CI convenience, but it is Kubebuilder-generated deploy output for the controller, not the source of truth for the library chart
+- **Chart published as an OCI artifact to `quay.io/nebari/charts`** - consumers reference it via `repository: oci://quay.io/nebari/charts` in their `dependencies:`; the canonical registry is `quay.io`, matching the operator image, and the operator README was aligned to reference `quay.io` consistently
 
 ## Consequences
 
@@ -49,8 +51,8 @@ Key implementation choices:
 
 - Users can install NebariApps via Helm in addition to `kubectl apply`
 - Client-side validation catches configuration errors before API submission
-- Single repository for both CRD schema and chart templates reduces version drift
-- Golden file tests catch drift between CRD validation and chart validation
+- Single repository lets the chart version and CRD schema be tagged and released together
+- Golden file tests catch chart render drift only; the goldens self-generate from the template and do not reference the CRD, so they verify template output stability, not agreement with CRD validation
 
 ### Negative / Mitigations
 
@@ -61,8 +63,20 @@ Key implementation choices:
 | Chart validation must mirror CRD validation | ADR-001's mitigation applies: use `unstructured` helpers in chart templates to stay resilient to additive changes |
 | Documentation must mention Helm chart | Added step 7 to `CONTRIBUTING.md` pointing to chart guards and `helm-test-generate-golden` |
 
-### Open questions
+## Alternatives considered
 
-- Should `dist/chart/` be removed entirely or kept as generated output for CI?
-- Should the chart be published to a separate registry (`oci://quay.io/nebari/charts/nebari-app`) or just distributed via GitHub releases?
-- Should docs reference both registries (`ghcr.io` for operator, `quay.io` for chart) or consolidate?
+### A - Library chart consumed via `dependencies:` (chosen)
+
+Ship `charts/nebari-app/` as a Helm library chart that consumer charts pull in via `dependencies:`. It has no install surface of its own, versions alongside the operator, and leaves each consumer to own its `metadata`/`spec` composition. Accepted trade-off: it is not runnable on its own, so it cannot be `helm install`-ed directly for a quick smoke test.
+
+### B - Standalone installable chart
+
+Package the NebariApp wrapper as an application chart users install directly. Rejected: it would need its own values contract, release-name-to-resource mapping, and namespace opt-in handling, duplicating decisions that consumer charts already make; the library approach keeps that composition in the consumer's hands.
+
+### C - Fold into the operator's `dist/chart` application chart behind `enabled: false`
+
+Add the NebariApp templates to the generated `dist/chart` with an `enabled: false` kill switch. Rejected: `dist/chart` is Kubebuilder-generated deploy output for the controller itself; mixing user-facing NebariApp templates into it couples the chart's lifecycle to the operator deployment manifests and blurs the "generated, not source of truth" boundary.
+
+### D - Separate chart repository
+
+Publish the chart from its own dedicated repository. Rejected: it reintroduces the multi-repo release coordination ADR-001 worked to avoid, and decouples the chart version from the CRD schema it wraps.
