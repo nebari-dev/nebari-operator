@@ -27,13 +27,13 @@ It is part of **Nebari Infrastructure Core (NIC)**. The sibling repository [`neb
 
 ### Who applies the `NebariApp` CRD
 
-The operator is the producer of one contract — the `NebariApp` custom resource. These repositories are the consumers, and are the best place to see the CRD used in anger:
+The operator is the producer of one contract — the `NebariApp` custom resource. Any helmchart that includes it under its anifests and congiruations is named a ["Software Pack"](https://github.com/nebari-dev/software-pack-template#what-is-a-nebari-software-pack). Bellow we showcase a few software packs rthat are consumers of the nebariApp CRD and are the best place to see the it used in anger:
 
 - **[`software-pack-template`](https://github.com/nebari-dev/software-pack-template)** — the canonical example collection. Shows the same app onboarded via raw YAML, a Helm chart, Kustomize (base + dev/production overlays), and wrapping an existing chart, plus a standalone `docs/nebariapp-crd-reference.md`. Start here when you need a worked example of any field.
 - **[`data-science-pack`](https://github.com/nebari-dev/data-science-pack)** — a live consumer (multi-user JupyterHub). Ships a `templates/nebariapp.yaml` and an integration guide under `docs/`.
 - **[`nebi-pack`](https://github.com/nebari-dev/nebi-pack)** — a live consumer (team Pixi-environment management, Keycloak SSO + PostgreSQL). Ships a `templates/nebariapp.yaml`.
 
-When you change the CRD's shape or behavior, these are the downstreams that feel it — check their manifests still validate.
+When you change the CRD's shape or behavior, these are the downstreams that feel it: check their manifests still validate.
 
 ## Common Development Commands
 
