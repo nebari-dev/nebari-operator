@@ -198,6 +198,11 @@ jobs:
 
       - name: Set up Helm
         uses: azure/setup-helm@v5
+        with:
+          # Pin to Helm 3.x: setup-helm's "latest" now installs Helm 4, whose
+          # multi-document template output differs (trailing newline), which
+          # breaks the nebari-app golden tests. The goldens are Helm 3-rendered.
+          version: v3.19.0
 
       - name: Install foundational services
         run: dev/scripts/services/install.sh
@@ -254,6 +259,11 @@ jobs:
 
       - name: Set up Helm
         uses: azure/setup-helm@v5
+        with:
+          # Pin to Helm 3.x: setup-helm's "latest" now installs Helm 4, whose
+          # multi-document template output differs (trailing newline), which
+          # breaks the nebari-app golden tests. The goldens are Helm 3-rendered.
+          version: v3.19.0
 
       - name: Install kubebuilder
         run: |
