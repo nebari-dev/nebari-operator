@@ -176,6 +176,11 @@ The operator manages a **single** custom resource:
 
 ### The Reconciler Pipeline
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/diagrams/reconciler-pipeline-dark.svg">
+  <img src="docs/assets/diagrams/reconciler-pipeline-light.svg" alt="NebariApp reconcile pipeline: NebariApp CR feeds the ordered Core, TLS, Routing, and Auth reconcilers, ending at Ready; the loop requeues continuously and finalizer cleanup runs in reverse." width="1000">
+</picture>
+
 `NebariAppReconciler` (`internal/controller/nebariapp_controller.go`) holds the four sub-reconcilers as struct fields and drives them in order:
 
 ```
