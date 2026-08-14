@@ -1,8 +1,3 @@
-{{/* fixture.component-name — deterministic name for a component. */}}
-{{- define "fixture.component-name" -}}
-{{- .component -}}
-{{- end -}}
-
 {{/* fixture.labels — minimal label set for a component. */}}
 {{- define "fixture.labels" -}}
 app.kubernetes.io/name: {{ .component }}
@@ -15,7 +10,7 @@ app.kubernetes.io/instance: {{ .top.Release.Name }}
 {{- $component := .component -}}
 {{- include "nebari-app.nebariApp" (dict
     "metadata" (dict
-      "name"      (include "fixture.component-name" (dict "top" $top "component" $component))
+      "name"      $component
       "namespace" $top.Release.Namespace
       "labels"    (include "fixture.labels" (dict "top" $top "component" $component) | fromYaml)
     )
