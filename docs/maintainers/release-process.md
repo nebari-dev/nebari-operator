@@ -34,7 +34,7 @@ Before creating a release, ensure you have:
    - Manifests are up to date (`make manifests`)
    - Documentation is updated
 
-3. **Version Tagging Strategy**: Follow semantic versioning (e.g., `v1.0.0`, `v1.2.3`)
+3. **Version Tagging Strategy**: Follow EffVer (see [ADR-003](../decisions/2026-08-14-adopt-effver.md)); tags stay `vX.Y.Z`-shaped (e.g., `v0.1.0`, `v0.2.1`)
 
 ## Creating a Release
 
@@ -200,25 +200,25 @@ tar -xzf nebari-operator_1.0.0_Darwin_arm64.tar.gz
 
 ## Version Numbering
 
-Follow [Semantic Versioning](https://semver.org/):
+Follow [Effort-based Versioning (EffVer)](https://jacobtomlinson.dev/effver/) - `MACRO.MESO.MICRO`, where each digit signals the effort a consumer should expect when adopting the release (see [ADR-003](../decisions/2026-08-14-adopt-effver.md)):
 
-- **MAJOR** version (`vX.0.0`): Incompatible API changes
-- **MINOR** version (`v1.X.0`): Backward-compatible functionality additions
-- **PATCH** version (`v1.0.X`): Backward-compatible bug fixes
+- **MACRO** (`vX.0.0`): "Expect significant changes." CRD shape moved meaningfully; consumers will touch their pack manifests.
+- **MESO** (`v0.X.0`): "Could break, watch for warnings." New fields, optional opt-ins, deprecations.
+- **MICRO** (`v0.0.X`): "Should be safe." Bug fixes, doc updates, operator-internal refactors with no CRD impact.
+
+While MACRO is `0` the project is pre-stable: even a MESO or MICRO bump may cost more effort than the digit implies. Tags stay `vX.Y.Z` (SemVer-shaped) so Helm and GitHub Releases parse them; only the interpretation is EffVer.
 
 ### Examples:
 
-- `v1.0.0` - Initial stable release
-- `v1.1.0` - Added new features, backward compatible
-- `v1.1.1` - Bug fixes, no new features
-- `v2.0.0` - Breaking changes, requires migration
+- `v0.1.0` - First EffVer-governed release (graduating from the alpha line)
+- `v0.1.1` - Bug fixes or docs, no CRD impact (MICRO)
+- `v0.2.0` - New optional CRD fields or deprecations (MESO)
+- `v1.0.0` - Stable line begins; effort semantics are now trustworthy
 
 ### Pre-releases:
 
-You can also create pre-releases for testing:
-- `v1.0.0-alpha.1` - Alpha release
-- `v1.0.0-beta.1` - Beta release
-- `v1.0.0-rc.1` - Release candidate
+You can cut a release candidate as a pre-cut dry run (the `-alpha`/`-beta` ladder is retired under EffVer - see [ADR-003](../decisions/2026-08-14-adopt-effver.md)):
+- `v0.1.0-rc.1` - Release candidate
 
 To mark a release as a pre-release in GitHub, check the "This is a pre-release" checkbox.
 
@@ -349,7 +349,7 @@ Manually upload the files to the GitHub Release:
 
 1. **Test Before Release**: Always run tests locally before creating a release
 2. **Write Good Release Notes**: Clearly document what changed
-3. **Follow Semantic Versioning**: Be consistent with version numbers
+3. **Follow EffVer**: Pick the digit by adoption effort, not strict API compatibility (see [ADR-003](../decisions/2026-08-14-adopt-effver.md))
 4. **Announce Breaking Changes**: Clearly communicate incompatible changes
 5. **Maintain Changelog**: Keep CHANGELOG.md updated
 6. **Tag Appropriately**: Use annotated tags with descriptions
@@ -378,6 +378,6 @@ After a successful release:
 
 - [GitHub Actions Documentation](https://docs.github.com/en/actions)
 - [GoReleaser Documentation](https://goreleaser.com/)
-- [Semantic Versioning](https://semver.org/)
+- [Effort-based Versioning (EffVer)](https://jacobtomlinson.dev/effver/)
 - [Kubebuilder Book](https://book.kubebuilder.io/)
 - [Quay.io Documentation](https://docs.quay.io/)

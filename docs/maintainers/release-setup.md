@@ -233,16 +233,14 @@ The workflow uses the following environment variables:
 
 ## Versioning Strategy
 
-We follow [Semantic Versioning](https://semver.org/):
+We follow [Effort-based Versioning (EffVer)](https://jacobtomlinson.dev/effver/) - the `MACRO.MESO.MICRO` digits signal adoption effort, not strict API compatibility (see [ADR-003](../decisions/2026-08-14-adopt-effver.md)):
 
-- **v1.0.0** - Major version (breaking changes)
-- **v1.1.0** - Minor version (new features, backward compatible)
-- **v1.1.1** - Patch version (bug fixes)
+- **vX.0.0** - MACRO: expect significant changes; consumers touch their pack manifests
+- **v0.X.0** - MESO: could break, watch for warnings (new fields, opt-ins, deprecations)
+- **v0.0.X** - MICRO: should be safe (bug fixes, docs, no CRD impact)
 
-Pre-release versions:
-- **v1.0.0-alpha.1** - Alpha release
-- **v1.0.0-beta.1** - Beta release
-- **v1.0.0-rc.1** - Release candidate
+The `-alpha`/`-beta` ladder is retired: while MACRO is `0` the leading zero already signals pre-stable. Release candidates may still be cut for a pre-release dry run:
+- **v0.1.0-rc.1** - Release candidate
 
 ## Testing the Release
 
@@ -346,7 +344,7 @@ Commit → Tag → Release → Workflow Triggered
 
 - [GitHub Actions Documentation](https://docs.github.com/en/actions)
 - [GoReleaser Documentation](https://goreleaser.com/)
-- [Semantic Versioning](https://semver.org/)
+- [Effort-based Versioning (EffVer)](https://jacobtomlinson.dev/effver/)
 - [Docker Build Push Action](https://github.com/docker/build-push-action)
 - [Quay.io Documentation](https://docs.quay.io/)
 

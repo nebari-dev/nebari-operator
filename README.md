@@ -41,8 +41,9 @@
 
 
 
-> **Status**: Under active development as part of Nebari Infrastructure Core (NIC). APIs and behavior may change without
-> notice.
+> **Status**: Pre-1.0 and under active development as part of Nebari Infrastructure Core (NIC). The project follows
+> [Effort-based Versioning](https://jacobtomlinson.dev/effver/): while the major version is `0`, CRD fields and behavior
+> can still change between releases — watch the MACRO (leftmost) digit for upgrades that need manifest changes.
 
 ## What is Nebari Operator?
 
