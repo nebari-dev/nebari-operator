@@ -224,7 +224,7 @@ helm-test-generate-golden: ## Generate golden files for nebari-app chart tests.
 	@command -v helm >/dev/null 2>&1 || { echo >&2 "helm is required but not installed. See https://helm.sh/docs/intro/install/"; exit 1; }
 	helm dependency build test/helm/nebari-app >/dev/null
 	mkdir -p test/helm/nebari-app/golden
-	@for c in minimal static computed multi; do \
+	@for c in minimal static multi; do \
 		helm template t test/helm/nebari-app --set cases.$$c.enabled=true > test/helm/nebari-app/golden/$$c.yaml; \
 		echo "  case $$c: golden written"; \
 	done
@@ -234,13 +234,14 @@ helm-test-generate-golden: ## Generate golden files for nebari-app chart tests.
 helm-test: helm-lint-library ## Render the nebari-app library chart for all cases and verify against golden files.
 	@command -v helm >/dev/null 2>&1 || { echo >&2 "helm is required but not installed. See https://helm.sh/docs/intro/install/"; exit 1; }
 	helm dependency build test/helm/nebari-app >/dev/null
-	@for c in minimal static computed multi; do \
-		helm template t test/helm/nebari-app --set cases.$$c.enabled=true > /tmp/$$c.yaml; \
-		diff -q test/helm/nebari-app/golden/$$c.yaml /tmp/$$c.yaml >/dev/null \
-			|| { echo >&2 "case $$c: golden mismatch"; diff test/helm/nebari-app/golden/$$c.yaml /tmp/$$c.yaml; exit 1; }; \
+	@workdir=$$(mktemp -d); \
+	for c in minimal static multi; do \
+		helm template t test/helm/nebari-app --set cases.$$c.enabled=true > $$workdir/$$c.yaml; \
+		diff -q test/helm/nebari-app/golden/$$c.yaml $$workdir/$$c.yaml >/dev/null \
+			|| { echo >&2 "case $$c: golden mismatch"; diff test/helm/nebari-app/golden/$$c.yaml $$workdir/$$c.yaml; rm -rf $$workdir; exit 1; }; \
 		echo "  case $$c: ok"; \
-	done
-	@rm -f /tmp/static.yaml /tmp/computed.yaml /tmp/multi.yaml
+	done; \
+	rm -rf $$workdir
 	@# Verify required field guards: render without each field, expect error
 	@# Note: helm template returns non-zero on validation errors, which would cause the
 	@# pipeline to fail with pipefail even if grep finds the expected message. Disable

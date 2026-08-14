@@ -43,14 +43,6 @@ cases:
         healthCheck:
           enabled: true
           path: /health
-  computed:
-    enabled: false
-    component: frontend
-    servicePort: 8080
-    nebariApp:
-      hostname: computed.nebari.local
-      auth:
-        enabled: false
   multi:
     enabled: false
     apps:
@@ -85,6 +77,12 @@ cases:
         servicePort: 8000
         nebariApp:
           hostname: api.nebari.local
+          # Consumer sets service.name, which overlaps the computed value
+          # (the component name "api"). mergeOverwrite gives precedence to
+          # its second argument (this nebariApp block), so "api-external"
+          # must survive while the computed service.port (8000) fills the gap.
+          service:
+            name: api-external
           routing:
             routes:
               - pathPrefix: /

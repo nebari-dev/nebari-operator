@@ -53,5 +53,5 @@ spec:
     - pathPrefix: /
       pathType: PathPrefix
   service:
-    name: api
+    name: api-external
     port: 8000
