@@ -41,9 +41,9 @@ Dependencies (kustomize, controller-gen, setup-envtest, golangci-lint, crd-ref-d
 
 The tables below are generated from the Makefile (see [Keeping this file current](#keeping-this-file-current)).
 
-<!-- BEGIN GENERATED: make-targets (source: Makefile `make agents` to refresh) -->
+<!-- BEGIN GENERATED: make-targets (source: Makefile, run `make agents` to refresh) -->
 
-_Generated from the Makefile; do not edit by hand. Change a target's `## ` help comment and run `make agents`._
+_Generated from the Makefile; do not edit by hand. Change a target and run `make agents`._
 
 ### General
 
