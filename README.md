@@ -20,9 +20,7 @@
   src="https://github.com/nebari-dev/nebari-operator/actions/workflows/test-chart.yml/badge.svg" alt="Test Chart"></a>
   <a href="https://github.com/nebari-dev/nebari-operator/actions/workflows/build-pr.yml"><img
   src="https://github.com/nebari-dev/nebari-operator/actions/workflows/build-pr.yml/badge.svg" alt="PR Checks"></a> <a
-  href="https://github.com/nebari-dev/nebari-operator/actions/workflows/generated-files.yml"><img
-  src="https://github.com/nebari-dev/nebari-operator/actions/workflows/generated-files.yml/badge.svg" alt="Generated
-  Files"></a> <a href="https://github.com/nebari-dev/nebari-operator/actions/workflows/release.yml"></a> <a
+  href="https://github.com/nebari-dev/nebari-operator/actions/workflows/generated-files.yml"> <a href="https://github.com/nebari-dev/nebari-operator/actions/workflows/release.yml"></a> <a
   href="https://github.com/nebari-dev/nebari-operator/blob/main/LICENSE"><img
   src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache 2.0"></a> <a
   href="https://github.com/nebari-dev/nebari-operator/releases/latest"><img
