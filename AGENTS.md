@@ -27,7 +27,7 @@ It is part of **Nebari Infrastructure Core (NIC)**. The sibling repository [`neb
 
 ### Who applies the `NebariApp` CRD
 
-The operator is the producer of one contract — the `NebariApp` custom resource. Any helmchart that includes it under its anifests and congiruations is named a ["Software Pack"](https://github.com/nebari-dev/software-pack-template#what-is-a-nebari-software-pack). Bellow we showcase a few software packs rthat are consumers of the nebariApp CRD and are the best place to see the it used in anger:
+The operator is the producer of one contract — the `NebariApp` custom resource. Any Helm chart that includes it among its manifests and configuration is called a ["Software Pack"](https://github.com/nebari-dev/software-pack-template#what-is-a-nebari-software-pack). Below are a few software packs that consume the `NebariApp` CRD — the best place to see it used in anger:
 
 - **[`software-pack-template`](https://github.com/nebari-dev/software-pack-template)** — the canonical example collection. Shows the same app onboarded via raw YAML, a Helm chart, Kustomize (base + dev/production overlays), and wrapping an existing chart, plus a standalone `docs/nebariapp-crd-reference.md`. Start here when you need a worked example of any field.
 - **[`data-science-pack`](https://github.com/nebari-dev/data-science-pack)** — a live consumer (multi-user JupyterHub). Ships a `templates/nebariapp.yaml` and an integration guide under `docs/`.
@@ -250,16 +250,35 @@ The manager's RBAC is generated, not hand-written. `+kubebuilder:rbac:...` marke
 
 Never reconcile a resource in a namespace that lacks `nebari.dev/managed=true`. `CoreReconciler.ValidateSpec` is the gate; keep it the single enforcement point.
 
+## Testing
+
+Three layers, each with its own make target:
+
+- **Unit tests** — `make test` (alias `make test-unit`). Table-driven Go tests run against **envtest** (a real kube-apiserver + etcd, no kubelet), so reconcilers are exercised against a live API without a full cluster. Every sub-reconciler and utility is covered next to its code: `internal/controller/reconcilers/{core,tls,routing,auth}` (and `auth/providers`), `internal/config`, `internal/controller/utils/*`, and `api/v1`. This is the fast gate — run it before every push.
+- **End-to-end tests** — `make test-e2e` (plus `make test-e2e-smoke` for a quick subset, `make test-e2e-parallel`). A **Ginkgo/Gomega** suite under `test/e2e/` (`-tags=e2e`) that deploys the operator to a **real cluster** and asserts end-to-end behavior: `auth_test.go`, `routing_test.go`, `tls_user_secret_test.go`, `gateway_test.go`, `validation_test.go`, `connectivity_test.go`, `conditions_test.go`, `manager_test.go`. Fixtures live in `test/e2e/testdata/`; shared helpers in `test/e2e/e2e_utils.go` and `test/utils/`. Bring up a local cluster with `make -C dev setup` first (see [Local development cluster](#local-development-cluster)).
+- **Helm chart golden tests** — `make helm-test` renders the `nebari-app` library chart for each case in `test/helm/nebari-app/templates/` and diffs it against the committed goldens in `test/helm/nebari-app/golden/`. When a template change is intentional, regenerate with `make helm-test-generate-golden`; `make helm-lint-library` lints the chart.
+
+CI (`build-pr.yml`) runs the unit, e2e, and chart suites on every PR. **Never disable or skip a test to get CI green — fix the underlying cause.** New reconciler behavior needs unit coverage; cross-resource behavior needs an e2e case.
+
 ## Documentation
 
+**Before opening a PR, read the design docs and decision records for the area you are touching.** They carry the rationale and cross-component contracts the code assumes but does not restate. If a change contradicts a recorded decision or contract, update that record in the same PR — do not let the code and the docs silently diverge.
+
+**Authoritative context — consult before changing the area it covers:**
+
+- **`docs/decisions/`** — ADR-style records of choices already made, and why. Currently `2026-03-05-webapi-extracted-to-nebari-landing.md` (why the web API moved out to nebari-landing). Don't re-litigate a decision recorded here without amending it.
+- **`docs/design/`** — living design docs and cross-component contracts: `auth-app-contract.md`, `epic-routing-securitypolicy.md`, `landing-page.md`, `user-workloads-discovery.md`, `user-workloads-discovery-contract.md`. Read the matching one before touching auth, routing, landing-page, or service discovery — these define the contract the reconcilers implement.
+- **`docs/plans/`** — in-flight implementation plans (e.g. `2026-02-20-tls-certificate-management*.md`). Check whether the work is already planned here before starting.
+- **`docs/reconcilers/`** — per-reconciler architecture with condition/reason/event tables and pipeline diagrams (`README.md`, `routing.md`, `validation.md`, `authentication.md`). The source of truth for reconciler behavior.
+
+**Reference material:**
+
 - **`docs/api-reference.md`** — generated CRD reference (`make docs`).
-- **`docs/reconcilers/`** — reconciler architecture, condition/reason/event tables, pipeline diagrams (`routing.md`, `validation.md`, `authentication.md`).
-- **`docs/design/`** — living design docs (auth contract, user-workload discovery, landing-page, routing/SecurityPolicy epic).
-- **`docs/decisions/`** — ADR-style records (e.g. the webapi extraction to nebari-landing).
-- **`docs/plans/`** — in-flight implementation plans.
 - **`docs/maintainers/`** — release checklist / process / setup.
 - **`docs/quickstart.md`, `docs/configuration-reference.md`, `docs/troubleshooting.md`, `docs/makefile-reference.md`** — user-facing guides.
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** — the human-facing contribution process.
+
+When you add a new design doc, ADR, or plan, link it here so it is discoverable — an unreferenced doc is one nobody consults.
 
 ## Dependencies
 
