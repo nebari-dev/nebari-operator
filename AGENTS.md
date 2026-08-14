@@ -13,7 +13,7 @@ A team declares a single `NebariApp` custom resource, and the operator provision
 - **Routing** — a Gateway API `HTTPRoute` on the shared Nebari gateway.
 - **TLS** — a cert-manager `Certificate` and a per-app HTTPS listener on the gateway.
 - **Auth** — an OIDC `SecurityPolicy` (Envoy Gateway) wired to Keycloak, including automatic Keycloak client provisioning and per-app RBAC.
-- **Landing-page registration** — surfaced to nebari-landing so the app appears on the platform's landing page.
+- **Landing-page registration** — surfaced to nebari-landing so the app appears on the platform's landing page. See https://github.com/nebari-dev/nebari-landing for extra details.
 
 It is part of **Nebari Infrastructure Core (NIC)**. The sibling repository [`nebari-infrastructure-core`](https://github.com/nebari-dev/nebari-infrastructure-core) provisions the cluster and bootstraps foundational software; this operator runs *on* that cluster and manages application-level resources. APIs and behavior are still under active development and may change without notice.
 
