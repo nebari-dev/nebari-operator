@@ -123,6 +123,10 @@ crd-ref-docs: $(CRD_REF_DOCS) ## Download crd-ref-docs locally if necessary.
 $(CRD_REF_DOCS): $(LOCALBIN)
 	$(call go-install-tool,$(CRD_REF_DOCS),github.com/elastic/crd-ref-docs,$(CRD_REF_DOCS_VERSION))
 
+.PHONY: agents
+agents: ## Regenerate the machine-owned make-targets block in AGENTS.md.
+	./hack/gen-agents.sh
+
 ##@ Build
 
 .PHONY: build
