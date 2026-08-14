@@ -32,6 +32,26 @@ env:
   IMAGE_NAME: nebari/nebari-operator
 
 jobs:
+  changes:
+    name: Detect image-affecting changes
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.filter.outputs.image }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Filter changed paths
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            image:
+              - '**.go'
+              - 'go.mod'
+              - 'go.sum'
+              - 'Dockerfile'
+
   lint:
     name: Lint and Validate
     runs-on: ubuntu-latest
@@ -277,7 +297,8 @@ jobs:
   build-multiarch:
     name: Build & Push (${{ matrix.platform }})
     runs-on: ${{ matrix.runner }}
-    needs: [test-chart, test, test-e2e]
+    needs: [changes, test-chart, test, test-e2e]
+    if: needs.changes.outputs.image == 'true'
     strategy:
       matrix:
         include:
