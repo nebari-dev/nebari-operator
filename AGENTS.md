@@ -6,7 +6,7 @@ This file follows the [AGENTS.md](https://agents.md) convention and is read by C
 
 ## Project Overview
 
-**Nebari Operator** is a Go Kubernetes operator (kubebuilder-scaffolded, built on [controller-runtime](https://github.com/kubernetes-sigs/controller-runtime)) that provides self-service application onboarding for GitOps-friendly Kubernetes platforms.
+**Nebari Operator** is a Go Kubernetes operator (kubebuilder-scaffolded, built on [controller-runtime](https://github.com/kubernetes-sigs/controller-runtime)) that provides self-service application onboarding for GitOps-friendly Kubernetes platforms for the Nebari application ecosystem.
 
 A team declares a single `NebariApp` custom resource, and the operator provisions and continuously reconciles everything that app needs to be reachable and secured:
 
