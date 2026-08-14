@@ -25,67 +25,96 @@ It is part of **Nebari Infrastructure Core (NIC)**. The sibling repository [`neb
 4. **Observable by contract.** Every reconciler updates `status.conditions` and emits typed Kubernetes Events. Condition/event vocabularies are centralized as Go constants.
 5. **Contract independence.** The routing, TLS, auth, and landing-page contracts each degrade gracefully and do not depend on one another being present.
 
+### Who applies the `NebariApp` CRD
+
+The operator is the producer of one contract — the `NebariApp` custom resource. These repositories are the consumers, and are the best place to see the CRD used in anger:
+
+- **[`software-pack-template`](https://github.com/nebari-dev/software-pack-template)** — the canonical example collection. Shows the same app onboarded via raw YAML, a Helm chart, Kustomize (base + dev/production overlays), and wrapping an existing chart, plus a standalone `docs/nebariapp-crd-reference.md`. Start here when you need a worked example of any field.
+- **[`data-science-pack`](https://github.com/nebari-dev/data-science-pack)** — a live consumer (multi-user JupyterHub). Ships a `templates/nebariapp.yaml` and an integration guide under `docs/`.
+- **[`nebi-pack`](https://github.com/nebari-dev/nebi-pack)** — a live consumer (team Pixi-environment management, Keycloak SSO + PostgreSQL). Ships a `templates/nebariapp.yaml`.
+
+When you change the CRD's shape or behavior, these are the downstreams that feel it — check their manifests still validate.
+
 ## Common Development Commands
 
 Dependencies (kustomize, controller-gen, setup-envtest, golangci-lint, crd-ref-docs) are auto-installed into `bin/` on first use — you do not need to install them globally.
 
-### Building & Running
+The tables below are generated from the Makefile (see [Keeping this file current](#keeping-this-file-current)).
 
-```bash
-make build                    # build bin/manager from ./cmd/operator
-make run                      # run the controller locally against your kubecontext
-make docker-build             # build the operator image (IMG=... to override tag)
-make docker-buildx            # multi-arch build (arm64,amd64,s390x,ppc64le)
-```
+<!-- BEGIN GENERATED: make-targets (source: Makefile `##@`/`## ` help text -- run `make agents` to refresh) -->
 
-### Testing
+_Generated from the Makefile; do not edit by hand. Change a target's `## ` help comment and run `make agents`._
 
-```bash
-make test                     # unit tests via envtest, with coverage (cover.out)
-make test-unit                # controller unit tests with coverage
-make test-unit-html           # same, plus an HTML coverage report
-make test-e2e                 # Ginkgo e2e suite (-tags=e2e); requires a live cluster
-make test-e2e-smoke           # focused smoke subset
-make test-e2e-parallel        # e2e in parallel (procs=4)
-```
+### General
 
-### Code Quality
+| Target | Description |
+| --- | --- |
+| `make help` | Display this help. |
 
-```bash
-make fmt                      # go fmt
-make vet                      # go vet
-make lint                     # golangci-lint run
-make lint-fix                 # golangci-lint run --fix
-```
+### Development
 
-### Codegen (run after API changes)
+| Target | Description |
+| --- | --- |
+| `make manifests` | Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects. |
+| `make generate` | Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations. |
+| `make fmt` | Run go fmt against code. |
+| `make vet` | Run go vet against code. |
+| `make test` | Run tests. |
+| `make test-unit` | Run controller unit tests with coverage. |
+| `make test-unit-html` | Generate HTML coverage report for unit tests. |
+| `make test-e2e` | Run all e2e tests. |
+| `make test-e2e-parallel` | Run e2e tests in parallel (faster). |
+| `make test-e2e-smoke` | Run quick smoke tests only. |
+| `make lint` | Run golangci-lint linter |
+| `make lint-fix` | Run golangci-lint linter and perform fixes |
+| `make lint-config` | Verify golangci-lint linter configuration |
 
-```bash
-make manifests                # controller-gen: CRDs + ClusterRole from kubebuilder markers
-make generate                 # controller-gen: DeepCopy code (zz_generated.deepcopy.go)
-make generate-dev             # shortcut: manifests + generate
-make docs                     # crd-ref-docs: regenerate docs/api-reference.md from api/v1
-make generate-all             # manifests + generate + build-installer + helm-chart
-```
+### Documentation
+
+| Target | Description |
+| --- | --- |
+| `make docs` | Generate API reference documentation from Go types in api/v1/. |
+| `make crd-ref-docs` | Download crd-ref-docs locally if necessary. |
+| `make agents` | Regenerate the machine-owned make-targets block in AGENTS.md. |
+
+### Build
+
+| Target | Description |
+| --- | --- |
+| `make build` | Build manager binary. |
+| `make run` | Run a controller from your host. |
+| `make docker-build` | Build docker image with the manager. |
+| `make docker-push` | Push docker image with the manager. |
+| `make docker-buildx` | Build and push docker image for the manager for cross-platform support |
+
+### Installer
+
+| Target | Description |
+| --- | --- |
+| `make build-installer` | Generate a consolidated YAML with CRDs and deployment. |
+| `make helm-chart` | Generate Helm chart from manifests using kubebuilder. |
+| `make helm-package` | Package the Helm charts. |
+| `make helm-chart-version` | Update Helm chart version and appVersion (requires VERSION and APP_VERSION vars). |
+| `make helm-lint-library` | Lint the nebari-app library chart. |
+| `make helm-lint` | Lint the helm charts |
+| `make helm-test-generate-golden` | Generate golden files for nebari-app chart tests. |
+| `make helm-test` | Render the nebari-app library chart for all cases and verify against golden files. |
+| `make generate-dev` | Generate for development (CRDs + deepcopy code only) |
+| `make generate-all` | Generate all artifacts (CRDs + manifests + Helm chart) |
+| `make prepare-release` | [DEPRECATED] Use automated GitHub Actions workflow instead |
+
+### Deployment
+
+| Target | Description |
+| --- | --- |
+| `make install` | Install CRDs into the K8s cluster specified in ~/.kube/config. |
+| `make uninstall` | Uninstall CRDs from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion. |
+| `make deploy` | Deploy controller to the K8s cluster specified in ~/.kube/config. |
+| `make undeploy` | Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion. |
+
+<!-- END GENERATED: make-targets -->
 
 **After editing anything in `api/v1/`, run `make generate-dev` (and `make docs`) and commit the generated files alongside your source change.** CI fails if generated files, manifests, or the API reference are out of sync.
-
-### Installer / Helm
-
-```bash
-make build-installer          # kustomize build config/default -> dist/install.yaml
-make helm-chart               # regenerate the Helm chart into dist/chart/ (kubebuilder helm plugin)
-make helm-package             # helm package dist/chart -> dist/
-```
-
-### Deploying to a cluster
-
-```bash
-make install                  # apply the CRDs (kustomize config/crd)
-make deploy IMG=<registry>/<image>:<tag>   # apply the full operator (config/default)
-make undeploy                 # tear the operator down
-make uninstall                # remove the CRDs
-```
 
 ### Local development cluster
 
@@ -244,6 +273,20 @@ Core libraries (see `go.mod`; module `github.com/nebari-dev/nebari-operator`, Go
 - `github.com/Nerzal/gocloak/v13` — Keycloak admin client.
 - `github.com/onsi/ginkgo/v2` + `gomega` — test framework.
 
+## Releases
+
+Releases are fully automated. Publishing a GitHub Release from a version tag (`vX.Y.Z`) triggers `.github/workflows/release.yml`, which:
+
+1. **tests** — runs `fmt`/`vet`/`test`/`lint` as a gate.
+2. **build-manifests** — regenerates CRDs + RBAC, builds `dist/install.yaml` pinned to the release image, and attaches it to the Release.
+3. **goreleaser** — builds and pushes multi-arch images to `quay.io/nebari/nebari-operator` and Go binaries for linux/darwin/windows × amd64/arm64 (via `.goreleaser.yml`).
+4. **publish-helm-chart** — regenerates the chart, stamps the version/appVersion, packages it, and attaches the `.tgz` to the Release.
+5. **sync-helm-repository** — pushes the packaged chart to [`nebari-dev/helm-repository`](https://github.com/nebari-dev/helm-repository) so it is installable from the shared Helm repo.
+
+You do not build or push anything by hand — cutting the Release is the whole trigger. Maintainer runbooks live in `docs/maintainers/release-process.md`, `release-checklist.md`, and `release-setup.md`.
+
+**Versioning:** the operator uses **[EffVer](https://jacobtomlinson.dev/effver/)** from `v0.1.0` onward (ADR-003), not SemVer. Read the version as *macro.meso.micro* by the effort a bump implies for consumers. Note `docs/maintainers/release-process.md` still says "semantic versioning" and is due an update to match.
+
 ## Contribution Workflow
 
 1. Fork and branch from `main` with a conventional prefix (`feat/…`, `fix/…`, `chore/…`, `docs/…`, `test/…`).
@@ -266,3 +309,12 @@ Run before every commit:
 5. **Codegen in sync** (if `api/v1/` changed): `make generate-dev` **and** `make docs`, with generated files committed.
 6. **RBAC via markers:** permission changes come from `+kubebuilder:rbac` markers + `make manifests`, never hand-edits to `config/rbac/role.yaml`.
 7. **Conditions & events** use the constants in `api/v1/nebariapp_types.go`, not inline strings.
+
+## Keeping This File Current
+
+This file is part generated, part hand-authored, and the two are handled differently:
+
+- **Generated:** the make-targets tables between the `<!-- BEGIN GENERATED: make-targets -->` / `<!-- END GENERATED -->` markers are produced by `hack/gen-agents.sh` from the Makefile's `##@` section headers and `## ` help comments. **Do not edit them by hand.** Change a target's help comment in the Makefile and run `make agents`. CI regenerates and runs `git diff --exit-code AGENTS.md`, so a stale table fails the build — the same drift-gate used for `make manifests` / `make docs`.
+- **Hand-authored:** everything else (architecture, the reconcile pipeline, patterns, conventions, releases, downstream consumers). Generation does **not** keep this fresh — if you change the reconcile order, a convention, or the release flow, update the prose in the same PR.
+
+To add a new generated block later, wrap it in its own `BEGIN GENERATED: <name>` / `END GENERATED` markers and teach `hack/gen-agents.sh` to fill it.

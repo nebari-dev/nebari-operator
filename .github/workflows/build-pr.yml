@@ -79,6 +79,13 @@ jobs:
         run: |
           git diff --exit-code docs/api-reference.md || (echo "API reference is out of date. Run 'make docs'" && exit 1)
 
+      - name: Regenerate AGENTS.md generated blocks
+        run: make agents
+
+      - name: Check for stale AGENTS.md
+        run: |
+          git diff --exit-code AGENTS.md || (echo "AGENTS.md is out of date. Run 'make agents'" && exit 1)
+
   test:
     name: Unit Tests
     runs-on: ubuntu-latest
