@@ -24,8 +24,8 @@ MARKER_END='<!-- END GENERATED: make-targets -->'
 SKIP_SECTIONS="Dependencies"
 
 gen_block() {
-  printf '%s (source: Makefile `##@`/`## ` help text -- run `make agents` to refresh) -->\n' "$MARKER_BEGIN"
-  printf '\n_Generated from the Makefile; do not edit by hand. Change a target'"'"'s `## ` help comment and run `make agents`._\n'
+  printf '%s (source: Makefile, run `make agents` to refresh) -->\n' "$MARKER_BEGIN"
+  printf '\n_Generated from the Makefile; do not edit by hand. Change a target and run `make agents`._\n'
   awk -v skip="$SKIP_SECTIONS" '
     BEGIN { FS = ":.*## "; show = 0 }
     /^##@/ {
