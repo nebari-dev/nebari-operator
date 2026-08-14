@@ -4,6 +4,8 @@ A [library](https://helm.sh/docs/chart_template_guide/getting_started/#the-chart
 
 The chart exposes one named template, `nebari-app.nebariApp`, that acts as a pure function: callers pass `metadata` and `spec` dicts and the template renders a `NebariApp` resource. It is not installable on its own — it is consumed as a [chart dependency](https://helm.sh/docs/helm/helm_dependency/).
 
+> New here? For a step-by-step, end-to-end walkthrough (dependency → values → template → apply → verify), start with [Onboarding an app with the nebari-app Helm chart](../../docs/using-the-nebari-app-chart.md). This README is the reference for the template contract itself.
+
 ## Install as a dependency
 
 Add the chart to your consumer chart's `Chart.yaml`:
