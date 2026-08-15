@@ -132,7 +132,10 @@ jobs:
       - name: Install Helm
         uses: azure/setup-helm@v5
         with:
-          version: 'latest'
+          # Pin to Helm 3.x: setup-helm's "latest" now installs Helm 4, whose
+          # chart rendering/packaging differs from the Helm 3 the charts target.
+          # A deliberate Helm 4 migration is tracked separately.
+          version: v3.19.0
 
       - name: Install kubebuilder
         run: |
@@ -177,7 +180,10 @@ jobs:
       - name: Install Helm
         uses: azure/setup-helm@v5
         with:
-          version: 'latest'
+          # Pin to Helm 3.x: setup-helm's "latest" now installs Helm 4, whose
+          # chart rendering/packaging differs from the Helm 3 the charts target.
+          # A deliberate Helm 4 migration is tracked separately.
+          version: v3.19.0
 
       - name: Install kubebuilder
         run: |
