@@ -56,6 +56,8 @@ spec:
         # For more details, see: https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted
         runAsNonRoot: true
         runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -68,7 +70,14 @@ spec:
         imagePullPolicy: IfNotPresent
         name: manager
         env:
-          # Keycloak OIDC Provider Configuration
+          # Keycloak OIDC Provider Configuration.
+          #
+          # KEYCLOAK_ADMIN_SECRET_NAME and KEYCLOAK_ADMIN_SECRET_NAMESPACE are
+          # the *name* and *namespace* of a Kubernetes Secret — not the
+          # credentials themselves.  The operator reads them at runtime via
+          # its ServiceAccount.  Static-analysis tools sometimes flag plain
+          # string env vars whose names match `*_SECRET_*` patterns; in this
+          # case the values are intentional pointers, not sensitive data.
           - name: KEYCLOAK_ENABLED
             value: "true"
           - name: KEYCLOAK_URL
@@ -87,7 +96,10 @@ spec:
           #     secretKeyRef:
           #       name: keycloak-admin-credentials
           #       key: admin-password
-        ports: []
+        ports:
+          - name: health
+            containerPort: 8081
+            protocol: TCP
         securityContext:
           readOnlyRootFilesystem: true
           allowPrivilegeEscalation: false
