@@ -75,7 +75,7 @@ func TestValidateGateway(t *testing.T) {
 				Recorder: record.NewFakeRecorder(10),
 			}
 
-			err := reconciler.validateGateway(context.Background(), tt.gatewayName)
+			err := reconciler.validateParent(context.Background(), &appsv1.NebariApp{}, tt.gatewayName, false)
 			if (err != nil) != tt.expectError {
 				t.Errorf("expected error=%v, got error=%v", tt.expectError, err)
 			}
@@ -202,7 +202,7 @@ func TestBuildHTTPRoute(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			route, err := reconciler.buildHTTPRoute(tt.nebariApp, tt.gatewayName, "")
+			route, err := reconciler.buildHTTPRoute(tt.nebariApp, tt.gatewayName, "", false)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -277,7 +277,7 @@ func TestBuildHTTPRoute_SetControllerReferenceError(t *testing.T) {
 		},
 	}
 
-	route, err := reconciler.buildHTTPRoute(nebariApp, "nebari-gateway", "")
+	route, err := reconciler.buildHTTPRoute(nebariApp, "nebari-gateway", "", false)
 	if err == nil {
 		t.Error("expected error when scheme has no types registered, got nil")
 	}
@@ -305,7 +305,7 @@ func TestBuildPublicHTTPRoute_SetControllerReferenceError(t *testing.T) {
 		},
 	}
 
-	route, err := reconciler.buildPublicHTTPRoute(nebariApp, "nebari-gateway", "")
+	route, err := reconciler.buildPublicHTTPRoute(nebariApp, "nebari-gateway", "", false)
 	if err == nil {
 		t.Error("expected error when scheme has no types registered, got nil")
 	}
@@ -489,7 +489,7 @@ func TestReconcileRouting(t *testing.T) {
 				Recorder: record.NewFakeRecorder(10),
 			}
 
-			err := reconciler.ReconcileRouting(context.Background(), tt.nebariApp, "")
+			err := reconciler.ReconcileRouting(context.Background(), tt.nebariApp, "", false)
 			if (err != nil) != tt.expectError {
 				t.Errorf("expected error=%v, got error=%v", tt.expectError, err)
 			}
@@ -547,7 +547,7 @@ func TestReconcileRouting_BuildError(t *testing.T) {
 		Recorder: record.NewFakeRecorder(10),
 	}
 
-	err := reconciler.ReconcileRouting(context.Background(), nebariApp, "")
+	err := reconciler.ReconcileRouting(context.Background(), nebariApp, "", false)
 	if err == nil {
 		t.Fatal("expected error from ReconcileRouting when buildHTTPRoute fails, got nil")
 	}
@@ -712,7 +712,7 @@ func TestBuildPublicHTTPRoute(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			route, err := reconciler.buildPublicHTTPRoute(tt.nebariApp, tt.gatewayName, "")
+			route, err := reconciler.buildPublicHTTPRoute(tt.nebariApp, tt.gatewayName, "", false)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -844,7 +844,7 @@ func TestReconcilePublicRoute(t *testing.T) {
 				Scheme:   scheme,
 				Recorder: record.NewFakeRecorder(10),
 			}
-			err := reconciler.ReconcilePublicRoute(context.Background(), tt.nebariApp, "")
+			err := reconciler.ReconcilePublicRoute(context.Background(), tt.nebariApp, "", false)
 			if (err != nil) != tt.expectError {
 				t.Errorf("expected error=%v, got error=%v", tt.expectError, err)
 			}
@@ -992,7 +992,7 @@ func TestBuildHTTPRouteWithTLSListener(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			reconciler := &RoutingReconciler{Scheme: scheme}
-			route, err := reconciler.buildHTTPRoute(tt.nebariApp, constants.PublicGatewayName, tt.tlsListenerName)
+			route, err := reconciler.buildHTTPRoute(tt.nebariApp, constants.PublicGatewayName, tt.tlsListenerName, false)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -1077,7 +1077,7 @@ func TestBuildHTTPRouteAnnotations(t *testing.T) {
 				},
 			}
 
-			route, err := reconciler.buildHTTPRoute(nebariApp, constants.PublicGatewayName, "")
+			route, err := reconciler.buildHTTPRoute(nebariApp, constants.PublicGatewayName, "", false)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}

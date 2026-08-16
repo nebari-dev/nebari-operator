@@ -39,6 +39,10 @@ const (
 
 // Resource naming suffixes
 const (
+	// ListenerSetSuffix is appended to NebariApp name for the per-app ListenerSet
+	// resource created in the NebariApp's own namespace (ADR-0011 Option 2).
+	ListenerSetSuffix = "listeners"
+
 	// HTTPRouteSuffix is appended to NebariApp name for HTTPRoute resources
 	HTTPRouteSuffix = "route"
 
