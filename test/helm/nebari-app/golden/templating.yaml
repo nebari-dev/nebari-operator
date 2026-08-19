@@ -1,0 +1,41 @@
+---
+# Source: fixture/templates/templating.yaml
+apiVersion: reconcilers.nebari.dev/v1
+kind: NebariApp
+metadata:
+  labels:
+    app.kubernetes.io/instance: t
+    app.kubernetes.io/name: t
+    app.kubernetes.io/version: 1
+  name: test-t-app
+  namespace: default
+spec:
+  auth:
+    enabled: true
+    enforceAtGateway: false
+    provider: keycloak
+    provisionClient: true
+    redirectURI: /*
+    scopes:
+    - openid
+    - profile
+    - email
+  hostname: t.nebari.local
+  landingPage:
+    category: testing
+    description: App for t
+    displayName: T App
+    enabled: true
+    healthCheck:
+      enabled: true
+      path: /health
+    priority: 1
+  routing:
+    routes:
+    - pathPrefix: /
+      pathType: PathPrefix
+    - pathPrefix: /api
+      pathType: PathPrefix
+  service:
+    name: svc-t
+    port: 1

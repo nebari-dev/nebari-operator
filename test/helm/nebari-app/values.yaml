@@ -87,3 +87,42 @@ cases:
             routes:
               - pathPrefix: /
                 pathType: PathPrefix
+  templating:
+    enabled: false
+    metadata:
+      name: "test-{{ .Release.Name }}-app"
+      namespace: default
+      labels:
+        app.kubernetes.io/name: "{{ .Release.Name }}"
+        app.kubernetes.io/version: "1.0"
+        app.kubernetes.io/instance: t
+    spec:
+      hostname: "{{ .Release.Name }}.nebari.local"
+      service:
+        name: "svc-{{ .Release.Name }}"
+        port: '{{ .Values.cases.minimal.spec.service.port }}'
+      auth:
+        enabled: true
+        provider: keycloak
+        provisionClient: true
+        enforceAtGateway: false
+        redirectURI: /*
+        scopes:
+          - openid
+          - '{{ "PROFILE" | lower }}'
+          - email
+      routing:
+        routes:
+          - pathPrefix: /
+            pathType: PathPrefix
+          - pathPrefix: /api
+            pathType: PathPrefix
+      landingPage:
+        enabled: true
+        displayName: "{{ .Release.Name | title }} App"
+        description: "App for {{ .Release.Name }}"
+        category: testing
+        priority: 1
+        healthCheck:
+          enabled: true
+          path: /health
