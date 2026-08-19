@@ -163,17 +163,8 @@ func (r *RoutingReconciler) buildHTTPRoute(nebariApp *appsv1.NebariApp, gatewayN
 	routeName := naming.HTTPRouteName(nebariApp)
 	namespace := gatewayv1.Namespace(constants.GatewayNamespace)
 
-	// Determine which Gateway listener to use
-	// Priority: tlsListenerName (from TLS reconciler) > TLS enabled ("https") > TLS disabled ("http")
-	sectionName := gatewayv1.SectionName("https")
-	tlsEnabled := true
-	if nebariApp.Spec.Routing != nil && nebariApp.Spec.Routing.TLS != nil && nebariApp.Spec.Routing.TLS.Enabled != nil && !*nebariApp.Spec.Routing.TLS.Enabled {
-		sectionName = gatewayv1.SectionName("http")
-		tlsEnabled = false
-	}
-	if tlsListenerName != "" && tlsEnabled {
-		sectionName = gatewayv1.SectionName(tlsListenerName)
-	}
+	// Determine which Gateway listener to use.
+	sectionName, tlsEnabled := resolveListenerSection(nebariApp, tlsListenerName)
 
 	// Build HTTPRoute annotations: start with user-supplied annotations from the
 	// routing spec, then apply operator-managed ones so they always take precedence.
@@ -221,41 +212,82 @@ func (r *RoutingReconciler) buildHTTPRoute(nebariApp *appsv1.NebariApp, gatewayN
 	return route, nil
 }
 
-// buildHTTPRouteRules generates HTTPRoute rules based on NebariApp routes
+// buildHTTPRouteRules generates the HTTPRoute rule for the protected (main)
+// route. Matches come from routing.routes and default to PathPrefix; when none
+// are specified the matches slice is empty and Gateway API applies its own
+// default "/" (PathPrefix) match.
 func (r *RoutingReconciler) buildHTTPRouteRules(nebariApp *appsv1.NebariApp) []gatewayv1.HTTPRouteRule {
-	// Get routes from routing config if specified
 	var routes []appsv1.RouteMatch
 	if nebariApp.Spec.Routing != nil {
 		routes = nebariApp.Spec.Routing.Routes
 	}
+	return []gatewayv1.HTTPRouteRule{
+		r.buildRouteRule(nebariApp, buildRouteMatches(routes, gatewayv1.PathMatchPathPrefix)),
+	}
+}
 
-	// Build a single rule with multiple matches (one per route)
-	// All matches route to the same backend, so we use one rule
-	// If no routes specified, we create an empty matches array. Gateway API will automatically
-	// add a default path match of "/" (PathPrefix) when matches is empty or null.
+// buildRouteRule assembles a single HTTPRouteRule from the given matches,
+// attaching the shared backend refs and any user-supplied routing.filters.
+// Both the protected route and the public route flow through here, so filters
+// apply to each consistently and in the order the user listed them.
+func (r *RoutingReconciler) buildRouteRule(nebariApp *appsv1.NebariApp, matches []gatewayv1.HTTPRouteMatch) gatewayv1.HTTPRouteRule {
+	return gatewayv1.HTTPRouteRule{
+		Matches:     matches,
+		BackendRefs: r.buildBackendRefs(nebariApp),
+		Filters:     userFilters(nebariApp),
+	}
+}
+
+// buildRouteMatches converts NebariApp RouteMatch entries into Gateway API path
+// matches. defaultPathType is applied when an entry omits pathType, letting the
+// main route default to PathPrefix and public routes to Exact. An empty input
+// yields an empty slice so callers can rely on Gateway API's default "/" match.
+func buildRouteMatches(routes []appsv1.RouteMatch, defaultPathType gatewayv1.PathMatchType) []gatewayv1.HTTPRouteMatch {
 	matches := make([]gatewayv1.HTTPRouteMatch, 0, len(routes))
 	for _, route := range routes {
-		pathType := gatewayv1.PathMatchPathPrefix
-		if route.PathType == "Exact" {
+		pathType := defaultPathType
+		switch route.PathType {
+		case "Exact":
 			pathType = gatewayv1.PathMatchExact
+		case "PathPrefix":
+			pathType = gatewayv1.PathMatchPathPrefix
 		}
-
 		pathValue := route.PathPrefix
-		match := gatewayv1.HTTPRouteMatch{
+		matches = append(matches, gatewayv1.HTTPRouteMatch{
 			Path: &gatewayv1.HTTPPathMatch{
 				Type:  &pathType,
 				Value: &pathValue,
 			},
-		}
-		matches = append(matches, match)
+		})
 	}
+	return matches
+}
 
-	return []gatewayv1.HTTPRouteRule{
-		{
-			Matches:     matches,
-			BackendRefs: r.buildBackendRefs(nebariApp),
-		},
+// userFilters returns the user-supplied routing.filters for this NebariApp, or
+// nil when none are configured. Pass-through to the Gateway API HTTPRouteFilter
+// spec: the operator does not interpret, reorder, or strip them.
+func userFilters(nebariApp *appsv1.NebariApp) []gatewayv1.HTTPRouteFilter {
+	if nebariApp.Spec.Routing == nil || len(nebariApp.Spec.Routing.Filters) == 0 {
+		return nil
 	}
+	return nebariApp.Spec.Routing.Filters
+}
+
+// resolveListenerSection determines which Gateway listener section the route
+// attaches to, and whether TLS is enabled. Priority: the per-app TLS listener
+// from the TLS reconciler (when TLS is on) > "https" (TLS on) > "http" (TLS
+// explicitly disabled).
+func resolveListenerSection(nebariApp *appsv1.NebariApp, tlsListenerName string) (gatewayv1.SectionName, bool) {
+	sectionName := gatewayv1.SectionName("https")
+	tlsEnabled := true
+	if nebariApp.Spec.Routing != nil && nebariApp.Spec.Routing.TLS != nil && nebariApp.Spec.Routing.TLS.Enabled != nil && !*nebariApp.Spec.Routing.TLS.Enabled {
+		sectionName = gatewayv1.SectionName("http")
+		tlsEnabled = false
+	}
+	if tlsListenerName != "" && tlsEnabled {
+		sectionName = gatewayv1.SectionName(tlsListenerName)
+	}
+	return sectionName, tlsEnabled
 }
 
 // buildBackendRefs generates backend references for the HTTPRoute
@@ -393,31 +425,11 @@ func (r *RoutingReconciler) buildPublicHTTPRoute(nebariApp *appsv1.NebariApp, ga
 	routeName := naming.PublicHTTPRouteName(nebariApp)
 	namespace := gatewayv1.Namespace(constants.GatewayNamespace)
 
-	sectionName := gatewayv1.SectionName("https")
-	tlsEnabled := true
-	if nebariApp.Spec.Routing != nil && nebariApp.Spec.Routing.TLS != nil && nebariApp.Spec.Routing.TLS.Enabled != nil && !*nebariApp.Spec.Routing.TLS.Enabled {
-		sectionName = gatewayv1.SectionName("http")
-		tlsEnabled = false
-	}
-	if tlsListenerName != "" && tlsEnabled {
-		sectionName = gatewayv1.SectionName(tlsListenerName)
-	}
+	sectionName, tlsEnabled := resolveListenerSection(nebariApp, tlsListenerName)
 
-	// Build matches for each public route (default to Exact for safer auth bypass)
-	matches := make([]gatewayv1.HTTPRouteMatch, 0, len(nebariApp.Spec.Routing.PublicRoutes))
-	for _, route := range nebariApp.Spec.Routing.PublicRoutes {
-		pathType := gatewayv1.PathMatchExact
-		if route.PathType == "PathPrefix" {
-			pathType = gatewayv1.PathMatchPathPrefix
-		}
-		pathValue := route.PathPrefix
-		matches = append(matches, gatewayv1.HTTPRouteMatch{
-			Path: &gatewayv1.HTTPPathMatch{
-				Type:  &pathType,
-				Value: &pathValue,
-			},
-		})
-	}
+	// Public routes default to Exact matching (safer for auth bypass than a broad
+	// prefix). User-supplied routing.filters apply here too, via buildRouteRule.
+	matches := buildRouteMatches(nebariApp.Spec.Routing.PublicRoutes, gatewayv1.PathMatchExact)
 
 	route := &gatewayv1.HTTPRoute{
 		ObjectMeta: metav1.ObjectMeta{
@@ -447,10 +459,7 @@ func (r *RoutingReconciler) buildPublicHTTPRoute(nebariApp *appsv1.NebariApp, ga
 				gatewayv1.Hostname(nebariApp.Spec.Hostname),
 			},
 			Rules: []gatewayv1.HTTPRouteRule{
-				{
-					Matches:     matches,
-					BackendRefs: r.buildBackendRefs(nebariApp),
-				},
+				r.buildRouteRule(nebariApp, matches),
 			},
 		},
 	}

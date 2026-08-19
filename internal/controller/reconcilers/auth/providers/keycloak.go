@@ -641,7 +641,7 @@ func (p *KeycloakProvider) updateExistingClient(ctx context.Context, kcClient *g
 	// Update client configuration
 	redirectURIs := p.buildRedirectURLs(nebariApp)
 	existingClient.RedirectURIs = &redirectURIs
-	existingClient.WebOrigins = &[]string{"*"}
+	existingClient.WebOrigins = ptr.To(p.buildWebOrigins(nebariApp))
 	existingClient.StandardFlowEnabled = gocloak.BoolP(true)
 
 	// Ensure post-logout redirect URIs are set (preserving any existing attributes)
@@ -680,7 +680,7 @@ func (p *KeycloakProvider) createNewClient(ctx context.Context, kcClient *gocloa
 		Name:                      gocloak.StringP(fmt.Sprintf("%s OIDC Client", nebariApp.Name)),
 		Secret:                    gocloak.StringP(clientSecret),
 		RedirectURIs:              &redirectURIs,
-		WebOrigins:                &[]string{"*"},
+		WebOrigins:                ptr.To(p.buildWebOrigins(nebariApp)),
 		Attributes:                &map[string]string{"post.logout.redirect.uris": p.buildPostLogoutRedirectURIs(nebariApp)},
 		PublicClient:              gocloak.BoolP(false),
 		StandardFlowEnabled:       gocloak.BoolP(true),
@@ -707,6 +707,18 @@ func (p *KeycloakProvider) buildRedirectURLs(nebariApp *appsv1.NebariApp) []stri
 	return []string{
 		fmt.Sprintf("https://%s%s", nebariApp.Spec.Hostname, redirectPath),
 		fmt.Sprintf("http://%s%s", nebariApp.Spec.Hostname, redirectPath),
+	}
+}
+
+// buildWebOrigins constructs the CORS WebOrigins for the client, scoped to the
+// NebariApp's hostname (both schemes) rather than a "*" wildcard. This mirrors
+// the host-scoping already applied to RedirectURIs and keeps the client to the
+// principle of least privilege: only the app's own origin may make CORS requests
+// to Keycloak's token endpoint for this client.
+func (p *KeycloakProvider) buildWebOrigins(nebariApp *appsv1.NebariApp) []string {
+	return []string{
+		fmt.Sprintf("https://%s", nebariApp.Spec.Hostname),
+		fmt.Sprintf("http://%s", nebariApp.Spec.Hostname),
 	}
 }
 
@@ -1134,7 +1146,7 @@ func (p *KeycloakProvider) provisionSPAClient(ctx context.Context, kcClient *goc
 	if existingSPAClient != nil {
 		// Update existing SPA client
 		existingSPAClient.RedirectURIs = &redirectURIs
-		existingSPAClient.WebOrigins = &[]string{"*"}
+		existingSPAClient.WebOrigins = ptr.To(p.buildWebOrigins(nebariApp))
 		existingSPAClient.PublicClient = gocloak.BoolP(true)
 		existingSPAClient.StandardFlowEnabled = gocloak.BoolP(true)
 
@@ -1155,7 +1167,7 @@ func (p *KeycloakProvider) provisionSPAClient(ctx context.Context, kcClient *goc
 			ClientID:                  gocloak.StringP(spaClientID),
 			Name:                      gocloak.StringP(fmt.Sprintf("%s SPA Client", nebariApp.Name)),
 			RedirectURIs:              &redirectURIs,
-			WebOrigins:                &[]string{"*"},
+			WebOrigins:                ptr.To(p.buildWebOrigins(nebariApp)),
 			PublicClient:              gocloak.BoolP(true),
 			StandardFlowEnabled:       gocloak.BoolP(true),
 			DirectAccessGrantsEnabled: gocloak.BoolP(false),

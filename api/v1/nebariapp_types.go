@@ -18,6 +18,7 @@ package v1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
 // NebariAppSpec defines the desired state of NebariApp
@@ -104,6 +105,15 @@ type RoutingConfig struct {
 	// Each entry uses the same RouteMatch format as routes, supporting both
 	// PathPrefix (default) and Exact matching via the pathType field.
 	// Example: [{pathPrefix: "/api/v1/health", pathType: "Exact"}]
+	//
+	// PublicRoutes is for carving out a *subset* of paths that should bypass
+	// auth while the rest stays protected. It is not a way to disable auth for
+	// the whole app: if a public path also matches the main route (including the
+	// default "/" match when routes is empty) while auth.enforceAtGateway is
+	// true, both a protected and an unprotected HTTPRoute claim that path and
+	// the effective auth posture is undefined. To turn gateway auth off entirely,
+	// set auth.enforceAtGateway: false (keep provisioning the Keycloak client) or
+	// auth.enabled: false (no client at all) instead of listing every path here.
 	// +optional
 	PublicRoutes []RouteMatch `json:"publicRoutes,omitempty"`
 
@@ -120,6 +130,27 @@ type RoutingConfig struct {
 	// annotations always take precedence to avoid breaking internal behaviour.
 	// +optional
 	Annotations map[string]string `json:"annotations,omitempty"`
+
+	// Filters are appended, in order, to every HTTPRouteRule the operator
+	// generates for this NebariApp (both the protected route and the public
+	// route built from publicRoutes). This is a pass-through to the upstream
+	// gateway.networking.k8s.io/v1 HTTPRouteFilter spec, mirroring the
+	// Annotations escape hatch: the operator does not interpret, reorder, or
+	// strip the filters, it only forwards them. Use it to adjust request or
+	// response headers at the gateway (for example, stripping an overpermissive
+	// CORS header an upstream sets, or adding security headers) without forking
+	// the operator or rebuilding the backend image.
+	//
+	// The field is schemaless in the CRD: inlining the full HTTPRouteFilter
+	// OpenAPI schema would copy its nested x-kubernetes-validations (CEL) rules
+	// into the NebariApp CRD and blow the per-CRD CEL cost budget. As a
+	// pass-through, the filters are instead validated by Gateway API when the
+	// operator applies them to the generated HTTPRoute. Each entry must still be
+	// a valid HTTPRouteFilter object (it is decoded into the typed Go struct).
+	// +optional
+	// +kubebuilder:validation:Schemaless
+	// +kubebuilder:pruning:PreserveUnknownFields
+	Filters []gatewayv1.HTTPRouteFilter `json:"filters,omitempty"`
 }
 
 // RouteMatch defines a path-based routing rule.
@@ -230,6 +261,10 @@ type AuthConfig struct {
 	// When false, the operator provisions the OIDC client and stores credentials
 	// in a Secret, but does NOT create a SecurityPolicy - the application is
 	// expected to handle OAuth natively (e.g., Grafana's built-in generic_oauth).
+	// This is the correct switch for "no gateway-level auth"; do not try to
+	// achieve that by listing every path under routing.publicRoutes, which
+	// instead produces overlapping protected and unprotected routes for the same
+	// path (see PublicRoutes).
 	// +kubebuilder:default=true
 	// +optional
 	EnforceAtGateway *bool `json:"enforceAtGateway,omitempty"`
