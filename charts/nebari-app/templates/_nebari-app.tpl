@@ -11,7 +11,7 @@
 apiVersion: reconcilers.nebari.dev/v1
 kind: NebariApp
 metadata:
-  {{- $metadata | toYaml | nindent 2 }}
+  {{- toYaml $metadata | nindent 2 }}
 spec:
-  {{- $spec | toYaml | nindent 2 }}
+  {{- toYaml $spec | nindent 2 }}
 {{- end -}}
