@@ -20,7 +20,9 @@
 {{- /* strings: expand templates */ -}}
 {{- else if kindIs "string" $value -}}
     {{- $tplValue = tpl $value $ctx -}}
-    {{- /* try parse output as JSON and use it if valid */ -}}
+    {{- /* Try parse output as JSON and use it if valid. */ -}}
+    {{- /* This is required for templates to return anything but plain strings. */ -}}
+    {{- /* At the same time we cannot hard-require JSON output, as we are also handling regular static strings without a template */ -}}
     {{- $tplValueFromJson := (printf "{\"tplValue\": %s}" $tplValue | fromJson).tplValue -}}
     {{- if $tplValueFromJson }}
         {{- $tplValue = $tplValueFromJson -}}
@@ -35,22 +37,22 @@
 {{- end -}}
 
 {{/*
- Apply tpl to all strings in a nested structure.
- 
- If any template output is valid JSON, it is automatically parsed.
+    Apply template expansion to all strings in a nested structure.
 
- Usage:
-   {{ include "nebari-app.deepTplJson" (dict "ctx" $ctx "value" $value) }}
+    If any template output is valid JSON, it is automatically parsed.
 
- Parameters:
-   - $ctx: Context for template rendering.
-   - $value: Arbitrarily nested structure.
+    Usage:
+        {{ include "nebari-app.deepTplJson" (dict "ctx" $ctx "value" $value) }}
 
- Returns:
-   JSON string of the rendered $value.
+    Parameters:
+        - $ctx: Context for template rendering.
+        - $value: Arbitrarily nested structure.
 
- Example:
-   {{ include "nebari-app.deepTplJson" (dict "ctx" . "value" .Values.config) | fromJson }}
+    Returns:
+        JSON string of the rendered $value.
+
+    Example:
+        {{ include "nebari-app.deepTplJson" (dict "ctx" . "value" .Values.config) | fromJson }}
 */}}
 {{- define "nebari-app.deepTplJson" -}}
 {{- $_ := required "ctx is required" .ctx -}}

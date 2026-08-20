@@ -1,3 +1,17 @@
+{{/*
+  Render a complete `NebariApp` custom resource.
+
+  Usage:
+    {{ include "nebari-app.nebariApp" (dict "metadata" $metadata "spec" $spec "ctx" $ctx) }}
+
+  Parameters:
+    - `$metadata`: Metadata mapping, such as name, namespace, and labels. Templates will be expanded using ebari-app.deepTplJson.
+    - `$spec`: `NebariApp` CR specification. Templates will be expanded using nebari-app.deepTplJson.
+    - `$ctx`: Optional templating context. If omitted, an empty context is used.
+
+  Returns:
+    rendered NebariApp CR.
+*/}}
 {{- define "nebari-app.nebariApp" -}}
 {{- $ctx := .ctx | default dict -}}
 {{- $metadata := include "nebari-app.deepTplJson" (dict "ctx" $ctx "value" .metadata) | fromJson -}}
