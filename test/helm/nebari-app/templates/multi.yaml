@@ -1,13 +1,14 @@
 {{- if .Values.cases.multi.enabled }}
 {{- range $app := .Values.cases.multi.apps }}
-{{- $computedService := dict "name" $app.component "port" $app.servicePort -}}
-{{- $userService := $app.nebariApp.service | default dict -}}
-{{- $service := mergeOverwrite $computedService $userService -}}
-{{- $spec := mergeOverwrite (dict "service" $service) $app.nebariApp -}}
 {{- include "fixture.nebariApp" (dict
     "top" $
     "component" $app.component
-    "spec" $spec
+    "spec" (mergeOverwrite (dict
+        "service" (dict
+          "name" $app.component
+          "port" $app.servicePort
+        )
+      ) $app.nebariApp)
 ) }}
 ---
 {{- end }}

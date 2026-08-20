@@ -78,9 +78,9 @@ cases:
         nebariApp:
           hostname: api.nebari.local
           # Consumer sets service.name, which overlaps the computed value
-          # (the component name "api"). The test template merges the computed
-          # service defaults with this nebariApp block, so "api-external"
-          # survives while the computed service.port (8000) fills the gap.
+          # (the component name "api"). mergeOverwrite gives precedence to
+          # its second argument (this nebariApp block), so "api-external"
+          # must survive while the computed service.port (8000) fills the gap.
           service:
             name: api-external
           routing:
@@ -112,11 +112,7 @@ cases:
           - '{{ "PROFILE" | lower }}'
           - email
       routing:
-        routes:
-          - pathPrefix: /
-            pathType: PathPrefix
-          - pathPrefix: /api
-            pathType: PathPrefix
+        routes: '{{ $routes := list }}{{ range (list "/" "/api") }}{{ $routes = append $routes (dict "pathPrefix" . "pathType" "PathPrefix") }}{{ end }}{{ $routes | toJson }}'
       landingPage:
         enabled: true
         displayName: "{{ .Release.Name | title }} App"
