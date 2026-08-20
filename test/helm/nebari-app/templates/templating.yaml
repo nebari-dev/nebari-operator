@@ -1,0 +1,7 @@
+{{- if .Values.cases.templating.enabled }}
+{{ include "nebari-app.nebariApp" (dict
+    "ctx"      .
+    "metadata" .Values.cases.templating.metadata
+    "spec"     .Values.cases.templating.spec
+) }}
+{{- end }}
