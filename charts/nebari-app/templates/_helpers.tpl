@@ -3,30 +3,27 @@
 {{- $value := .value -}}
 {{- $tplValue := "" -}}
 
-{{- /* maps: recursively template keys and values */ -}}
+{{- /* maps: recursively handle keys and values */ -}}
 {{- if kindIs "map" $value -}}
     {{- $tplValue = dict -}}
     {{- range $k, $v := $value -}}
-    {{- $_ := set $tplValue (tpl $k $ctx) (include "nebari-app.internal.deepTplJson" (dict "ctx" $ctx "value" $v) | fromJson).tplValue -}}
-{{- end -}}
+        {{- $_ := set $tplValue (tpl $k $ctx) (include "nebari-app.internal.deepTplJson" (dict "ctx" $ctx "value" $v) | fromJson).tplValue -}}
+    {{- end -}}
 
-{{- /* slices: recursively template elements */ -}}
+{{- /* slices: recursively handle elements */ -}}
 {{- else if kindIs "slice" $value -}}
     {{- $tplValue = list -}}
     {{- range $v := $value -}}
-    {{- $tplValue = append $tplValue (include "nebari-app.internal.deepTplJson" (dict "ctx" $ctx "value" $v) | fromJson).tplValue -}}
-{{- end -}}
+        {{- $tplValue = append $tplValue (include "nebari-app.internal.deepTplJson" (dict "ctx" $ctx "value" $v) | fromJson).tplValue -}}
+    {{- end -}}
 
-{{- /* strings: expand templates */ -}}
-{{- else if kindIs "string" $value -}}
-    {{- $tplValue = tpl $value $ctx -}}
-    {{- /* Try parse output as JSON and use it if valid. */ -}}
-    {{- /* This is required for templates to return anything but plain strings. */ -}}
-    {{- /* At the same time we cannot hard-require JSON output, as we are also handling regular static strings without a template */ -}}
-    {{- $tplValueFromJson := (printf "{\"tplValue\": %s}" $tplValue | fromJson).tplValue -}}
-    {{- if $tplValueFromJson }}
-        {{- $tplValue = $tplValueFromJson -}}
-{{- end -}}
+{{- /* templates: render */ -}}
+{{- else if and (kindIs "string" $value) (contains "{{" $value) -}}
+    {{- $probe := printf "{\"ok\": true, \"tplValue\": %s}" (tpl $value $ctx) | fromJson -}}
+    {{- if (not $probe.ok) }}
+        {{- fail (printf "rendering the template %s does not result in valid JSON" ($value | quote)) -}}
+    {{- end -}}
+    {{- $tplValue = $probe.tplValue -}}
 
 {{- /* any other type: return as-is */ -}}
 {{- else -}}
@@ -39,7 +36,7 @@
 {{/*
     Apply template expansion to all strings in a nested structure.
 
-    If any template output is valid JSON, it is automatically parsed.
+    Template expressions must render to valid JSON.
 
     Usage:
         {{ include "nebari-app.deepTplJson" (dict "ctx" $ctx "value" $value) }}

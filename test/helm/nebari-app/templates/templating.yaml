@@ -1,6 +1,6 @@
 {{- if .Values.cases.templating.enabled }}
 {{ include "nebari-app.nebariApp" (dict
-    "ctx"      .
+    "tplCtx"   .
     "metadata" .Values.cases.templating.metadata
     "spec"     .Values.cases.templating.spec
 ) }}

@@ -6,7 +6,7 @@ metadata:
   labels:
     app.kubernetes.io/instance: t
     app.kubernetes.io/name: t
-    app.kubernetes.io/version: 1
+    app.kubernetes.io/version: "1.0"
   name: test-t-app
   namespace: default
 spec:
@@ -29,7 +29,7 @@ spec:
     healthCheck:
       enabled: true
       path: /health
-    priority: 1
+    priority: 0
   routing:
     routes:
     - pathPrefix: /

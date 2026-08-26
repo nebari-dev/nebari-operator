@@ -40,33 +40,22 @@ Renders a complete `NebariApp` custom resource.
 #### Usage
 
 ```yaml
-{{ include "nebari-app.nebariApp" (dict "metadata" $metadata "spec" $spec "ctx" $ctx) }}
+{{ include "nebari-app.nebariApp" (dict "metadata" $metadata "spec" $spec "tplCtx" $tplCtx) }}
 ```
 
 #### Parameters
 
-- `$metadata`: Metadata mapping, such as name, namespace, and labels. Templates will be expanded using [`nebari-app.deepTplJson`](#nebari-appdeeptpljson).
-- `$spec`: `NebariApp` CR specification. Templates will be expanded using [`nebari-app.deepTplJson`](#nebari-appdeeptpljson).
-- `$ctx`: Optional templating context. If omitted, an empty context is used.
+- `$metadata`: Metadata mapping, such as name, namespace, and labels. Templates will be expanded using [`nebari-app.deepTplJson`](#nebari-appdeeptpljson) if `$tplCtx` is passed..
+- `$spec`: `NebariApp` CR specification. Templates will be expanded using [`nebari-app.deepTplJson`](#nebari-appdeeptpljson) if `$tplCtx` is passed.
+- `$tplCtx`: Optional templating context. If omitted, no templating is applied.
 
 #### Required fields
 
-The template enforces the presence of the following fields
-
-- `$metadata.name`
-- `$spec.hostname`
-- `$spec.service.name`
-- `$spec.service.port`
-
-as well as additionally the validity if the following fields
-
-- `$spec.service.port`
-
-All other validation (the rest of the `NebariAppSpec` schema) happens API-server-side at apply time. To catch schema errors before deployment, pipe `helm template` output through `kubectl apply --dry-run=server -f -`. This requires a cluster with the NebariApp CRD installed.
+The template enforces the presence of `$metadata.name`, `$spec.hostname`, `$spec.service.name`, and `$spec.service.port`, and rejects a port below 1. All other validation (the rest of the `NebariAppSpec` schema) happens API-server-side at apply time. To catch schema errors before deployment, pipe `helm template` output through `kubectl apply --dry-run=server -f -`. This requires a cluster with the NebariApp CRD installed.
 
 #### Dynamic defaults
 
-The template uses `nebari-app.deepTplJson` internally to render both `$metadata` and `$spec`. This means you can embed template expressions directly in your values, and they will be expanded at render time:
+If `tplCtx` is provided, the template uses `nebari-app.deepTplJson` internally to render both `$metadata` and `$spec`. This means you can embed template expressions directly in your values, and they will be expanded at render time:
 
 ```yaml
 # values.yaml
@@ -74,9 +63,9 @@ service:
   port: 80
 
 nebariApp:
-  hostname: "{{ printf "%s.example.com" .Release.Name }}"
+  hostname: '{{ printf "%s.example.com" .Release.Name }}'
   service:
-    name: "{{ printf "%s-service" .Release.Name }}"
+    name: '{{ printf "%s-service" .Release.Name }}Ä
     port: "{{ .Values.service.port }}"
 ```
 
@@ -89,7 +78,7 @@ nebariApp:
       "labels"    (dict "app.kubernetes.io/name" .Chart.Name)
     )
     "spec" .Values.nebariApp
-    "ctx"  .
+    "tplCtx"  .
 ) }}
 ```
 
@@ -123,7 +112,7 @@ The Nebari operator only reconciles `NebariApp` resources whose target namespace
 
 ### nebari-app.deepTplJson
 
-Apply template expansion to all strings in a nested structure, automatically parsing JSON outputs. This is useful for embedding dynamic values (computed at render time) directly in your values, eliminating the need for manual merging patterns.
+Apply template expansion to all strings in a nested structure. Template expressions must render to valid JSON; otherwise the template fails. Valid JSON outputs (objects, arrays, numbers, booleans, null) are automatically parsed and used as their native Go equivalents. This is useful for embedding dynamic values (computed at render time) directly in your values, eliminating the need for manual merging patterns.
 
 #### Usage
 
@@ -140,7 +129,8 @@ Apply template expansion to all strings in a nested structure, automatically par
 
 - Recursively traverses maps and slices
 - Applies `tpl` to all strings
-- If a template output is valid JSON, parses it and uses the parsed value
+- Template expressions must render to valid JSON; otherwise the template fails
+- Valid JSON outputs (objects, arrays, numbers, booleans, null) are automatically parsed and used as native Go equivalents
 - Returns JSON string of the fully rendered structure
 
 #### Example

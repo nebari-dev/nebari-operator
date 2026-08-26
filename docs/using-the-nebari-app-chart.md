@@ -83,10 +83,22 @@ Add one manifest that calls the library template, passing `metadata` and the `sp
       "labels"    (dict "app.kubernetes.io/name" .Chart.Name)
     )
     "spec" .Values.nebariApp
+    "tplCtx"  .
 ) }}
 ```
 
 The template **aborts the render** if any required field is missing or empty: `metadata.name`, `spec.hostname`, `spec.service.name`, `spec.service.port` (and rejects `port < 1`). Everything else in the spec is validated API-server-side at apply time.
+
+**Templating in values.** If you pass `tplCtx` (typically `.`), the template expands any string containing `{{ ... }}` using Helm's `tpl` function. This lets you embed dynamic values directly in `values.yaml`:
+
+```yaml
+# values.yaml
+nebariApp:
+  hostname: '{{ printf "%s.example.com" .Release.Name }}'
+  service:
+    name: '{{ printf "%s-service" .Release.Name }}'
+    port: 8080
+```
 
 > Shipping the workload too? Add your `Deployment` and `Service` as normal templates in the same chart. The `service.name`/`service.port` in the spec must match that `Service`. See the `basic-nginx` example in `software-pack-template` for a chart that bundles both.
 
