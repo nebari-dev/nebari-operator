@@ -29,7 +29,7 @@ then run `helm dependency build`.
 | Template | Description |
 |----------|-------------|
 | [`nebari-app.nebariApp`](#nebari-appnebariapp) | Renders a complete `NebariApp` resource from `metadata` and `spec` dicts |
-| [`nebari-app.deepTplJson`](#nebari-appdeeptpljson) | Applies template expansion to all strings in a nested structure, automatically parsing JSON outputs |
+| [`nebari-app.deepTplJson`](#nebari-appdeeptpljson) | Applies template expansion to every string containing `{{ ... }}` in a nested structure, parsing each rendered result as JSON |
 
 > New here? For a step-by-step, end-to-end walkthrough (dependency → values → template → apply → verify), start with [Onboarding an app with the nebari-app Helm chart](../../docs/using-the-nebari-app-chart.md). This README is the reference for the template contracts.
 
@@ -45,7 +45,7 @@ Renders a complete `NebariApp` custom resource.
 
 #### Parameters
 
-- `$metadata`: Metadata mapping, such as name, namespace, and labels. Templates will be expanded using [`nebari-app.deepTplJson`](#nebari-appdeeptpljson) if `$tplCtx` is passed..
+- `$metadata`: Metadata mapping, such as name, namespace, and labels. Templates will be expanded using [`nebari-app.deepTplJson`](#nebari-appdeeptpljson) if `$tplCtx` is passed.
 - `$spec`: `NebariApp` CR specification. Templates will be expanded using [`nebari-app.deepTplJson`](#nebari-appdeeptpljson) if `$tplCtx` is passed.
 - `$tplCtx`: Optional templating context. If omitted, no templating is applied.
 
@@ -55,7 +55,7 @@ The template enforces the presence of `$metadata.name`, `$spec.hostname`, `$spec
 
 #### Dynamic defaults
 
-If `tplCtx` is provided, the template uses `nebari-app.deepTplJson` internally to render both `$metadata` and `$spec`. This means you can embed template expressions directly in your values, and they will be expanded at render time:
+If `tplCtx` is provided, the template uses `nebari-app.deepTplJson` internally to render both `$metadata` and `$spec`. Any string containing `{{ ... }}` is expanded and **its result must be valid JSON**, which is then parsed and used as its native type. Pipe string results through `| toJson`. Without it, a result that happens to parse as JSON is silently retyped, so `'{{ .Chart.AppVersion }}'` with `appVersion: "1.0"` becomes the number `1`, which the API server rejects as a label value. Strings with no `{{ ... }}` are left untouched and keep their original type.
 
 ```yaml
 # values.yaml
@@ -63,9 +63,9 @@ service:
   port: 80
 
 nebariApp:
-  hostname: '{{ printf "%s.example.com" .Release.Name }}'
+  hostname: '{{ printf "%s.example.com" .Release.Name | toJson }}'
   service:
-    name: '{{ printf "%s-service" .Release.Name }}Ä
+    name: '{{ printf "%s-service" .Release.Name | toJson }}'
     port: "{{ .Values.service.port }}"
 ```
 
@@ -112,7 +112,7 @@ The Nebari operator only reconciles `NebariApp` resources whose target namespace
 
 ### nebari-app.deepTplJson
 
-Apply template expansion to all strings in a nested structure. Template expressions must render to valid JSON; otherwise the template fails. Valid JSON outputs (objects, arrays, numbers, booleans, null) are automatically parsed and used as their native Go equivalents. This is useful for embedding dynamic values (computed at render time) directly in your values, eliminating the need for manual merging patterns.
+Apply template expansion to every string containing `{{ ... }}` in a nested structure. Each template must render to valid JSON; otherwise the render aborts. The rendered JSON is parsed and used as its native Go type. Strings with no template are left untouched and keep their original type. This is useful for embedding dynamic values (computed at render time) directly in your values, eliminating the need for manual merging patterns.
 
 #### Usage
 
@@ -128,9 +128,10 @@ Apply template expansion to all strings in a nested structure. Template expressi
 #### Behavior
 
 - Recursively traverses maps and slices
-- Applies `tpl` to all strings
-- Template expressions must render to valid JSON; otherwise the template fails
-- Valid JSON outputs (objects, arrays, numbers, booleans, null) are automatically parsed and used as native Go equivalents
+- Map keys are always rendered with `tpl` and used as strings
+- `tpl` is applied to a value only if it is a string containing `{{ ... }}`; strings without a template are left untouched and keep their original type
+- A templated value must render to valid JSON, otherwise the render aborts
+- The rendered JSON is parsed and used as its native Go type (object, array, number, boolean, null, string)
 - Returns JSON string of the fully rendered structure
 
 #### Example
