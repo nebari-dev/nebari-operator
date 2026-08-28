@@ -15,9 +15,9 @@ spec:
     provisionClient: true
     redirectURI: /*
     scopes:
-    - openid
-    - profile
-    - email
+      - openid
+      - profile
+      - email
   hostname: static.nebari.local
   landingPage:
     category: misc
@@ -30,8 +30,8 @@ spec:
     priority: 1
   routing:
     routes:
-    - pathPrefix: /
-      pathType: PathPrefix
+      - pathPrefix: /
+        pathType: PathPrefix
   service:
     name: static-svc
     port: 80

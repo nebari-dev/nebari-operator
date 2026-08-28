@@ -17,9 +17,9 @@ spec:
     provisionClient: true
     redirectURI: /*
     scopes:
-    - openid
-    - profile
-    - email
+      - openid
+      - profile
+      - email
   hostname: t.nebari.local
   landingPage:
     category: testing
@@ -32,10 +32,10 @@ spec:
     priority: 0
   routing:
     routes:
-    - pathPrefix: /
-      pathType: PathPrefix
-    - pathPrefix: /api
-      pathType: PathPrefix
+      - pathPrefix: /
+        pathType: PathPrefix
+      - pathPrefix: /api
+        pathType: PathPrefix
   service:
     name: svc-t
     port: 1

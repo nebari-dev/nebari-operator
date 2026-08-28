@@ -16,9 +16,9 @@ spec:
     provisionClient: true
     redirectURI: /*
     scopes:
-    - openid
-    - profile
-    - email
+      - openid
+      - profile
+      - email
   hostname: chat.nebari.local
   landingPage:
     category: AI
@@ -31,8 +31,8 @@ spec:
     priority: 1
   routing:
     routes:
-    - pathPrefix: /
-      pathType: PathPrefix
+      - pathPrefix: /
+        pathType: PathPrefix
   service:
     name: frontend
     port: 80
@@ -50,8 +50,8 @@ spec:
   hostname: api.nebari.local
   routing:
     routes:
-    - pathPrefix: /
-      pathType: PathPrefix
+      - pathPrefix: /
+        pathType: PathPrefix
   service:
     name: api-external
     port: 8000
