@@ -19,11 +19,15 @@
 
 {{- /* templates: render */ -}}
 {{- else if and (kindIs "string" $value) (contains "{{" $value) -}}
-    {{- $probe := printf "{\"ok\": true, \"tplValue\": %s}" (tpl $value $ctx) | fromJson -}}
-    {{- if (not $probe.ok) }}
-        {{- fail (printf "rendering the template %s does not result in valid JSON" ($value | quote)) -}}
+    {{- $renderResult := tpl $value $ctx -}}
+    {{- /* The fromJson function requires the output to be JSON object so we need to wrap the output, which can be any valid JSON. */ -}}
+    {{- $parseResult := printf "{\"tplValue\": %s}" (tpl $value $ctx) | fromJson -}}
+    {{- if $parseResult.Error }}
+        {{- /* $parseResult.Error holds the actual parser error message. */ -}}
+        {{- /* We do not include it, because it might be misleading since it might point to the outer object the user doesn't know about. */ -}}
+        {{- fail (printf "template %s was rendered into %s, which is not valid JSON" ($value | quote) ($renderResult | quote)) -}}
     {{- end -}}
-    {{- $tplValue = $probe.tplValue -}}
+    {{- $tplValue = $parseResult.tplValue -}}
 
 {{- /* any other type: return as-is */ -}}
 {{- else -}}
