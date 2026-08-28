@@ -13,15 +13,16 @@
     rendered NebariApp CR.
 */}}
 {{- define "nebari-app.nebariApp" -}}
+
 {{- /* Template first, then validate: a non-empty template can expand to an empty value, so checking the raw input would pass where the rendered output should fail. */ -}}
 {{- $metadata := .metadata -}}
-{{- if .tplCtx -}}
+{{- if hasKey . "tplCtx" -}}
   {{- $metadata = include "nebari-app.deepTplJson" (dict "ctx" .tplCtx "value" $metadata) | fromJson -}}
 {{- end -}}
 {{- $_ := required "metadata.name is required" $metadata.name -}}
 
 {{- $spec := .spec -}}
-{{- if .tplCtx -}}
+{{- if hasKey . "tplCtx" -}}
   {{- $spec = include "nebari-app.deepTplJson" (dict "ctx" .tplCtx "value" $spec) | fromJson -}}
 {{- end -}}
 {{- $_ := required "spec.hostname is required" $spec.hostname -}}
@@ -36,4 +37,5 @@ metadata:
   {{- toYaml $metadata | nindent 2 }}
 spec:
   {{- toYaml $spec | nindent 2 }}
+
 {{- end }}
