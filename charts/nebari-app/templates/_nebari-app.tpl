@@ -5,7 +5,7 @@
     {{ include "nebari-app.nebariApp" (dict "metadata" $metadata "spec" $spec "tplCtx" $tplCtx) }}
 
   Parameters:
-    - `$metadata`: Metadata mapping, such as name, namespace, and labels. Templates will be expanded using nebari-app.deepTplJson if $tplCtx is passed.
+    - `$metadata`: Metadata mapping, such as name, namespace, and labels.
     - `$spec`: `NebariApp` CR specification. Templates will be expanded using nebari-app.deepTplJson if $tplCtx is passed.
     - `$tplCtx`: Optional templating context. If omitted, no templating is applied.
 
@@ -14,14 +14,11 @@
 */}}
 {{- define "nebari-app.nebariApp" -}}
 
-{{- /* Template first, then validate: a non-empty template can expand to an empty value, so checking the raw input would pass where the rendered output should fail. */ -}}
 {{- $metadata := .metadata -}}
-{{- if hasKey . "tplCtx" -}}
-  {{- $metadata = include "nebari-app.deepTplJson" (dict "ctx" .tplCtx "value" $metadata) | fromJson -}}
-{{- end -}}
 {{- $_ := required "metadata.name is required" $metadata.name -}}
 
 {{- $spec := .spec -}}
+{{- /* Template first, then validate: a non-empty template can expand to an empty value, so checking the raw input would pass where the rendered output should fail. */ -}}
 {{- if hasKey . "tplCtx" -}}
   {{- $spec = include "nebari-app.deepTplJson" (dict "ctx" .tplCtx "value" $spec) | fromJson -}}
 {{- end -}}

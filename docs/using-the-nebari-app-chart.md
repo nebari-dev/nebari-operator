@@ -89,7 +89,7 @@ Add one manifest that calls the library template, passing `metadata` and the `sp
 
 The template **aborts the render** if any required field is missing or empty: `metadata.name`, `spec.hostname`, `spec.service.name`, `spec.service.port` (and rejects `port < 1`). Everything else in the spec is validated API-server-side at apply time.
 
-**Templating in values.** If you pass `tplCtx` (typically `.`), the template expands any string containing `{{ ... }}` using Helm's `tpl` function. Each expression **must render to valid JSON**, so string results need `| toJson`; the rendered JSON is parsed and used as its native type. This lets you embed dynamic values directly in `values.yaml`:
+**Templating in values.** If you pass `tplCtx` (typically `.`), the template expands any string in `spec` containing `{{ ... }}` using Helm's `tpl` function. Each expression **must render to valid JSON**, so string results need `| toJson`; the rendered JSON is parsed and used as its native type. This lets you embed dynamic values directly in `values.yaml`:
 
 ```yaml
 # values.yaml

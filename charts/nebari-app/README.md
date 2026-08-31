@@ -45,7 +45,7 @@ Renders a complete `NebariApp` custom resource.
 
 #### Parameters
 
-- `$metadata`: Metadata mapping, such as name, namespace, and labels. Templates will be expanded using [`nebari-app.deepTplJson`](#nebari-appdeeptpljson) if `$tplCtx` is passed.
+- `$metadata`: Metadata mapping, such as name, namespace, and labels. This is used as-is; no templating is applied to metadata by this template.
 - `$spec`: `NebariApp` CR specification. Templates will be expanded using [`nebari-app.deepTplJson`](#nebari-appdeeptpljson) if `$tplCtx` is passed.
 - `$tplCtx`: Optional templating context. If omitted, no templating is applied.
 
@@ -55,7 +55,7 @@ The template enforces the presence of `$metadata.name`, `$spec.hostname`, `$spec
 
 #### Dynamic defaults
 
-If `tplCtx` is provided, the template uses `nebari-app.deepTplJson` internally to render both `$metadata` and `$spec`. Any string containing `{{ ... }}` is expanded and **its result must be valid JSON**, which is then parsed and used as its native type. Pipe string results through `| toJson`. Without it, a result that happens to parse as JSON is silently retyped, so `'{{ .Chart.AppVersion }}'` with `appVersion: "1.0"` becomes the number `1`, which the API server rejects as a label value. Strings with no `{{ ... }}` are left untouched and keep their original type.
+If `tplCtx` is provided, the template uses `nebari-app.deepTplJson` internally to render `$spec`. Any string containing `{{ ... }}` is expanded and **its result must be valid JSON**, which is then parsed and used as its native type. Pipe string results through `| toJson`. Without it, a result that happens to parse as JSON is silently retyped, so `'{{ .Chart.AppVersion }}'` with `appVersion: "1.0"` becomes the number `1`, which the API server rejects as a label value. Strings with no `{{ ... }}` are left untouched and keep their original type.
 
 ```yaml
 # values.yaml

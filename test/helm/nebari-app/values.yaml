@@ -87,10 +87,10 @@ cases:
   templating:
     enabled: false
     metadata:
-      name: '{{ printf "test-%s-app" .Release.Name | toJson }}'
+      name: test-templating-app
       namespace: default
       labels:
-        app.kubernetes.io/name: "{{ .Release.Name | toJson }}"
+        app.kubernetes.io/name: test-templating-app
         app.kubernetes.io/version: "1.0"
         app.kubernetes.io/instance: t
     spec:

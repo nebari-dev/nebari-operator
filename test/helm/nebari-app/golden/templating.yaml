@@ -5,9 +5,9 @@ kind: NebariApp
 metadata:
   labels:
     app.kubernetes.io/instance: t
-    app.kubernetes.io/name: t
+    app.kubernetes.io/name: test-templating-app
     app.kubernetes.io/version: "1.0"
-  name: test-t-app
+  name: test-templating-app
   namespace: default
 spec:
   auth:
