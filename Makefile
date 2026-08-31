@@ -222,9 +222,9 @@ helm-lint: helm-lint-library ## Lint the helm charts
 .PHONY: helm-test-generate-golden
 helm-test-generate-golden: ## Generate golden files for nebari-app chart tests.
 	@command -v helm >/dev/null 2>&1 || { echo >&2 "helm is required but not installed. See https://helm.sh/docs/intro/install/"; exit 1; }
-	helm dependency build test/helm/nebari-app >/dev/null
+	helm dependency build --skip-refresh test/helm/nebari-app >/dev/null
 	mkdir -p test/helm/nebari-app/golden
-	@for c in minimal static multi; do \
+	@for c in minimal static multi templating; do \
 		helm template t test/helm/nebari-app --set cases.$$c.enabled=true > test/helm/nebari-app/golden/$$c.yaml; \
 		echo "  case $$c: golden written"; \
 	done
@@ -233,9 +233,9 @@ helm-test-generate-golden: ## Generate golden files for nebari-app chart tests.
 .PHONY: helm-test
 helm-test: helm-lint-library ## Render the nebari-app library chart for all cases and verify against golden files.
 	@command -v helm >/dev/null 2>&1 || { echo >&2 "helm is required but not installed. See https://helm.sh/docs/intro/install/"; exit 1; }
-	helm dependency build test/helm/nebari-app >/dev/null
+	helm dependency build --skip-refresh test/helm/nebari-app >/dev/null
 	@workdir=$$(mktemp -d); \
-	for c in minimal static multi; do \
+	for c in minimal static multi templating; do \
 		helm template t test/helm/nebari-app --set cases.$$c.enabled=true > $$workdir/$$c.yaml; \
 		diff -q test/helm/nebari-app/golden/$$c.yaml $$workdir/$$c.yaml >/dev/null \
 			|| { echo >&2 "case $$c: golden mismatch"; diff test/helm/nebari-app/golden/$$c.yaml $$workdir/$$c.yaml; rm -rf $$workdir; exit 1; }; \

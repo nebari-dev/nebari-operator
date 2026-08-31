@@ -1,11 +1,13 @@
 ---
-# Source: fixture/templates/static.yaml
+# Source: fixture/templates/templating.yaml
 apiVersion: reconcilers.nebari.dev/v1
 kind: NebariApp
 metadata:
   labels:
-    app.kubernetes.io/name: static-app
-  name: static-app
+    app.kubernetes.io/instance: t
+    app.kubernetes.io/name: test-templating-app
+    app.kubernetes.io/version: "1.0"
+  name: test-templating-app
   namespace: default
 spec:
   auth:
@@ -18,20 +20,22 @@ spec:
       - openid
       - profile
       - email
-  hostname: static.nebari.local
+  hostname: t.nebari.local
   landingPage:
-    category: misc
-    description: Static fixture app
-    displayName: Static
+    category: testing
+    description: App for t
+    displayName: T App
     enabled: true
     healthCheck:
       enabled: true
       path: /health
-    priority: 1
+    priority: 0
   routing:
     routes:
       - pathPrefix: /
         pathType: PathPrefix
+      - pathPrefix: /api
+        pathType: PathPrefix
   service:
-    name: static-svc
-    port: 80
+    name: svc-t
+    port: 1

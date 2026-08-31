@@ -2,14 +2,14 @@
 
 This is a task-oriented walkthrough: it takes you from an empty chart to a running, operator-managed app using the [`nebari-app`](../charts/nebari-app) library chart. It packages the same `NebariApp` resource you write by hand in the [Quick Start](quickstart.md), so it is reusable, versioned, and shippable as a Nebari Software Pack.
 
-- For the **template contract and every option** (required fields, `mergeOverwrite`, multiple apps per chart), see the chart's own [`charts/nebari-app/README.md`](../charts/nebari-app/README.md).
+- For the **template contract and every option** (required fields, multiple apps per chart), see the chart's own [`charts/nebari-app/README.md`](../charts/nebari-app/README.md).
 - For **complete, copy-me examples** in several styles (raw YAML, Helm, Kustomize, wrapping an existing chart), see [`nebari-dev/software-pack-template`](https://github.com/nebari-dev/software-pack-template).
 
 This page is the connective tissue between those two: the end-to-end path, in order.
 
 ## What the chart is
 
-`nebari-app` is a Helm **library** chart. It is not installable on its own — it exposes one named template, `nebari-app.nebariApp`, that renders a `NebariApp` custom resource from a `metadata` dict and a `spec` dict. You consume it as a dependency of *your* chart (a "Software Pack") and call the template from your own manifest.
+`nebari-app` is a Helm **library** chart. It is not installable on its own — it exposes two named templates: `nebari-app.nebariApp`, which renders a `NebariApp` custom resource from a `metadata` dict and a `spec` dict, and `nebari-app.deepTplJson`, which expands templates inside those dicts. You consume the chart as a dependency of *your* chart (a "Software Pack") and call the template from your own manifest.
 
 Everything the operator does for the app — routing, TLS, SSO, landing-page registration — is driven by the `spec` you pass. The chart is a thin, validated wrapper around that one resource.
 
@@ -83,10 +83,22 @@ Add one manifest that calls the library template, passing `metadata` and the `sp
       "labels"    (dict "app.kubernetes.io/name" .Chart.Name)
     )
     "spec" .Values.nebariApp
+    "tplCtx"  .
 ) }}
 ```
 
 The template **aborts the render** if any required field is missing or empty: `metadata.name`, `spec.hostname`, `spec.service.name`, `spec.service.port` (and rejects `port < 1`). Everything else in the spec is validated API-server-side at apply time.
+
+**Templating in values.** If you pass `tplCtx` (typically `.`), the template expands any string in `spec` containing `{{ ... }}` using Helm's `tpl` function. Each expression **must render to valid JSON**, so string results need `| toJson`; the rendered JSON is parsed and used as its native type. This lets you embed dynamic values directly in `values.yaml`:
+
+```yaml
+# values.yaml
+nebariApp:
+  hostname: '{{ printf "%s.example.com" .Release.Name | toJson }}'
+  service:
+    name: '{{ printf "%s-service" .Release.Name | toJson }}'
+    port: 8080
+```
 
 > Shipping the workload too? Add your `Deployment` and `Service` as normal templates in the same chart. The `service.name`/`service.port` in the spec must match that `Service`. See the `basic-nginx` example in `software-pack-template` for a chart that bundles both.
 
@@ -143,7 +155,7 @@ kubectl get httproute -n my-namespace
 
 ## Where to go next
 
-- [`charts/nebari-app/README.md`](../charts/nebari-app/README.md) — the full template contract: `mergeOverwrite` for computed service values, emitting multiple `NebariApp`s from one chart, and the exact required-field list.
+- [`charts/nebari-app/README.md`](../charts/nebari-app/README.md) — the full template contract: emitting multiple `NebariApp`s from one chart, and the exact required-field list.
 - [docs/configuration-reference.md](configuration-reference.md) — every `spec` field with examples.
 - [docs/api-reference.md](api-reference.md) — the generated CRD reference.
 - [`nebari-dev/software-pack-template`](https://github.com/nebari-dev/software-pack-template) — complete runnable Software Packs to copy from.

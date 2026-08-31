@@ -45,45 +45,77 @@ cases:
           path: /health
   multi:
     enabled: false
-    apps:
-      - component: frontend
-        servicePort: 80
-        nebariApp:
-          hostname: chat.nebari.local
-          auth:
+    frontend:
+      nebariApp:
+        hostname: chat.nebari.local
+        service:
+          name: frontend
+          port: 80
+        auth:
+          enabled: true
+          provider: keycloak
+          provisionClient: true
+          enforceAtGateway: false
+          redirectURI: /*
+          scopes:
+            - openid
+            - profile
+            - email
+        routing:
+          routes:
+            - pathPrefix: /
+              pathType: PathPrefix
+        landingPage:
+          enabled: true
+          displayName: Chat
+          description: Chat with AI models
+          category: AI
+          priority: 1
+          healthCheck:
             enabled: true
-            provider: keycloak
-            provisionClient: true
-            enforceAtGateway: false
-            redirectURI: /*
-            scopes:
-              - openid
-              - profile
-              - email
-          routing:
-            routes:
-              - pathPrefix: /
-                pathType: PathPrefix
-          landingPage:
-            enabled: true
-            displayName: Chat
-            description: Chat with AI models
-            category: AI
-            priority: 1
-            healthCheck:
-              enabled: true
-              path: /health
-      - component: api
-        servicePort: 8000
-        nebariApp:
-          hostname: api.nebari.local
-          # Consumer sets service.name, which overlaps the computed value
-          # (the component name "api"). mergeOverwrite gives precedence to
-          # its second argument (this nebariApp block), so "api-external"
-          # must survive while the computed service.port (8000) fills the gap.
-          service:
-            name: api-external
-          routing:
-            routes:
-              - pathPrefix: /
-                pathType: PathPrefix
+            path: /health
+    api:
+      nebariApp:
+        hostname: api.nebari.local
+        service:
+          name: api-external
+          port: 8000
+        routing:
+          routes:
+            - pathPrefix: /
+              pathType: PathPrefix
+  templating:
+    enabled: false
+    metadata:
+      name: test-templating-app
+      namespace: default
+      labels:
+        app.kubernetes.io/name: test-templating-app
+        app.kubernetes.io/version: "1.0"
+        app.kubernetes.io/instance: t
+    spec:
+      hostname: '{{ printf "%s.nebari.local" .Release.Name | toJson }}'
+      service:
+        name: '{{ printf "svc-%s" .Release.Name | toJson }}'
+        port: '{{ .Values.cases.minimal.spec.service.port }}'
+      auth:
+        enabled: true
+        provider: keycloak
+        provisionClient: true
+        enforceAtGateway: '{{ false }}'
+        redirectURI: /*
+        scopes:
+          - openid
+          - '{{ "PROFILE" | lower | toJson }}'
+          - email
+      routing:
+        routes: '{{ $routes := list }}{{ range (list "/" "/api") }}{{ $routes = append $routes (dict "pathPrefix" . "pathType" "PathPrefix") }}{{ end }}{{ $routes | toJson }}'
+      landingPage:
+        enabled: true
+        displayName: '{{ printf "%s App" (.Release.Name | title) | toJson }}'
+        description: '{{ printf "App for %s" .Release.Name | toJson }}'
+        category: testing
+        priority: '{{ 0 }}'
+        healthCheck:
+          enabled: true
+          path: /health
