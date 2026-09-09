@@ -88,13 +88,18 @@ const (
 	// This matches the service created by codecentric/keycloakx Helm chart
 	DefaultKeycloakServiceName = "keycloak-keycloakx-http"
 
-	// DefaultKeycloakServicePort is the HTTP port for Keycloak service
-	DefaultKeycloakServicePort = 8080
+	// DefaultKeycloakServicePort is the HTTP port for the Keycloak service.
+	// The codecentric/keycloakx chart (DefaultKeycloakServiceName) exposes HTTP
+	// on port 80, not 8080. Override with KEYCLOAK_ISSUER_SERVICE_PORT for
+	// deployments that publish a different port.
+	DefaultKeycloakServicePort = 80
 
 	// DefaultKeycloakContextPath is the HTTP context path for Keycloak.
-	// Empty string means root path, which is the default for Keycloak 26+.
-	// Set KEYCLOAK_ISSUER_CONTEXT_PATH="/auth" for older Keycloak versions.
-	DefaultKeycloakContextPath = ""
+	// The codecentric/keycloakx chart serves the realm under "/auth" (its
+	// http.relativePath default, which dev/scripts also set explicitly). A
+	// SecurityPolicy issuer without this prefix 404s OIDC discovery. Override
+	// with KEYCLOAK_ISSUER_CONTEXT_PATH="" for a root-path Keycloak deployment.
+	DefaultKeycloakContextPath = "/auth"
 )
 
 // Secret keys
