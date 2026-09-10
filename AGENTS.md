@@ -29,7 +29,7 @@ It is part of **Nebari Infrastructure Core (NIC)**. The sibling repository [`neb
 
 The operator is the producer of one contract — the `NebariApp` custom resource. Any Helm chart that includes it among its manifests and configuration is called a ["Software Pack"](https://github.com/nebari-dev/software-pack-template#what-is-a-nebari-software-pack). Below are a few software packs that consume the `NebariApp` CRD — the best place to see it used in anger:
 
-- **[`software-pack-template`](https://github.com/nebari-dev/software-pack-template)** — the canonical example collection. Shows the same app onboarded via raw YAML, a Helm chart, Kustomize (base + dev/production overlays), and wrapping an existing chart, plus a standalone `docs/nebariapp-crd-reference.md`. Start here when you need a worked example of any field.
+- **[`software-pack-template`](https://github.com/nebari-dev/software-pack-template)** — the canonical example collection. Shows the same app onboarded via raw YAML, a Helm chart, Kustomize (base + dev/production overlays), and wrapping an existing chart, Start here when you need a worked example of any field. Its former standalone `docs/nebariapp-crd-reference.md` is superseded by [`docs/pack-specification.md`](docs/pack-specification.md) and the generated [`docs/api-reference.md`](docs/api-reference.md) in this repository.
 - **[`data-science-pack`](https://github.com/nebari-dev/data-science-pack)** — a live consumer (multi-user JupyterHub). Ships a `templates/nebariapp.yaml` and an integration guide under `docs/`.
 - **[`nebi-pack`](https://github.com/nebari-dev/nebi-pack)** — a live consumer (team Pixi-environment management, Keycloak SSO + PostgreSQL). Ships a `templates/nebariapp.yaml`.
 
@@ -271,8 +271,8 @@ CI (`build-pr.yml`) runs the unit, e2e, and chart suites on every PR. **Never di
 
 **Authoritative context — consult before changing the area it covers:**
 
-- **`docs/decisions/`** — ADR-style records of choices already made, and why. Currently `2026-03-05-webapi-extracted-to-nebari-landing.md` (why the web API moved out to nebari-landing). Don't re-litigate a decision recorded here without amending it.
-- **`docs/design/`** — living design docs and cross-component contracts: `auth-app-contract.md`, `epic-routing-securitypolicy.md`, `landing-page.md`, `user-workloads-discovery.md`, `user-workloads-discovery-contract.md`. Read the matching one before touching auth, routing, landing-page, or service discovery — these define the contract the reconcilers implement.
+- **`docs/decisions/`** — ADR-style records of choices already made, and why. Currently `2026-03-05-webapi-extracted-to-nebari-landing.md` (why the web API moved out to nebari-landing), `2026-08-10-library-helm-chart-added.md`, and `2026-08-14-adopt-effver.md` (the versioning convention). Don't re-litigate a decision recorded here without amending it.
+- **`docs/pack-specification.md`** — the normative contract between the platform and a software pack: registration, routing, auth, TLS, the security baseline, and how the contract is versioned. Read it before changing anything in `api/v1/`, since a field change is a contract change. Requirements in it are governed by the Core team via a platform RFD in [`nebari-dev/governance`](https://github.com/nebari-dev/governance).
 - **`docs/plans/`** — in-flight implementation plans (e.g. `2026-02-20-tls-certificate-management*.md`). Check whether the work is already planned here before starting.
 - **`docs/reconcilers/`** — per-reconciler architecture with condition/reason/event tables and pipeline diagrams (`README.md`, `routing.md`, `validation.md`, `authentication.md`). The source of truth for reconciler behavior.
 
