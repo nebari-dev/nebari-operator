@@ -35,6 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
 
@@ -66,6 +67,8 @@ type NebariAppReconciler struct {
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=listenersets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=listenersets/status,verbs=get
 // +kubebuilder:rbac:groups=cert-manager.io,resources=certificates,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gateway.envoyproxy.io,resources=securitypolicies,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles,verbs=get;list;watch;create;update;patch;delete
@@ -150,6 +153,7 @@ func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// a ClusterIssuer nor routing.tls.secretName is available. The nil guard below is
 	// kept so tests can opt out of TLS reconciliation by leaving the field unset.
 	var tlsListenerName string
+	var tlsUseListenerSet bool
 	if r.TLSReconciler != nil {
 		tlsResult, err := r.TLSReconciler.ReconcileTLS(ctx, nebariApp)
 		if err != nil {
@@ -163,6 +167,7 @@ func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 		if tlsResult != nil {
 			tlsListenerName = tlsResult.ListenerName
+			tlsUseListenerSet = tlsResult.UseListenerSet
 			if !tlsResult.CertReady {
 				logger.Info("TLS secret not ready yet, will requeue")
 				// Save status so TLSReady=False is visible, then requeue.
@@ -182,7 +187,7 @@ func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	// Reconcile routing (HTTPRoute creation/update) if routing is configured
 	if nebariApp.Spec.Routing != nil {
-		if err := r.RoutingReconciler.ReconcileRouting(ctx, nebariApp, tlsListenerName); err != nil {
+		if err := r.RoutingReconciler.ReconcileRouting(ctx, nebariApp, tlsListenerName, tlsUseListenerSet); err != nil {
 			logger.Error(err, "Routing reconciliation failed")
 			conditions.SetCondition(nebariApp, appsv1.ConditionTypeReady, metav1.ConditionFalse,
 				appsv1.ReasonFailed, fmt.Sprintf("Routing reconciliation failed: %v", err))
@@ -208,7 +213,7 @@ func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	// Reconcile public route (unauthenticated paths) if routing has publicRoutes
-	if result, err := r.reconcilePublicRoutes(ctx, nebariApp, tlsListenerName); err != nil || result != nil {
+	if result, err := r.reconcilePublicRoutes(ctx, nebariApp, tlsListenerName, tlsUseListenerSet); err != nil || result != nil {
 		if result != nil {
 			return *result, err
 		}
@@ -307,7 +312,7 @@ func buildServiceDiscoveryStatus(app *appsv1.NebariApp) *appsv1.ServiceDiscovery
 
 // reconcilePublicRoutes handles public route reconciliation for paths that bypass OIDC.
 // Returns a non-nil Result pointer if the caller should return early.
-func (r *NebariAppReconciler) reconcilePublicRoutes(ctx context.Context, nebariApp *appsv1.NebariApp, tlsListenerName string) (*ctrl.Result, error) {
+func (r *NebariAppReconciler) reconcilePublicRoutes(ctx context.Context, nebariApp *appsv1.NebariApp, tlsListenerName string, useListenerSet bool) (*ctrl.Result, error) {
 	logger := logf.FromContext(ctx)
 
 	if nebariApp.Spec.Routing == nil || len(nebariApp.Spec.Routing.PublicRoutes) == 0 {
@@ -321,7 +326,7 @@ func (r *NebariAppReconciler) reconcilePublicRoutes(ctx context.Context, nebariA
 		return nil, nil
 	}
 
-	if err := r.RoutingReconciler.ReconcilePublicRoute(ctx, nebariApp, tlsListenerName); err != nil {
+	if err := r.RoutingReconciler.ReconcilePublicRoute(ctx, nebariApp, tlsListenerName, useListenerSet); err != nil {
 		logger.Error(err, "Public route reconciliation failed")
 		conditions.SetCondition(nebariApp, appsv1.ConditionTypeReady, metav1.ConditionFalse,
 			appsv1.ReasonFailed, fmt.Sprintf("Public route reconciliation failed: %v", err))
@@ -384,6 +389,7 @@ func (r *NebariAppReconciler) cleanup(ctx context.Context, nebariApp *appsv1.Neb
 func (r *NebariAppReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	builder := ctrl.NewControllerManagedBy(mgr).
 		For(&appsv1.NebariApp{}).
+		Owns(&gatewayv1.ListenerSet{}).
 		Named("nebariapp")
 
 	// Watch cert-manager Certificates so that Certificate readiness transitions

@@ -47,15 +47,16 @@ type RoutingReconciler struct {
 // tlsListenerName is the name of the per-app TLS listener on the Gateway,
 // provided by the TLS reconciler. When non-empty and TLS is enabled, the
 // HTTPRoute will target this listener instead of the default "https" listener.
-func (r *RoutingReconciler) ReconcileRouting(ctx context.Context, nebariApp *appsv1.NebariApp, tlsListenerName string) error {
+func (r *RoutingReconciler) ReconcileRouting(ctx context.Context, nebariApp *appsv1.NebariApp, tlsListenerName string, useListenerSet bool) error {
 	logger := log.FromContext(ctx)
 
 	// Determine which gateway to use
 	gatewayName := naming.GatewayName(nebariApp)
 	logger.Info("Reconciling routing", "gateway", gatewayName, "hostname", nebariApp.Spec.Hostname)
 
-	// Verify gateway exists
-	if err := r.validateGateway(ctx, gatewayName); err != nil {
+	// Verify the route's parent exists (the per-app ListenerSet once cut over,
+	// otherwise the shared Gateway).
+	if err := r.validateParent(ctx, nebariApp, gatewayName, useListenerSet); err != nil {
 		logger.Error(err, "Gateway validation failed")
 		r.Recorder.Event(nebariApp, corev1.EventTypeWarning, appsv1.EventReasonGatewayNotFound, err.Error())
 		conditions.SetCondition(nebariApp, appsv1.ConditionTypeRoutingReady, metav1.ConditionFalse,
@@ -64,7 +65,7 @@ func (r *RoutingReconciler) ReconcileRouting(ctx context.Context, nebariApp *app
 	}
 
 	// Generate desired HTTPRoute
-	desiredRoute, err := r.buildHTTPRoute(nebariApp, gatewayName, tlsListenerName)
+	desiredRoute, err := r.buildHTTPRoute(nebariApp, gatewayName, tlsListenerName, useListenerSet)
 	if err != nil {
 		logger.Error(err, "Failed to build HTTPRoute")
 		conditions.SetCondition(nebariApp, appsv1.ConditionTypeRoutingReady, metav1.ConditionFalse,
@@ -159,9 +160,8 @@ func (r *RoutingReconciler) CleanupHTTPRoute(ctx context.Context, nebariApp *app
 // buildHTTPRoute generates an HTTPRoute resource from NebariApp spec.
 // tlsListenerName overrides the default "https" section name when TLS is enabled
 // and a per-app TLS listener has been created by the TLS reconciler.
-func (r *RoutingReconciler) buildHTTPRoute(nebariApp *appsv1.NebariApp, gatewayName string, tlsListenerName string) (*gatewayv1.HTTPRoute, error) {
+func (r *RoutingReconciler) buildHTTPRoute(nebariApp *appsv1.NebariApp, gatewayName string, tlsListenerName string, useListenerSet bool) (*gatewayv1.HTTPRoute, error) {
 	routeName := naming.HTTPRouteName(nebariApp)
-	namespace := gatewayv1.Namespace(constants.GatewayNamespace)
 
 	// Determine which Gateway listener to use
 	// Priority: tlsListenerName (from TLS reconciler) > TLS enabled ("https") > TLS disabled ("http")
@@ -199,11 +199,7 @@ func (r *RoutingReconciler) buildHTTPRoute(nebariApp *appsv1.NebariApp, gatewayN
 		Spec: gatewayv1.HTTPRouteSpec{
 			CommonRouteSpec: gatewayv1.CommonRouteSpec{
 				ParentRefs: []gatewayv1.ParentReference{
-					{
-						Name:        gatewayv1.ObjectName(gatewayName),
-						Namespace:   &namespace,
-						SectionName: &sectionName,
-					},
+					routeParentRef(nebariApp, gatewayName, sectionName, useListenerSet),
 				},
 			},
 			Hostnames: []gatewayv1.Hostname{
@@ -297,7 +293,7 @@ func (r *RoutingReconciler) buildBackendRefs(nebariApp *appsv1.NebariApp) []gate
 
 // ReconcilePublicRoute creates or updates the public (unauthenticated) HTTPRoute for a NebariApp.
 // This route handles paths listed in routing.publicRoutes that should bypass OIDC authentication.
-func (r *RoutingReconciler) ReconcilePublicRoute(ctx context.Context, nebariApp *appsv1.NebariApp, tlsListenerName string) error {
+func (r *RoutingReconciler) ReconcilePublicRoute(ctx context.Context, nebariApp *appsv1.NebariApp, tlsListenerName string, useListenerSet bool) error {
 	logger := log.FromContext(ctx)
 
 	// Only create public route if there are public routes configured
@@ -310,7 +306,7 @@ func (r *RoutingReconciler) ReconcilePublicRoute(ctx context.Context, nebariApp 
 	logger.Info("Reconciling public route", "gateway", gatewayName, "hostname", nebariApp.Spec.Hostname,
 		"publicRoutes", nebariApp.Spec.Routing.PublicRoutes)
 
-	desiredRoute, err := r.buildPublicHTTPRoute(nebariApp, gatewayName, tlsListenerName)
+	desiredRoute, err := r.buildPublicHTTPRoute(nebariApp, gatewayName, tlsListenerName, useListenerSet)
 	if err != nil {
 		logger.Error(err, "Failed to build public HTTPRoute")
 		conditions.SetCondition(nebariApp, appsv1.ConditionTypeRoutingReady, metav1.ConditionFalse,
@@ -389,9 +385,8 @@ func (r *RoutingReconciler) CleanupPublicHTTPRoute(ctx context.Context, nebariAp
 
 // buildPublicHTTPRoute generates an HTTPRoute for public routes that bypass OIDC authentication.
 // This route is separate from the main route so the SecurityPolicy only targets the main route.
-func (r *RoutingReconciler) buildPublicHTTPRoute(nebariApp *appsv1.NebariApp, gatewayName string, tlsListenerName string) (*gatewayv1.HTTPRoute, error) {
+func (r *RoutingReconciler) buildPublicHTTPRoute(nebariApp *appsv1.NebariApp, gatewayName string, tlsListenerName string, useListenerSet bool) (*gatewayv1.HTTPRoute, error) {
 	routeName := naming.PublicHTTPRouteName(nebariApp)
-	namespace := gatewayv1.Namespace(constants.GatewayNamespace)
 
 	sectionName := gatewayv1.SectionName("https")
 	tlsEnabled := true
@@ -436,11 +431,7 @@ func (r *RoutingReconciler) buildPublicHTTPRoute(nebariApp *appsv1.NebariApp, ga
 		Spec: gatewayv1.HTTPRouteSpec{
 			CommonRouteSpec: gatewayv1.CommonRouteSpec{
 				ParentRefs: []gatewayv1.ParentReference{
-					{
-						Name:        gatewayv1.ObjectName(gatewayName),
-						Namespace:   &namespace,
-						SectionName: &sectionName,
-					},
+					routeParentRef(nebariApp, gatewayName, sectionName, useListenerSet),
 				},
 			},
 			Hostnames: []gatewayv1.Hostname{
@@ -462,20 +453,56 @@ func (r *RoutingReconciler) buildPublicHTTPRoute(nebariApp *appsv1.NebariApp, ga
 	return route, nil
 }
 
-// validateGateway checks if the specified gateway exists
-func (r *RoutingReconciler) validateGateway(ctx context.Context, gatewayName string) error {
+// routeParentRef builds the ParentReference an HTTPRoute uses to attach: the
+// per-app ListenerSet in the NebariApp's namespace once TLS has cut over to it
+// (ADR-0011 Option 2), otherwise the shared Gateway in the Gateway namespace.
+func routeParentRef(nebariApp *appsv1.NebariApp, gatewayName string, sectionName gatewayv1.SectionName, useListenerSet bool) gatewayv1.ParentReference {
+	if useListenerSet {
+		group := gatewayv1.Group(gatewayv1.GroupName)
+		kind := gatewayv1.Kind("ListenerSet")
+		ns := gatewayv1.Namespace(nebariApp.Namespace)
+		return gatewayv1.ParentReference{
+			Group:       &group,
+			Kind:        &kind,
+			Name:        gatewayv1.ObjectName(naming.ListenerSetName(nebariApp)),
+			Namespace:   &ns,
+			SectionName: &sectionName,
+		}
+	}
+	ns := gatewayv1.Namespace(constants.GatewayNamespace)
+	return gatewayv1.ParentReference{
+		Name:        gatewayv1.ObjectName(gatewayName),
+		Namespace:   &ns,
+		SectionName: &sectionName,
+	}
+}
+
+// validateParent checks that the route's intended parent exists: the per-app
+// ListenerSet (in the NebariApp namespace) once cut over, otherwise the shared
+// Gateway (in the Gateway namespace).
+func (r *RoutingReconciler) validateParent(ctx context.Context, nebariApp *appsv1.NebariApp, gatewayName string, useListenerSet bool) error {
+	if useListenerSet {
+		ls := &gatewayv1.ListenerSet{}
+		key := client.ObjectKey{Name: naming.ListenerSetName(nebariApp), Namespace: nebariApp.Namespace}
+		if err := r.Client.Get(ctx, key, ls); err != nil {
+			if errors.IsNotFound(err) {
+				return fmt.Errorf("listenerset %s not found in namespace %s", key.Name, key.Namespace)
+			}
+			return fmt.Errorf("failed to get listenerset: %w", err)
+		}
+		return nil
+	}
+
 	gateway := &gatewayv1.Gateway{}
 	gatewayKey := client.ObjectKey{
 		Name:      gatewayName,
 		Namespace: constants.GatewayNamespace,
 	}
-
 	if err := r.Client.Get(ctx, gatewayKey, gateway); err != nil {
 		if errors.IsNotFound(err) {
 			return fmt.Errorf("gateway %s not found in namespace %s", gatewayName, constants.GatewayNamespace)
 		}
 		return fmt.Errorf("failed to get gateway: %w", err)
 	}
-
 	return nil
 }

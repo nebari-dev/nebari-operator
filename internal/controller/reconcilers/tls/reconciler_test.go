@@ -1187,7 +1187,7 @@ func TestCheckUserProvidedSecret(t *testing.T) {
 				Recorder: record.NewFakeRecorder(10),
 			}
 
-			status, reason, msg := reconciler.checkUserProvidedSecret(context.Background(), tt.secretName)
+			status, reason, msg := reconciler.checkUserProvidedSecret(context.Background(), constants.GatewayNamespace, tt.secretName)
 			if status != tt.expectStatus {
 				t.Errorf("expected status %s, got %s", tt.expectStatus, status)
 			}
@@ -1457,7 +1457,7 @@ func TestIsCertificateReady(t *testing.T) {
 				Scheme: scheme,
 			}
 
-			ready, err := reconciler.isCertificateReady(context.Background(), tt.nebariApp)
+			ready, err := reconciler.isCertificateReady(context.Background(), tt.nebariApp, constants.GatewayNamespace)
 
 			if tt.expectError && err == nil {
 				t.Error("expected error, got nil")
