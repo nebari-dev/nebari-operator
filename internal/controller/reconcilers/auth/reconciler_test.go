@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	egv1alpha1 "github.com/envoyproxy/gateway/api/v1alpha1"
@@ -32,9 +33,12 @@ import (
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/ptr"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
@@ -604,17 +608,18 @@ func TestBuildSecurityPolicySpec(t *testing.T) {
 
 // TestBuildSecurityPolicySpec_KeycloakIssuerAndEndpointSplit exercises the
 // real KeycloakProvider end-to-end through buildSecurityPolicySpec (issues
-// #112 and #113): the issuer stays on the in-cluster URL, the token endpoint
-// stays on the in-cluster host (Envoy back-channel), and the browser-facing
-// authorization/end-session endpoints move to KEYCLOAK_EXTERNAL_URL.
+// #112, #113 and #186): the token endpoint stays on the in-cluster host
+// (Envoy back-channel), and the browser-facing authorization/end-session
+// endpoints move to KEYCLOAK_EXTERNAL_URL.
 //
-// The "ExternalURL set" case also locks in the invariant that makes the
-// in-cluster issuer safe even when Keycloak emits a public `iss` claim
-// (frontendUrl configured): Envoy Gateway performs OIDC discovery against the
-// issuer only when authorizationEndpoint or tokenEndpoint is missing, so with
-// both explicitly set the issuer never leaves the control plane and is never
-// compared against the token's `iss` claim (the Envoy oauth2 filter has no
-// issuer field at all). See #112 for the full investigation.
+// It also locks in the invariant that governs the issuer: it is public
+// (https) only when discovery is suppressed. Envoy Gateway performs OIDC
+// discovery against the issuer only when authorizationEndpoint or
+// tokenEndpoint is missing, so with both set the issuer is inert and can
+// carry the public URL that Envoy Gateway v1.9.1's https validation requires.
+// When discovery does run (ExternalURL unset), the issuer must stay
+// in-cluster so the envoy-gateway controller never has to resolve a public
+// hostname — that is what breaks private-domain and air-gapped clusters.
 func TestBuildSecurityPolicySpec_KeycloakIssuerAndEndpointSplit(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = appsv1.AddToScheme(scheme)
@@ -626,12 +631,14 @@ func TestBuildSecurityPolicySpec_KeycloakIssuerAndEndpointSplit(t *testing.T) {
 	tests := []struct {
 		name                  string
 		externalURL           string
+		expectedIssuer        string
 		expectedAuthorization *string
 		expectedEndSession    *string
 	}{
 		{
-			name:                  "ExternalURL set: browser endpoints public, token and issuer in-cluster",
+			name:                  "ExternalURL set: issuer and browser endpoints public, token in-cluster",
 			externalURL:           "https://keycloak.example.com",
+			expectedIssuer:        "https://keycloak.example.com/realms/nebari",
 			expectedAuthorization: ptr.To("https://keycloak.example.com/realms/nebari/protocol/openid-connect/auth"),
 			expectedEndSession:    ptr.To("https://keycloak.example.com/realms/nebari/protocol/openid-connect/logout"),
 		},
@@ -639,8 +646,9 @@ func TestBuildSecurityPolicySpec_KeycloakIssuerAndEndpointSplit(t *testing.T) {
 			// Without an external URL the browser-facing endpoints are left
 			// unset so Envoy Gateway falls back to OIDC discovery against the
 			// in-cluster issuer; the token endpoint stays pinned in-cluster.
-			name:        "ExternalURL unset: only token override is set",
-			externalURL: "",
+			name:           "ExternalURL unset: issuer in-cluster, only token override is set",
+			externalURL:    "",
+			expectedIssuer: internalRealm,
 		},
 	}
 
@@ -690,8 +698,13 @@ func TestBuildSecurityPolicySpec_KeycloakIssuerAndEndpointSplit(t *testing.T) {
 			}
 
 			p := spec.OIDC.Provider
-			if p.Issuer != internalRealm {
-				t.Errorf("expected in-cluster issuer %q, got %q", internalRealm, p.Issuer)
+			if p.Issuer != tt.expectedIssuer {
+				t.Errorf("expected issuer %q, got %q", tt.expectedIssuer, p.Issuer)
+			}
+			discoverySuppressed := p.AuthorizationEndpoint != nil && p.TokenEndpoint != nil
+			if discoverySuppressed != strings.HasPrefix(p.Issuer, "https://") {
+				t.Errorf("issuer %q must be https exactly when discovery is suppressed (suppressed=%v)",
+					p.Issuer, discoverySuppressed)
 			}
 			expectedToken := ptr.To(internalRealm + "/protocol/openid-connect/token")
 			verifyOptionalEndpoint(t, "token", p.TokenEndpoint, expectedToken)
@@ -1648,6 +1661,49 @@ func TestReconcileAuth_SpecChangeCycle(t *testing.T) {
 			}
 			if provider.provisionCount != 2 {
 				t.Errorf("reconcile 4: expected provisioning to be skipped again (count=2), got %d", provider.provisionCount)
+			}
+		})
+	}
+}
+
+// TestIsIssuerRejected covers detection of Envoy Gateway v1.9.1's https
+// validation on spec.oidc.provider.issuer, which drives the actionable hint
+// appended to the SecurityPolicy reconcile error (#186).
+func TestIsIssuerRejected(t *testing.T) {
+	gk := schema.GroupKind{Group: "gateway.envoyproxy.io", Kind: "SecurityPolicy"}
+	invalid := func(path *field.Path) error {
+		return apierrors.NewInvalid(gk, "test-app-security", field.ErrorList{
+			field.Invalid(path, "http://keycloak.keycloak.svc.cluster.local:8080/realms/nebari",
+				"should match '^https://[^/?#@]+(/[^?#]*)?$'"),
+		})
+	}
+
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "invalid issuer",
+			err:  invalid(field.NewPath("spec", "oidc", "provider", "issuer")),
+			want: true,
+		},
+		{
+			name: "invalid on a different field",
+			err:  invalid(field.NewPath("spec", "oidc", "redirectURL")),
+			want: false,
+		},
+		{
+			name: "non-validation error mentioning the issuer",
+			err:  errors.New("spec.oidc.provider.issuer: connection refused"),
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isIssuerRejected(tt.err); got != tt.want {
+				t.Errorf("isIssuerRejected() = %v, want %v", got, tt.want)
 			}
 		})
 	}

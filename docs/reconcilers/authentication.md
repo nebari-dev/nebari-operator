@@ -58,7 +58,7 @@ type OIDCProvider interface {
 
 **Features:**
 - Automatic OIDC client provisioning via Keycloak Admin API
-- Internal cluster DNS resolution for issuer URL
+- Split-horizon endpoints: token back-channel in-cluster, browser-facing endpoints public
 - Client secret management in Kubernetes secrets
 
 **Configuration:**
@@ -67,8 +67,12 @@ type OIDCProvider interface {
 
 **Issuer URL Format (Keycloak 26+, root context path):**
 ```
-http://keycloak.keycloak.svc.cluster.local:8080/realms/{realm}
+# KEYCLOAK_EXTERNAL_URL set (required on Envoy Gateway v1.9.1+)
+https://keycloak.example.com/realms/{realm}
+# KEYCLOAK_EXTERNAL_URL unset (Envoy Gateway < v1.9.1 only)
+http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/{realm}
 ```
+See [Issuer Semantics](#issuer-semantics-keycloak) for why the issuer depends on it.
 
 **Client ID Format:**
 ```
@@ -195,30 +199,44 @@ spec:
 
 ### Issuer Semantics (Keycloak)
 
-For Keycloak, `provider.issuer` is always the **in-cluster** realm URL, even when
-`KEYCLOAK_EXTERNAL_URL` is set and Keycloak (with a public `frontendUrl`) stamps the
-**public** URL into every token's `iss` claim. This mismatch is deliberate and harmless
-([investigation in #112](https://github.com/nebari-dev/nebari-operator/issues/112)):
+For Keycloak, `provider.issuer` depends on whether `KEYCLOAK_EXTERNAL_URL` is set, because
+that decides whether Envoy Gateway runs OIDC discovery
+([#112](https://github.com/nebari-dev/nebari-operator/issues/112),
+[#186](https://github.com/nebari-dev/nebari-operator/issues/186)):
+
+| `KEYCLOAK_EXTERNAL_URL` | Endpoint overrides | Discovery | `provider.issuer` |
+|---|---|---|---|
+| set | token (in-cluster) + authorization, endSession (public) | never runs | public realm URL (`https://…`) |
+| unset | token only | runs against the issuer | in-cluster realm URL (`http://…`) |
+
+Why this is safe:
 
 - Envoy Gateway uses the issuer **only at control-plane time** to fetch
   `/.well-known/openid-configuration`, and only when `authorizationEndpoint` or
-  `tokenEndpoint` is not explicitly set. When `KEYCLOAK_EXTERNAL_URL` is configured the
-  operator sets both, so the issuer URL is never contacted and never reaches the data
-  plane.
+  `tokenEndpoint` is not explicitly set. With `KEYCLOAK_EXTERNAL_URL` configured the
+  operator sets both, so the issuer is never contacted and never reaches the data plane.
+  The gateway never resolves the public hostname, so private-domain and air-gapped
+  clusters are unaffected.
+- The token back-channel protocol is taken from `tokenEndpoint` when it is set, so an
+  `https` issuer does not move token calls off the in-cluster URL.
 - The Envoy `oauth2` filter has no issuer field in its configuration and never inspects
   the token's `iss` claim (its only JWT decode is an unverified `exp` read for cookie
-  lifetimes).
-- Envoy Gateway does not enforce the OIDC Discovery issuer-match rule: it reads only the
-  endpoint fields from the discovery document and ignores its `issuer` field.
-- Consumers that **do** strictly validate `iss` — e.g. a SecurityPolicy `spec.jwt`
-  provider configured by a downstream pack — must use the public issuer. They read it
-  from the client Secret's `issuer-url` key, which is populated from
-  `GetExternalIssuerURL()` (the public URL). That key is empty when
-  `KEYCLOAK_EXTERNAL_URL` is unset, so strict-`iss` consumers require it to be set.
+  lifetimes). Envoy Gateway also ignores the discovery document's `issuer` field.
+- Envoy Gateway **v1.9.1** constrains the issuer to `^https://[^/?#@]+(/[^?#]*)?$` in both
+  the CRD and its translator. The public URL satisfies it and matches the `iss` claim
+  Keycloak stamps into tokens.
 
-Keeping the issuer in-cluster means the discovery fallback (used when
-`KEYCLOAK_EXTERNAL_URL` is unset) runs from the envoy-gateway controller pod over
-cluster DNS, avoiding public TLS-chain trust and hairpin-routing requirements.
+When `KEYCLOAK_EXTERNAL_URL` is unset, discovery does run, so the issuer stays in-cluster:
+pointing discovery at a public hostname fails on clusters where that hostname does not
+resolve from inside the cluster (the private-domain failure seen in
+nebari-dev/nebari-infrastructure-core#568). That mode only works on Envoy Gateway
+< v1.9.1. On v1.9.1+ the SecurityPolicy is rejected at admission, and the `AuthReady`
+condition message says to set `KEYCLOAK_EXTERNAL_URL`.
+
+Consumers that **do** strictly validate `iss` — e.g. a SecurityPolicy `spec.jwt` provider
+configured by a downstream pack — read the public issuer from the client Secret's
+`issuer-url` key, which is populated from `GetExternalIssuerURL()`. That key is empty when
+`KEYCLOAK_EXTERNAL_URL` is unset, so strict-`iss` consumers require it to be set.
 
 **On Failure:**
 - Event: `Warning` with reason `SecurityPolicyFailed`
@@ -315,10 +333,15 @@ The auth reconciler can be configured via environment variables:
 - `KEYCLOAK_ADMIN_SECRET_NAME`: Secret containing master realm admin credentials (default:
   `nebari-realm-admin-credentials`)
 - `KEYCLOAK_ADMIN_SECRET_NAMESPACE`: Namespace of admin secret (default: `keycloak`)
+- `KEYCLOAK_EXTERNAL_URL`: Publicly routable Keycloak base URL, including any context path
+  (e.g. `https://keycloak.example.com`). Drives the browser-facing OIDC endpoints, the
+  SecurityPolicy issuer and the client Secret's `issuer-url`. Required on Envoy Gateway
+  v1.9.1+ (see [Issuer Semantics](#issuer-semantics-keycloak)).
 
 **Keycloak Issuer URL Components (for Envoy Gateway):**
 
-These configure how the OIDC issuer URL is built for SecurityPolicy resources:
+These build the in-cluster realm URL, used for the SecurityPolicy `tokenEndpoint` and, when
+`KEYCLOAK_EXTERNAL_URL` is unset, for `provider.issuer`:
 - `KEYCLOAK_ISSUER_SERVICE_NAME`: Kubernetes service name (default: `keycloak-keycloakx-http`)
 - `KEYCLOAK_ISSUER_SERVICE_NAMESPACE`: Keycloak namespace (default: `keycloak`)
 - `KEYCLOAK_ISSUER_SERVICE_PORT`: Service port (default: `8080`)
