@@ -26,7 +26,7 @@ import (
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
+	appsv1 "github.com/nebari-dev/nebari-operator/api/reconcilers/v1"
 )
 
 func TestValidateNamespaceOptIn(t *testing.T) {

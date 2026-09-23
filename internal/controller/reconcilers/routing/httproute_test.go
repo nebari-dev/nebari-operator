@@ -27,7 +27,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
-	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
+	appsv1 "github.com/nebari-dev/nebari-operator/api/reconcilers/v1"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/constants"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/naming"
 )

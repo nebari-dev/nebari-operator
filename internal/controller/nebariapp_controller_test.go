@@ -29,7 +29,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	reconcilersv1 "github.com/nebari-dev/nebari-operator/api/v1"
+	reconcilersv1 "github.com/nebari-dev/nebari-operator/api/reconcilers/v1"
 	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/auth"
 	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/core"
 	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/routing"

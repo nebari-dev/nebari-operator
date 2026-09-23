@@ -24,7 +24,7 @@ import (
 	"testing"
 
 	egv1alpha1 "github.com/envoyproxy/gateway/api/v1alpha1"
-	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
+	appsv1 "github.com/nebari-dev/nebari-operator/api/reconcilers/v1"
 	"github.com/nebari-dev/nebari-operator/internal/config"
 	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/auth/providers"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/constants"
