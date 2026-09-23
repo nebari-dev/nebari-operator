@@ -18,6 +18,7 @@ package lifecycle
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -41,25 +42,19 @@ type UserCleanupHookReconciler struct {
 }
 
 const (
-	placeHolderDryRun   = "true"
 	placeHolderJobName  = "user-deletion"
 	placeHolderUserID   = "18a5a8cc-f27f-44d7-b3d7-8366b2fca605"
 	placeHolderUsername = "delete-me"
 )
 
-// +kubebuilder:rbac:groups=lifecycle.nebari.dev,resources=usercleanuphooks,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=batch,resources=jobs,verbs=create
+// +kubebuilder:rbac:groups=lifecycle.nebari.dev,resources=usercleanuphooks,verbs=get;list;watch
 // +kubebuilder:rbac:groups=lifecycle.nebari.dev,resources=usercleanuphooks/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=lifecycle.nebari.dev,resources=usercleanuphooks/finalizers,verbs=update
 
-// Reconcile is part of the main kubernetes reconciliation loop which aims to
-// move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the UserCleanupHook object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.24.1/pkg/reconcile
+// Reconcile validates a UserCleanupHook by rendering its pod template into a Job,
+// the same way the UserDeletion controller will, and submitting it to the API server
+// as a dry-run create. The outcome is recorded in the Accepted condition. Validation
+// runs once per spec generation. It never creates real Jobs.
 func (r *UserCleanupHookReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	_ = logf.FromContext(ctx)
 
@@ -91,7 +86,7 @@ func (r *UserCleanupHookReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		cond.Reason = lifecyclev1alpha1.ReasonTemplateValid
 		cond.Message = "rendered Job passed API server validation"
 	// Job validation failed and the UserCleanupHook Accepted status is false
-	case apierrors.IsInvalid(err) || apierrors.IsBadRequest(err) || apierrors.IsForbidden(err):
+	case apierrors.IsInvalid(err) || apierrors.IsBadRequest(err):
 		cond.Status = metav1.ConditionFalse
 		cond.Reason = lifecyclev1alpha1.ReasonTemplateInvalid
 		cond.Message = err.Error()
@@ -106,9 +101,11 @@ func (r *UserCleanupHookReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	meta.SetStatusCondition(&hook.Status.Conditions, cond)
 	hook.Status.ObservedGeneration = hook.Generation
 	if err := r.Status().Update(ctx, &hook); err != nil {
-		return result, err
+		return ctrl.Result{}, err
 	}
-	
+
+	// Only the Unknown branch sets a RequeueAfter; the other two return an
+	// empty result and wait for the next spec change.
 	return result, nil
 }
 
@@ -132,7 +129,7 @@ func buildJob(hook lifecyclev1alpha1.UserCleanupHook) *batchv1.Job {
 	envVars := []corev1.EnvVar{
 		{Name: lifecyclev1alpha1.EnvVarUserID, Value: placeHolderUserID},
 		{Name: lifecyclev1alpha1.EnvVarUsername, Value: placeHolderUsername},
-		{Name: lifecyclev1alpha1.EnvVarDryRun, Value: placeHolderDryRun},
+		{Name: lifecyclev1alpha1.EnvVarDryRun, Value: strconv.FormatBool(hook.Spec.DryRun)},
 	}
 	containers := podTemplate.Spec.Containers
 	for i := range containers {
