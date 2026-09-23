@@ -132,7 +132,7 @@ See `dev/scripts/{cluster,networking,services,testing}` and `dev/examples/` for 
 ### Component Structure
 
 ```
-cmd/operator/            CLI entry point — kubebuilder manager setup
+cmd/                     CLI entry point — kubebuilder manager setup
   main.go                scheme registration, manager, leader election, wires up all reconcilers
 
 api/v1/                  CRD types (group reconcilers.nebari.dev, version v1)
@@ -235,7 +235,7 @@ The manager's RBAC is generated, not hand-written. `+kubebuilder:rbac:...` marke
 ### Adding an OIDC provider
 
 1. Implement the `OIDCProvider` interface in `internal/controller/reconcilers/auth/providers/`.
-2. Register it where the providers map is built in `cmd/operator/main.go`.
+2. Register it where the providers map is built in `cmd/main.go`.
 3. Existing implementations: `keycloak.go` (uses `Nerzal/gocloak`) and `generic_oidc.go`.
 
 ## Conventions

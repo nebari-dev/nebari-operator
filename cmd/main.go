@@ -38,9 +38,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
-	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
+	lifecyclev1alpha1 "github.com/nebari-dev/nebari-operator/api/lifecycle/v1alpha1"
+	appsv1 "github.com/nebari-dev/nebari-operator/api/reconcilers/v1"
 	"github.com/nebari-dev/nebari-operator/internal/config"
 	"github.com/nebari-dev/nebari-operator/internal/controller"
+	lifecyclecontroller "github.com/nebari-dev/nebari-operator/internal/controller/lifecycle"
 	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/auth"
 	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/auth/providers"
 	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/core"
@@ -62,6 +64,7 @@ func init() {
 	utilruntime.Must(gatewayapiv1.Install(scheme))
 	utilruntime.Must(egv1alpha1.AddToScheme(scheme))
 	utilruntime.Must(certmanagerv1.AddToScheme(scheme))
+	utilruntime.Must(lifecyclev1alpha1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -290,6 +293,13 @@ func main() {
 		AuthReconciler:    authReconciler,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "NebariApp")
+		os.Exit(1)
+	}
+	if err := (&lifecyclecontroller.UserCleanupHookReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "lifecycle-usercleanuphook")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder
