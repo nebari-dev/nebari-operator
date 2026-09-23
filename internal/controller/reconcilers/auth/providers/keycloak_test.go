@@ -92,11 +92,11 @@ func TestKeycloakProvider_GetIssuerURL(t *testing.T) {
 			expectedURL: "http://custom-keycloak.auth.svc.cluster.local:9090/realms/custom-realm",
 		},
 		{
-			// Issue #112: the issuer deliberately stays in-cluster even when
-			// KEYCLOAK_EXTERNAL_URL is set. The external URL only affects
-			// browser-facing endpoint overrides and the client Secret's
-			// issuer-url key, never SecurityPolicy.spec.oidc.provider.issuer.
-			name: "ExternalURL set: issuer remains in-cluster",
+			// With KEYCLOAK_EXTERNAL_URL set, both authorization and token
+			// endpoints are pinned, discovery never runs, and the issuer is
+			// inert; it moves to the public https URL so Envoy Gateway v1.9.1's
+			// issuer validation accepts it (#186).
+			name: "ExternalURL set: issuer is the public realm URL",
 			kcConfig: config.KeycloakConfig{
 				URL:                    "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080",
 				Realm:                  "nebari",
@@ -106,7 +106,19 @@ func TestKeycloakProvider_GetIssuerURL(t *testing.T) {
 				IssuerContextPath:      "",
 				ExternalURL:            "https://keycloak.example.com",
 			},
-			expectedURL: "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/nebari",
+			expectedURL: "https://keycloak.example.com/realms/nebari",
+		},
+		{
+			name: "ExternalURL with /auth context path and trailing slash",
+			kcConfig: config.KeycloakConfig{
+				Realm:                  "nebari",
+				IssuerServiceName:      "keycloak-keycloakx-http",
+				IssuerServiceNamespace: "keycloak",
+				IssuerServicePort:      8080,
+				IssuerContextPath:      "/auth",
+				ExternalURL:            "https://keycloak.example.com/auth/",
+			},
+			expectedURL: "https://keycloak.example.com/auth/realms/nebari",
 		},
 	}
 

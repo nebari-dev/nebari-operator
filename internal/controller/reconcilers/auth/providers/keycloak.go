@@ -70,31 +70,43 @@ func (p *KeycloakProvider) externalRealmURL() string {
 		p.Config.Realm)
 }
 
-// GetIssuerURL returns the internal cluster URL for the Keycloak realm.
+// GetIssuerURL returns the issuer written to
+// SecurityPolicy.spec.oidc.provider.issuer: the public realm URL when
+// KEYCLOAK_EXTERNAL_URL is set, the in-cluster realm URL otherwise.
 //
-// This deliberately stays on the in-cluster URL even when Keycloak issues
-// tokens with a public `iss` claim (frontendUrl / KC_HOSTNAME configured).
-// Investigated in https://github.com/nebari-dev/nebari-operator/issues/112:
+// The choice is tied to whether Envoy Gateway will run OIDC discovery.
+// Background (investigated in #112, revisited in #186):
 //
-//   - Envoy Gateway uses SecurityPolicy.spec.oidc.provider.issuer only at
-//     control-plane time, to fetch /.well-known/openid-configuration — and
-//     only when authorizationEndpoint or tokenEndpoint is not explicitly set
-//     (gateway v1.6.3 internal/gatewayapi/securitypolicy.go). The issuer is
+//   - Envoy Gateway uses the issuer only at control-plane time, to fetch
+//     /.well-known/openid-configuration — and only when authorizationEndpoint
+//     or tokenEndpoint is not explicitly set (internal/gatewayapi/
+//     securitypolicy.go, unchanged from v1.6.3 through v1.9.1). The issuer is
 //     never passed to the Envoy oauth2 filter; the filter's config proto has
 //     no issuer field and the filter never inspects the token's `iss` claim.
-//   - Envoy Gateway does not enforce the OIDC Discovery issuer-match rule
-//     either: it unmarshals only the endpoint fields from the discovery
-//     document, so a public `issuer` value in the document is ignored.
-//   - Consumers that DO strictly validate `iss` (e.g. SecurityPolicy
-//     spec.jwt providers configured by downstream packs) must use the public
-//     issuer, which they read from the client Secret's issuer-url key —
-//     populated from GetExternalIssuerURL, not from this method.
+//     The back-channel protocol is derived from tokenEndpoint when it is set,
+//     so an https issuer does not move token calls off the in-cluster URL.
+//   - Envoy Gateway v1.9.1 requires the issuer to match
+//     `^https://[^/?#@]+(/[^?#]*)?$`, both in the CRD and in the translator.
+//     The in-cluster http URL is rejected at admission.
 //
-// Keeping the issuer in-cluster means the discovery fallback (when endpoint
-// overrides are incomplete) is fetched from the envoy-gateway controller pod
-// over cluster DNS, avoiding public TLS-chain trust and hairpin-routing
-// requirements.
+// With KEYCLOAK_EXTERNAL_URL set, GetEndpointOverrides pins both the
+// authorization and token endpoints, so discovery never runs and the issuer
+// is inert. The public https URL satisfies the v1.9.1 validation and matches
+// the `iss` claim Keycloak stamps into tokens. The gateway never resolves it,
+// so private-domain and air-gapped clusters are unaffected.
+//
+// Without KEYCLOAK_EXTERNAL_URL, discovery does run against this URL, so it
+// must stay in-cluster: pointing discovery at a public hostname breaks
+// clusters where that hostname does not resolve from inside the cluster.
+// That combination works on Envoy Gateway < v1.9.1 only; on v1.9.1+ the
+// SecurityPolicy is rejected and KEYCLOAK_EXTERNAL_URL must be configured.
+//
+// Consumers that strictly validate `iss` read the public issuer from the
+// client Secret's issuer-url key, populated from GetExternalIssuerURL.
 func (p *KeycloakProvider) GetIssuerURL(ctx context.Context, nebariApp *appsv1.NebariApp) (string, error) {
+	if external := p.externalRealmURL(); external != "" {
+		return external, nil
+	}
 	return p.internalRealmURL(), nil
 }
 
@@ -123,6 +135,8 @@ func (p *KeycloakProvider) GetIssuerURL(ctx context.Context, nebariApp *appsv1.N
 // with a public-facing `frontendUrl` / `KC_HOSTNAME_URL` so its discovery
 // document advertises external URLs. In every other case the discovered
 // values will also be in-cluster and the browser flow will still dead-end.
+// On Envoy Gateway v1.9.1+ this fallback is unavailable altogether: the
+// in-cluster http issuer fails the CRD's https validation.
 // Operators should set KEYCLOAK_EXTERNAL_URL on the nebari-operator
 // deployment OR configure Keycloak's frontendUrl explicitly. A startup
 // warning is logged when neither is configured (see KeycloakProvider's
