@@ -9,7 +9,105 @@ This reference documents all CRD types exposed by the Nebari Operator.
 For configuration examples and usage guides, see the [Configuration Reference](configuration-reference.md).
 
 ## Packages
+- [lifecycle.nebari.dev/v1alpha1](#lifecyclenebaridevv1alpha1)
 - [reconcilers.nebari.dev/v1](#reconcilersnebaridevv1)
+
+
+## lifecycle.nebari.dev/v1alpha1
+
+Package v1alpha1 contains API Schema definitions for the lifecycle v1alpha1 API group.
+
+
+### Resource Types
+- [UserCleanupHook](#usercleanuphook)
+- [UserCleanupHookList](#usercleanuphooklist)
+
+
+
+---
+
+#### CleanupStage
+
+_Underlying type:_ _string_
+
+CleanupStage identifies the moment in a user's deletion when a hook runs.
+_Validation:_
+- Enum: [disable delete]
+_Appears in:_
+- [UserCleanupHookSpec](#usercleanuphookspec)
+| Value | Description |
+| --- | --- |
+| `disable` | CleanupStageDisable runs as soon as the deletion is detected.<br /> |
+| `delete` | CleanupStageDelete runs once the grace period has elapsed.<br /> |
+
+
+---
+
+#### UserCleanupHook
+
+UserCleanupHook is the Schema for the usercleanuphooks API
+
+_Appears in:_
+- [UserCleanupHookList](#usercleanuphooklist)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `lifecycle.nebari.dev/v1alpha1` | | |
+| `kind` _string_ | `UserCleanupHook` | | |
+| `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  | Optional: \{\} <br /> |
+| `spec` _[UserCleanupHookSpec](#usercleanuphookspec)_ | spec defines the desired state of UserCleanupHook |  | Required: \{\} <br /> |
+| `status` _[UserCleanupHookStatus](#usercleanuphookstatus)_ | status defines the observed state of UserCleanupHook |  | Optional: \{\} <br /> |
+
+
+---
+
+#### UserCleanupHookList
+
+UserCleanupHookList contains a list of UserCleanupHook
+
+
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `lifecycle.nebari.dev/v1alpha1` | | |
+| `kind` _string_ | `UserCleanupHookList` | | |
+| `metadata` _[ListMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#listmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
+| `items` _[UserCleanupHook](#usercleanuphook) array_ |  |  |  |
+
+
+---
+
+#### UserCleanupHookSpec
+
+UserCleanupHookSpec defines the desired state of UserCleanupHook
+
+_Appears in:_
+- [UserCleanupHook](#usercleanuphook)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `stage` _[CleanupStage](#cleanupstage)_ | stage is the moment in the user's deletion when this hook runs.<br />"disable" runs as soon as the deletion is detected. "delete" runs once the grace period has elapsed. |  | Enum: [disable delete] <br />Required: \{\} <br /> |
+| `template` _[PodTemplateSpec](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#podtemplatespec-v1-core)_ | template is the pod the operator wraps in a Job when the stage is due.<br />The operator injects the user identifiers as env vars into every container.<br />restartPolicy defaults to Never when omitted. |  | Required: \{\} <br /> |
+| `backoffLimit` _integer_ | backoffLimit is the number of failed pods the Job tolerates before it is marked Failed. | 3 | Minimum: 0 <br />Optional: \{\} <br /> |
+| `activeDeadlineSeconds` _integer_ | activeDeadlineSeconds is the maximum time the Job may run before it is killed and marked Failed. | 900 | Minimum: 1 <br />Optional: \{\} <br /> |
+| `ttlSecondsAfterFinished` _integer_ | ttlSecondsAfterFinished is how long a finished Job and its pods are kept before Kubernetes deletes them.<br />The floor of one hour ensures the operator records the Job outcome before the Job disappears. | 604800 | Minimum: 3600 <br />Optional: \{\} <br /> |
+| `dryRun` _boolean_ | dryRun is passed to the script as NEBARI_CLEANUP_DRY_RUN. When true the script should<br />log what it would do without doing it. | false | Optional: \{\} <br /> |
+
+
+---
+
+#### UserCleanupHookStatus
+
+UserCleanupHookStatus defines the observed state of UserCleanupHook.
+
+_Appears in:_
+- [UserCleanupHook](#usercleanuphook)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#condition-v1-meta) array_ | conditions represent the current state of the UserCleanupHook resource.<br />Each condition has a unique type and reflects the status of a specific aspect of the resource.<br />Condition types:<br />- "Accepted": the pod template renders to a valid Job<br />The status of each condition is one of True, False, or Unknown. |  | Optional: \{\} <br /> |
+| `observedGeneration` _integer_ | ObservedGeneration is the most recent generation observed for this UserCleanupHook.<br />It corresponds to the UserCleanupHook's generation, which is updated on mutation by the API Server. |  | Optional: \{\} <br /> |
+
 
 
 ## reconcilers.nebari.dev/v1

@@ -110,9 +110,9 @@ CRD_REF_DOCS ?= $(LOCALBIN)/crd-ref-docs
 CRD_REF_DOCS_VERSION ?= v0.3.0
 
 .PHONY: docs
-docs: crd-ref-docs ## Generate API reference documentation from Go types in api/v1/.
+docs: crd-ref-docs ## Generate API reference documentation from Go types under api/.
 	$(CRD_REF_DOCS) \
-		--source-path=./api/v1 \
+		--source-path=./api \
 		--config=docs/crd-ref-docs-config.yaml \
 		--renderer=markdown \
 		--templates-dir=docs/templates \
