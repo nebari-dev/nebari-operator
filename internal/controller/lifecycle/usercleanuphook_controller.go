@@ -58,7 +58,7 @@ const (
 func (r *UserCleanupHookReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	_ = logf.FromContext(ctx)
 
-	// Fetch the hook. Not found means it was delete since the event was queued,
+	// Fetch the hook. Not found means it was deleted since the event was queued,
 	// so there is nothing to do.
 	var hook lifecyclev1alpha1.UserCleanupHook
 	if err := r.Get(ctx, req.NamespacedName, &hook); err != nil {
