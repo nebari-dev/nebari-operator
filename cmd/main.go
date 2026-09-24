@@ -296,8 +296,9 @@ func main() {
 		os.Exit(1)
 	}
 	if err := (&lifecyclecontroller.UserCleanupHookReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("usercleanuphook-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "lifecycle-usercleanuphook")
 		os.Exit(1)

@@ -27,6 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -38,7 +39,8 @@ import (
 // UserCleanupHookReconciler reconciles a UserCleanupHook object
 type UserCleanupHookReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme   *runtime.Scheme
+	Recorder record.EventRecorder
 }
 
 const (
@@ -48,6 +50,7 @@ const (
 )
 
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=create
+// +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=lifecycle.nebari.dev,resources=usercleanuphooks,verbs=get;list;watch
 // +kubebuilder:rbac:groups=lifecycle.nebari.dev,resources=usercleanuphooks/status,verbs=get;update;patch
 
@@ -85,12 +88,14 @@ func (r *UserCleanupHookReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		cond.Status = metav1.ConditionTrue
 		cond.Reason = lifecyclev1alpha1.ReasonTemplateValid
 		cond.Message = "rendered Job passed API server validation"
+		r.Recorder.Event(&hook, corev1.EventTypeNormal, lifecyclev1alpha1.ReasonTemplateValid, cond.Message)
 		log.Info("template accepted", "stage", hook.Spec.Stage)
 	// Job validation failed and the UserCleanupHook Accepted status is false
 	case apierrors.IsInvalid(err) || apierrors.IsBadRequest(err):
 		cond.Status = metav1.ConditionFalse
 		cond.Reason = lifecyclev1alpha1.ReasonTemplateInvalid
 		cond.Message = err.Error()
+		r.Recorder.Event(&hook, corev1.EventTypeWarning, lifecyclev1alpha1.ReasonTemplateInvalid, cond.Message)
 		log.Info("template rejected by API server", "reason", err.Error())
 	// Submitting the job failed for another reason and the UserCleanupHook Accepted status is unknown
 	default:
@@ -98,6 +103,7 @@ func (r *UserCleanupHookReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		cond.Reason = lifecyclev1alpha1.ReasonValidationUnavailable
 		cond.Message = err.Error()
 		result = ctrl.Result{RequeueAfter: time.Minute}
+		r.Recorder.Event(&hook, corev1.EventTypeWarning, lifecyclev1alpha1.ReasonValidationUnavailable, cond.Message)
 		log.Error(err, "dry-run request failed, retrying in a minute")
 	}
 
