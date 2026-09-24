@@ -3,6 +3,7 @@
 # It should be run by config/default
 resources:
 - bases/reconcilers.nebari.dev_nebariapps.yaml
+- bases/lifecycle.nebari.dev_usercleanuphooks.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:

@@ -73,7 +73,7 @@ _Generated from the Makefile; do not edit by hand. Change a target and run `make
 
 | Target | Description |
 | --- | --- |
-| `make docs` | Generate API reference documentation from Go types in api/v1/. |
+| `make docs` | Generate API reference documentation from Go types under api/. |
 | `make crd-ref-docs` | Download crd-ref-docs locally if necessary. |
 | `make agents` | Regenerate the machine-owned make-targets block in AGENTS.md. |
 
@@ -114,7 +114,7 @@ _Generated from the Makefile; do not edit by hand. Change a target and run `make
 
 <!-- END GENERATED: make-targets -->
 
-**After editing anything in `api/v1/`, run `make generate-dev` (and `make docs`) and commit the generated files alongside your source change.** CI fails if generated files, manifests, or the API reference are out of sync.
+**After editing anything under `api/`, run `make generate-dev` (and `make docs`) and commit the generated files alongside your source change.** CI fails if generated files, manifests, or the API reference are out of sync.
 
 ### Local development cluster
 
@@ -132,10 +132,11 @@ See `dev/scripts/{cluster,networking,services,testing}` and `dev/examples/` for 
 ### Component Structure
 
 ```
-cmd/operator/            CLI entry point — kubebuilder manager setup
+cmd/                     CLI entry point — kubebuilder manager setup
   main.go                scheme registration, manager, leader election, wires up all reconcilers
 
-api/v1/                  CRD types (group reconcilers.nebari.dev, version v1)
+api/reconcilers/v1/      CRD types (group reconcilers.nebari.dev, version v1)
+api/lifecycle/v1alpha1/  CRD types (group lifecycle.nebari.dev, version v1alpha1)
   nebariapp_types.go     NebariApp spec/status + all condition/reason/event constants
   groupversion_info.go
   zz_generated.deepcopy.go   generated — do not hand-edit
@@ -215,7 +216,7 @@ The operator targets a Nebari platform laid down by NIC, and encodes those assum
 
 ### Adding or changing a CRD field
 
-1. Edit `api/v1/nebariapp_types.go`; add kubebuilder validation markers.
+1. Edit `api/reconcilers/v1/nebariapp_types.go`; add kubebuilder validation markers.
 2. If it needs a new condition or event, add the constant alongside the existing ones in the same file — do not scatter string literals.
 3. Run `make generate-dev` (regenerates DeepCopy + CRD manifests) and `make docs`.
 4. Commit the source change **and** the generated files (`zz_generated.deepcopy.go`, `config/crd/bases/*`, `config/rbac/role.yaml`, `docs/api-reference.md`).
@@ -224,7 +225,7 @@ The operator targets a Nebari platform laid down by NIC, and encodes those assum
 
 1. Put the logic in the sub-reconciler that owns that concern (`core`/`tls`/`routing`/`auth`). Do not cross concerns — reconcilers are independent by design.
 2. Keep it idempotent: create-or-update, and reconcile drift on every pass.
-3. Update `status.conditions` and emit a typed Event (Normal on success, Warning on failure) using the constants from `api/v1` and the `utils/conditions` helpers.
+3. Update `status.conditions` and emit a typed Event (Normal on success, Warning on failure) using the constants from `api/reconcilers/v1` and the `utils/conditions` helpers.
 4. If cleanup is needed on deletion, extend the corresponding `CleanupX` (remember: cleanup runs reverse order).
 5. Cover it with table-driven unit tests against envtest; add e2e coverage under `test/e2e` for cross-resource behavior.
 
@@ -235,7 +236,7 @@ The manager's RBAC is generated, not hand-written. `+kubebuilder:rbac:...` marke
 ### Adding an OIDC provider
 
 1. Implement the `OIDCProvider` interface in `internal/controller/reconcilers/auth/providers/`.
-2. Register it where the providers map is built in `cmd/operator/main.go`.
+2. Register it where the providers map is built in `cmd/main.go`.
 3. Existing implementations: `keycloak.go` (uses `Nerzal/gocloak`) and `generic_oidc.go`.
 
 ## Conventions
@@ -245,7 +246,7 @@ The manager's RBAC is generated, not hand-written. `+kubebuilder:rbac:...` marke
 - Standardized types: `Ready` (aggregate), `RoutingReady`, `TLSReady`, `AuthReady`.
 - Managed through `utils/conditions`, which wraps `k8s.io/apimachinery/pkg/api/meta` and only bumps `LastTransitionTime` on an actual status change.
 - Track `observedGeneration` so consumers can tell a stale status from a current one.
-- Condition types, reasons, and event reasons are Go constants in `api/v1/nebariapp_types.go` — reference them, never re-type the strings.
+- Condition types, reasons, and event reasons are Go constants in `api/reconcilers/v1/nebariapp_types.go` — reference them, never re-type the strings.
 
 ### Generated Files
 
@@ -259,7 +260,7 @@ Never reconcile a resource in a namespace that lacks `nebari.dev/managed=true`. 
 
 Three layers, each with its own make target:
 
-- **Unit tests** — `make test` (alias `make test-unit`). Table-driven Go tests run against **envtest** (a real kube-apiserver + etcd, no kubelet), so reconcilers are exercised against a live API without a full cluster. Every sub-reconciler and utility is covered next to its code: `internal/controller/reconcilers/{core,tls,routing,auth}` (and `auth/providers`), `internal/config`, `internal/controller/utils/*`, and `api/v1`. This is the fast gate — run it before every push.
+- **Unit tests** — `make test` (alias `make test-unit`). Table-driven Go tests run against **envtest** (a real kube-apiserver + etcd, no kubelet), so reconcilers are exercised against a live API without a full cluster. Every sub-reconciler and utility is covered next to its code: `internal/controller/reconcilers/{core,tls,routing,auth}` (and `auth/providers`), `internal/config`, `internal/controller/utils/*`, and `api/reconcilers/v1`. This is the fast gate — run it before every push.
 - **End-to-end tests** — `make test-e2e` (plus `make test-e2e-smoke` for a quick subset, `make test-e2e-parallel`). A **Ginkgo/Gomega** suite under `test/e2e/` (`-tags=e2e`) that deploys the operator to a **real cluster** and asserts end-to-end behavior: `auth_test.go`, `routing_test.go`, `tls_user_secret_test.go`, `gateway_test.go`, `validation_test.go`, `connectivity_test.go`, `conditions_test.go`, `manager_test.go`. Fixtures live in `test/e2e/testdata/`; shared helpers in `test/e2e/e2e_utils.go` and `test/utils/`. Bring up a local cluster with `make -C dev setup` first (see [Local development cluster](#local-development-cluster)).
 - **Helm chart golden tests** — `make helm-test` renders the `nebari-app` library chart for each case in `test/helm/nebari-app/templates/` and diffs it against the committed goldens in `test/helm/nebari-app/golden/`. When a template change is intentional, regenerate with `make helm-test-generate-golden`; `make helm-lint-library` lints the chart.
 
@@ -315,7 +316,7 @@ You do not build or push anything by hand — cutting the Release is the whole t
 
 1. Fork and branch from `main` with a conventional prefix (`feat/…`, `fix/…`, `chore/…`, `docs/…`, `test/…`).
 2. Make the change; add tests.
-3. If you touched `api/v1/`, run `make generate-dev` and `make docs`, and commit the generated files.
+3. If you touched `api/`, run `make generate-dev` and `make docs`, and commit the generated files.
 4. Run the local gate before pushing: `make fmt vet lint test`.
 5. Use **Conventional Commits** for messages.
 6. Open a PR. CI must pass: linter, unit tests, e2e tests, and the generated-files-up-to-date checks.
@@ -330,9 +331,9 @@ Run before every commit:
 2. **Vet:** `make vet`
 3. **Lint:** `make lint`
 4. **Unit tests:** `make test` (or `make test-unit`)
-5. **Codegen in sync** (if `api/v1/` changed): `make generate-dev` **and** `make docs`, with generated files committed.
+5. **Codegen in sync** (if `api/` changed): `make generate-dev` **and** `make docs`, with generated files committed.
 6. **RBAC via markers:** permission changes come from `+kubebuilder:rbac` markers + `make manifests`, never hand-edits to `config/rbac/role.yaml`.
-7. **Conditions & events** use the constants in `api/v1/nebariapp_types.go`, not inline strings.
+7. **Conditions & events** use the constants in `api/reconcilers/v1/nebariapp_types.go`, not inline strings.
 
 ## Keeping This File Current
 

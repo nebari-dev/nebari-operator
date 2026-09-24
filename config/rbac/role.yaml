@@ -32,6 +32,12 @@ rules:
   - update
   - watch
 - apiGroups:
+  - batch
+  resources:
+  - jobs
+  verbs:
+  - create
+- apiGroups:
   - cert-manager.io
   resources:
   - certificates
@@ -77,6 +83,22 @@ rules:
   - patch
   - update
   - watch
+- apiGroups:
+  - lifecycle.nebari.dev
+  resources:
+  - usercleanuphooks
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - lifecycle.nebari.dev
+  resources:
+  - usercleanuphooks/status
+  verbs:
+  - get
+  - patch
+  - update
 - apiGroups:
   - rbac.authorization.k8s.io
   resources:
