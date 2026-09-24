@@ -56,7 +56,7 @@ const (
 // as a dry-run create. The outcome is recorded in the Accepted condition. Validation
 // runs once per spec generation. It never creates real Jobs.
 func (r *UserCleanupHookReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = logf.FromContext(ctx)
+	log := logf.FromContext(ctx)
 
 	// Fetch the hook. Not found means it was deleted since the event was queued,
 	// so there is nothing to do.
@@ -90,17 +90,20 @@ func (r *UserCleanupHookReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		cond.Status = metav1.ConditionFalse
 		cond.Reason = lifecyclev1alpha1.ReasonTemplateInvalid
 		cond.Message = err.Error()
+		log.Info("template rejected by API server", "reason", err.Error())
 	// Submitting the job failed for another reason and the UserCleanupHook Accepted status is unknown
 	default:
 		cond.Status = metav1.ConditionUnknown
 		cond.Reason = lifecyclev1alpha1.ReasonValidationUnavailable
 		cond.Message = err.Error()
 		result = ctrl.Result{RequeueAfter: time.Minute}
+		log.Error(err, "dry-run request failed, retrying in a minute")
 	}
 
 	meta.SetStatusCondition(&hook.Status.Conditions, cond)
 	hook.Status.ObservedGeneration = hook.Generation
 	if err := r.Status().Update(ctx, &hook); err != nil {
+		log.Error(err, "failed to update UserCleanupHook status")
 		return ctrl.Result{}, err
 	}
 
