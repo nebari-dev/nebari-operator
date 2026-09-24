@@ -85,6 +85,7 @@ func (r *UserCleanupHookReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		cond.Status = metav1.ConditionTrue
 		cond.Reason = lifecyclev1alpha1.ReasonTemplateValid
 		cond.Message = "rendered Job passed API server validation"
+		log.Info("template accepted", "stage", hook.Spec.Stage)
 	// Job validation failed and the UserCleanupHook Accepted status is false
 	case apierrors.IsInvalid(err) || apierrors.IsBadRequest(err):
 		cond.Status = metav1.ConditionFalse
