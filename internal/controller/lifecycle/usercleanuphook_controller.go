@@ -70,7 +70,7 @@ func (r *UserCleanupHookReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, nil
 	}
 
-	job := buildJob(hook)
+	job := buildJob(&hook)
 	err := r.Create(ctx, job, client.DryRunAll)
 
 	var result ctrl.Result
@@ -117,7 +117,7 @@ func (r *UserCleanupHookReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-func buildJob(hook lifecyclev1alpha1.UserCleanupHook) *batchv1.Job {
+func buildJob(hook *lifecyclev1alpha1.UserCleanupHook) *batchv1.Job {
 	// Make sure to use a copy to avoid modifying the original object
 	podTemplate := *hook.Spec.Template.DeepCopy()
 
