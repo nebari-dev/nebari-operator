@@ -330,11 +330,49 @@ spec:
 ```
 
 **Key details:**
-- Public routes always use `PathPrefix` matching
+- Public routes default to `Exact` matching (safer for auth bypass); set `pathType: PathPrefix` per entry to widen
 - The public HTTPRoute has the label `nebari.dev/route-type: public`
 - Both routes point to the same backend service
 - If auth is disabled, no public route is created (all routes are already public)
 - Cleanup removes both HTTPRoutes when the NebariApp is deleted
+
+> **`publicRoutes` is for a subset of paths, not "disable auth".** It carves
+> specific paths out of the authenticated app. If a public path also matches the
+> main route (including the default `/` match when `routes` is empty) while
+> `auth.enforceAtGateway` is `true`, both a protected and an unprotected HTTPRoute
+> claim that path and the effective auth posture is left to Gateway API conflict
+> resolution. To turn gateway auth off for the whole app, set
+> `auth.enforceAtGateway: false` (keep provisioning the Keycloak client) or
+> `auth.enabled: false` (no client at all) — do not list every path under
+> `publicRoutes`.
+
+### Route Filters
+
+`spec.routing.filters` is a pass-through to the upstream Gateway API
+[`HTTPRouteFilter`](https://gateway-api.sigs.k8s.io/api-types/httproute/#filters)
+list. The operator appends the filters you supply, in order, to the rule of
+**both** the protected and the public HTTPRoute; it does not interpret, reorder,
+or strip them. This mirrors the `annotations` escape hatch and is the supported
+way to adjust request/response headers at the gateway without forking the
+operator or rebuilding the backend image — for example, stripping an
+overpermissive CORS header an upstream sets, or adding security headers.
+
+```yaml
+spec:
+  routing:
+    filters:
+      - type: ResponseHeaderModifier
+        responseHeaderModifier:
+          remove:
+            - Access-Control-Allow-Credentials
+          set:
+            - name: Strict-Transport-Security
+              value: "max-age=63072000; includeSubDomains"
+```
+
+Because the operator owns the generated HTTPRoute (`ownerReferences.controller:
+true`), a manual `kubectl patch` of these fields is reverted on the next
+reconcile — `routing.filters` is the durable way to express them.
 
 ### Backend References
 
