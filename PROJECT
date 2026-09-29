@@ -32,4 +32,13 @@ resources:
   kind: UserCleanupHook
   path: github.com/nebari-dev/nebari-operator/api/lifecycle/v1alpha1
   version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: nebari.dev
+  group: lifecycle
+  kind: UserDeletion
+  path: github.com/nebari-dev/nebari-operator/api/lifecycle/v1alpha1
+  version: v1alpha1
 version: "3"
