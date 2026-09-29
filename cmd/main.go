@@ -49,6 +49,7 @@ import (
 	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/routing"
 	tlsreconciler "github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/tls"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/constants"
+	"github.com/nebari-dev/nebari-operator/internal/keycloak"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -236,6 +237,40 @@ func main() {
 		}
 
 		setupLog.Info("Keycloak OIDC provider initialized successfully")
+
+		// User cleanup depends on Keycloak admin events, so the whole feature,
+		// poller and both controllers, only runs when Keycloak is enabled.
+		lifecycleConfig := config.LoadLifecycleConfig()
+		if err := (&lifecyclecontroller.UserCleanupHookReconciler{
+			Client:   mgr.GetClient(),
+			Scheme:   mgr.GetScheme(),
+			Recorder: mgr.GetEventRecorderFor("usercleanuphook-controller"),
+		}).SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create controller", "controller", "lifecycle-usercleanuphook")
+			os.Exit(1)
+		}
+		if err := (&lifecyclecontroller.UserDeletionReconciler{
+			Client: mgr.GetClient(),
+			Scheme: mgr.GetScheme(),
+		}).SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create controller", "controller", "lifecycle-userdeletion")
+			os.Exit(1)
+		}
+		poller := &lifecyclecontroller.KeycloakDeletionPoller{
+			Client:          mgr.GetClient(),
+			Events:          keycloak.NewClient(authConfig.Keycloak, mgr.GetClient()),
+			PollInterval:    lifecycleConfig.PollInterval,
+			EventRetention:  lifecycleConfig.EventRetention,
+			CursorName:      lifecycleConfig.CursorConfigMapName,
+			CursorNamespace: lifecycleConfig.CursorConfigMapNamespace,
+		}
+		if err := mgr.Add(poller); err != nil {
+			setupLog.Error(err, "unable to add user deletion poller")
+			os.Exit(1)
+		}
+		setupLog.Info("User deletion poller initialized",
+			"pollInterval", lifecycleConfig.PollInterval,
+			"cursor", lifecycleConfig.CursorConfigMapNamespace+"/"+lifecycleConfig.CursorConfigMapName)
 	}
 
 	// Initialize generic OIDC provider
@@ -293,14 +328,6 @@ func main() {
 		AuthReconciler:    authReconciler,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "NebariApp")
-		os.Exit(1)
-	}
-	if err := (&lifecyclecontroller.UserCleanupHookReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("usercleanuphook-controller"),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "Failed to create controller", "controller", "lifecycle-usercleanuphook")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder
