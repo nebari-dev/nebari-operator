@@ -61,28 +61,159 @@ type UserDeletionSpec struct {
 	AdminEventID string `json:"adminEventId,omitempty"`
 }
 
-// UserDeletionStatus defines the observed state of UserDeletion.
+// UserDeletionPhase summarizes where a UserDeletion is in its life.
+// +kubebuilder:validation:Enum=Pending;InProgress;Completed
+type UserDeletionPhase string
+
+const (
+	// UserDeletionPending means no cleanup Job has been created yet.
+	UserDeletionPending UserDeletionPhase = "Pending"
+	// UserDeletionInProgress means at least one hook has a Job and at least one is not terminal.
+	UserDeletionInProgress UserDeletionPhase = "InProgress"
+	// UserDeletionCompleted means every hook entry is terminal. The marker is kept
+	// as a tombstone so a replayed Keycloak event does not run cleanup twice.
+	UserDeletionCompleted UserDeletionPhase = "Completed"
+)
+
+// HookState is the state of one hook's cleanup for one UserDeletion.
+// +kubebuilder:validation:Enum=Pending;Running;Succeeded;Failed;Skipped
+type HookState string
+
+const (
+	// HookPending means the Job has not been created, either because the stage
+	// is not due yet or because the reconciler has not got to it.
+	HookPending HookState = "Pending"
+	// HookRunning means the Job exists and has not finished.
+	HookRunning HookState = "Running"
+	// HookSucceeded means the Job completed.
+	HookSucceeded HookState = "Succeeded"
+	// HookFailed means the Job failed, or disappeared before finishing.
+	HookFailed HookState = "Failed"
+	// HookSkipped means the Job was never created, for example because the hook
+	// was removed before its stage came due.
+	HookSkipped HookState = "Skipped"
+)
+
+// IsTerminal reports whether the state can no longer change.
+func (s HookState) IsTerminal() bool {
+	return s == HookSucceeded || s == HookFailed || s == HookSkipped
+}
+
+// HookStatus records the cleanup of one UserCleanupHook for this user.
+type HookStatus struct {
+	// name of the UserCleanupHook.
+	// +required
+	Name string `json:"name"`
+
+	// namespace of the UserCleanupHook. Jobs run there.
+	// +required
+	Namespace string `json:"namespace"`
+
+	// stage the hook subscribed to, copied so the entry stays meaningful after the hook is gone.
+	// +required
+	Stage CleanupStage `json:"stage"`
+
+	// state of the cleanup.
+	// +required
+	State HookState `json:"state"`
+
+	// job is the name of the Job created for this hook, once created.
+	// +optional
+	Job string `json:"job,omitempty"`
+
+	// startedAt is when the Job started.
+	// +optional
+	StartedAt *metav1.Time `json:"startedAt,omitempty"`
+
+	// finishedAt is when the Job reached a terminal state, or when the entry was skipped.
+	// +optional
+	FinishedAt *metav1.Time `json:"finishedAt,omitempty"`
+
+	// reason is a CamelCase word explaining a Failed or Skipped state.
+	// +optional
+	Reason string `json:"reason,omitempty"`
+
+	// message is a human readable explanation of a Failed or Skipped state.
+	// +optional
+	Message string `json:"message,omitempty"`
+}
+
+// UserDeletionStatus is the observed progress of the cleanup. It is owned by the
+// UserDeletion controller and can be rebuilt from the Jobs that exist.
 type UserDeletionStatus struct {
-	// conditions represent the current state of the UserDeletion resource.
-	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
-	//
-	// Standard condition types include:
-	// - "Available": the resource is fully functional
-	// - "Progressing": the resource is being created or updated
-	// - "Degraded": the resource failed to reach or maintain its desired state
-	//
-	// The status of each condition is one of True, False, or Unknown.
+	// observedGeneration is the spec generation this status was computed from.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
+	// phase summarizes the cleanup: Pending, InProgress or Completed.
+	// +optional
+	Phase UserDeletionPhase `json:"phase,omitempty"`
+
+	// dueAt is when the "delete" stage may run: deletedAt plus the cluster-wide
+	// grace period at the time the marker was first reconciled. It is frozen so
+	// a later change to the grace period does not move markers already in flight.
+	// +optional
+	DueAt *metav1.Time `json:"dueAt,omitempty"`
+
+	// completedAt is when every hook entry became terminal. The tombstone is
+	// removed some time after this.
+	// +optional
+	CompletedAt *metav1.Time `json:"completedAt,omitempty"`
+
+	// hooks has one entry per UserCleanupHook seen while this deletion was in flight.
+	// +listType=map
+	// +listMapKey=namespace
+	// +listMapKey=name
+	// +optional
+	Hooks []HookStatus `json:"hooks,omitempty"`
+
+	// conditions:
+	// - "IdentifiersComplete": the username is known. False when the Keycloak
+	//   event carried no representation, so packs keyed on username may do nothing.
+	// - "HooksSucceeded": every hook entry is terminal and none failed or was skipped.
 	// +listType=map
 	// +listMapKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
+// Condition types for UserDeletion.
+const (
+	// ConditionTypeIdentifiersComplete is True when the marker carries a username.
+	ConditionTypeIdentifiersComplete = "IdentifiersComplete"
+	// ConditionTypeHooksSucceeded is True when every hook ran and succeeded.
+	ConditionTypeHooksSucceeded = "HooksSucceeded"
+)
+
+// Condition reasons for UserDeletion.
+const (
+	ReasonUsernameKnown   = "UsernameKnown"
+	ReasonUsernameMissing = "UsernameMissing"
+	ReasonNoHooks         = "NoHooks"
+	ReasonHooksPending    = "HooksPending"
+	ReasonAllSucceeded    = "AllSucceeded"
+	ReasonHookFailed      = "HookFailed"
+	ReasonHookSkipped     = "HookSkipped"
+)
+
+// Reasons recorded on a HookStatus entry.
+const (
+	// HookReasonJobLost means the Job disappeared before the controller saw it finish.
+	HookReasonJobLost = "JobLost"
+	// HookReasonHookRemoved means the UserCleanupHook was deleted before its stage came due.
+	HookReasonHookRemoved = "HookRemoved"
+)
+
+// UserDeletionFinalizer keeps a marker until its running Jobs have finished.
+const UserDeletionFinalizer = "lifecycle.nebari.dev/in-flight-jobs"
+
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster
 // +kubebuilder:printcolumn:name="Username",type=string,JSONPath=`.spec.username`
+// +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
 // +kubebuilder:printcolumn:name="Deleted",type=date,JSONPath=`.spec.deletedAt`
+// +kubebuilder:printcolumn:name="Due",type=date,JSONPath=`.status.dueAt`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // UserDeletion marks that a user was deleted in Keycloak. The poller creates one per

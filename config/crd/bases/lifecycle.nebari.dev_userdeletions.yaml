@@ -18,8 +18,14 @@ spec:
     - jsonPath: .spec.username
       name: Username
       type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
     - jsonPath: .spec.deletedAt
       name: Deleted
+      type: date
+    - jsonPath: .status.dueAt
+      name: Due
       type: date
     - jsonPath: .metadata.creationTimestamp
       name: Age
@@ -93,17 +99,18 @@ spec:
           status:
             description: status defines the observed state of UserDeletion
             properties:
+              completedAt:
+                description: |-
+                  completedAt is when every hook entry became terminal. The tombstone is
+                  removed some time after this.
+                format: date-time
+                type: string
               conditions:
                 description: |-
-                  conditions represent the current state of the UserDeletion resource.
-                  Each condition has a unique type and reflects the status of a specific aspect of the resource.
-
-                  Standard condition types include:
-                  - "Available": the resource is fully functional
-                  - "Progressing": the resource is being created or updated
-                  - "Degraded": the resource failed to reach or maintain its desired state
-
-                  The status of each condition is one of True, False, or Unknown.
+                  conditions:
+                  - "IdentifiersComplete": the username is known. False when the Keycloak
+                    event carried no representation, so packs keyed on username may do nothing.
+                  - "HooksSucceeded": every hook entry is terminal and none failed or was skipped.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -162,6 +169,87 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              dueAt:
+                description: |-
+                  dueAt is when the "delete" stage may run: deletedAt plus the cluster-wide
+                  grace period at the time the marker was first reconciled. It is frozen so
+                  a later change to the grace period does not move markers already in flight.
+                format: date-time
+                type: string
+              hooks:
+                description: hooks has one entry per UserCleanupHook seen while this
+                  deletion was in flight.
+                items:
+                  description: HookStatus records the cleanup of one UserCleanupHook
+                    for this user.
+                  properties:
+                    finishedAt:
+                      description: finishedAt is when the Job reached a terminal state,
+                        or when the entry was skipped.
+                      format: date-time
+                      type: string
+                    job:
+                      description: job is the name of the Job created for this hook,
+                        once created.
+                      type: string
+                    message:
+                      description: message is a human readable explanation of a Failed
+                        or Skipped state.
+                      type: string
+                    name:
+                      description: name of the UserCleanupHook.
+                      type: string
+                    namespace:
+                      description: namespace of the UserCleanupHook. Jobs run there.
+                      type: string
+                    reason:
+                      description: reason is a CamelCase word explaining a Failed
+                        or Skipped state.
+                      type: string
+                    stage:
+                      description: stage the hook subscribed to, copied so the entry
+                        stays meaningful after the hook is gone.
+                      enum:
+                      - disable
+                      - delete
+                      type: string
+                    startedAt:
+                      description: startedAt is when the Job started.
+                      format: date-time
+                      type: string
+                    state:
+                      description: state of the cleanup.
+                      enum:
+                      - Pending
+                      - Running
+                      - Succeeded
+                      - Failed
+                      - Skipped
+                      type: string
+                  required:
+                  - name
+                  - namespace
+                  - stage
+                  - state
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - namespace
+                - name
+                x-kubernetes-list-type: map
+              observedGeneration:
+                description: observedGeneration is the spec generation this status
+                  was computed from.
+                format: int64
+                type: integer
+              phase:
+                description: 'phase summarizes the cleanup: Pending, InProgress or
+                  Completed.'
+                enum:
+                - Pending
+                - InProgress
+                - Completed
+                type: string
             type: object
         required:
         - spec
