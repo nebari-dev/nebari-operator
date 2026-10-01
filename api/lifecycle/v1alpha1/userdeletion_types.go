@@ -125,15 +125,22 @@ type HookStatus struct {
 	// +optional
 	StartedAt *metav1.Time `json:"startedAt,omitempty"`
 
+	// firstFailedAt is when creating the Job first failed for a reason that may
+	// clear on its own. Retries continue for a bounded window from this time,
+	// then the entry becomes Failed. Cleared when a create succeeds.
+	// +optional
+	FirstFailedAt *metav1.Time `json:"firstFailedAt,omitempty"`
+
 	// finishedAt is when the Job reached a terminal state, or when the entry was skipped.
 	// +optional
 	FinishedAt *metav1.Time `json:"finishedAt,omitempty"`
 
-	// reason is a CamelCase word explaining a Failed or Skipped state.
+	// reason is a CamelCase word explaining a Failed or Skipped state, or why a
+	// Pending entry has not advanced, for example a Job create that keeps failing.
 	// +optional
 	Reason string `json:"reason,omitempty"`
 
-	// message is a human readable explanation of a Failed or Skipped state.
+	// message is a human readable explanation to go with reason.
 	// +optional
 	Message string `json:"message,omitempty"`
 }
@@ -202,6 +209,15 @@ const (
 	HookReasonJobLost = "JobLost"
 	// HookReasonHookRemoved means the UserCleanupHook was deleted before its stage came due.
 	HookReasonHookRemoved = "HookRemoved"
+	// HookReasonJobCreateFailed means the last attempt to create the Job failed for a
+	// reason that may clear on its own. The entry stays Pending and is retried.
+	HookReasonJobCreateFailed = "JobCreateFailed"
+	// HookReasonJobCreateRejected means the API server rejected the Job in a way
+	// that retrying cannot fix, for example admission or validation.
+	HookReasonJobCreateRejected = "JobCreateRejected"
+	// HookReasonJobCreateTimedOut means the Job could not be created within the
+	// retry window after the stage came due.
+	HookReasonJobCreateTimedOut = "JobCreateTimedOut"
 )
 
 // UserDeletionFinalizer keeps a marker until its running Jobs have finished.

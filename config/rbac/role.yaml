@@ -45,6 +45,10 @@ rules:
   - jobs
   verbs:
   - create
+  - delete
+  - get
+  - list
+  - watch
 - apiGroups:
   - cert-manager.io
   resources:

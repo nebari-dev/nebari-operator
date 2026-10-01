@@ -188,13 +188,20 @@ spec:
                         or when the entry was skipped.
                       format: date-time
                       type: string
+                    firstFailedAt:
+                      description: |-
+                        firstFailedAt is when creating the Job first failed for a reason that may
+                        clear on its own. Retries continue for a bounded window from this time,
+                        then the entry becomes Failed. Cleared when a create succeeds.
+                      format: date-time
+                      type: string
                     job:
                       description: job is the name of the Job created for this hook,
                         once created.
                       type: string
                     message:
-                      description: message is a human readable explanation of a Failed
-                        or Skipped state.
+                      description: message is a human readable explanation to go with
+                        reason.
                       type: string
                     name:
                       description: name of the UserCleanupHook.
@@ -203,8 +210,9 @@ spec:
                       description: namespace of the UserCleanupHook. Jobs run there.
                       type: string
                     reason:
-                      description: reason is a CamelCase word explaining a Failed
-                        or Skipped state.
+                      description: |-
+                        reason is a CamelCase word explaining a Failed or Skipped state, or why a
+                        Pending entry has not advanced, for example a Job create that keeps failing.
                       type: string
                     stage:
                       description: stage the hook subscribed to, copied so the entry

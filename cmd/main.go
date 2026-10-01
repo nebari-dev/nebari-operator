@@ -250,8 +250,14 @@ func main() {
 			os.Exit(1)
 		}
 		if err := (&lifecyclecontroller.UserDeletionReconciler{
-			Client: mgr.GetClient(),
-			Scheme: mgr.GetScheme(),
+			Client:      mgr.GetClient(),
+			Scheme:      mgr.GetScheme(),
+			Recorder:    mgr.GetEventRecorderFor("userdeletion-controller"),
+			GracePeriod: lifecycleConfig.GracePeriod,
+			// Reuse the event retention as the bound on create retries: by then
+			// the Keycloak event is gone and the marker is on its way to tombstone.
+			JobCreateRetryWindow: lifecycleConfig.EventRetention,
+			MarkerRetention:      lifecycleConfig.MarkerRetention,
 		}).SetupWithManager(mgr); err != nil {
 			setupLog.Error(err, "unable to create controller", "controller", "lifecycle-userdeletion")
 			os.Exit(1)

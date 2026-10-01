@@ -47,6 +47,10 @@ func (in *HookStatus) DeepCopyInto(out *HookStatus) {
 		in, out := &in.StartedAt, &out.StartedAt
 		*out = (*in).DeepCopy()
 	}
+	if in.FirstFailedAt != nil {
+		in, out := &in.FirstFailedAt, &out.FirstFailedAt
+		*out = (*in).DeepCopy()
+	}
 	if in.FinishedAt != nil {
 		in, out := &in.FinishedAt, &out.FinishedAt
 		*out = (*in).DeepCopy()

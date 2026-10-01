@@ -23,6 +23,7 @@ const (
 	envLifecyclePollInterval             = "LIFECYCLE_POLL_INTERVAL"
 	envLifecycleGracePeriod              = "LIFECYCLE_GRACE_PERIOD"
 	envLifecycleEventRetention           = "LIFECYCLE_EVENT_RETENTION"
+	envLifecycleMarkerRetention          = "LIFECYCLE_MARKER_RETENTION"
 	envLifecycleCursorConfigMapName      = "LIFECYCLE_CURSOR_CONFIGMAP_NAME"
 	envLifecycleCursorConfigMapNamespace = "LIFECYCLE_CURSOR_CONFIGMAP_NAMESPACE"
 )
@@ -47,6 +48,12 @@ type LifecycleConfig struct {
 	// replay is dropped as AlreadyExists rather than run twice.
 	EventRetention time.Duration
 
+	// MarkerRetention is how long a completed UserDeletion is kept as a
+	// tombstone before the operator deletes it. While it exists, a replayed
+	// Keycloak event collides on the name and cleanup does not run twice, so it
+	// must be at least EventRetention. Longer keeps the audit record longer.
+	MarkerRetention time.Duration
+
 	// CursorConfigMapName is the ConfigMap the poller uses to remember the last
 	// admin event it processed, so a restart does not replay old deletions.
 	CursorConfigMapName string
@@ -62,6 +69,7 @@ func LoadLifecycleConfig() LifecycleConfig {
 		PollInterval:             getEnvDuration(envLifecyclePollInterval, 5*time.Minute),
 		GracePeriod:              getEnvDuration(envLifecycleGracePeriod, 30*24*time.Hour),
 		EventRetention:           getEnvDuration(envLifecycleEventRetention, 7*24*time.Hour),
+		MarkerRetention:          getEnvDuration(envLifecycleMarkerRetention, 90*24*time.Hour),
 		CursorConfigMapName:      getEnv(envLifecycleCursorConfigMapName, "user-deletion-cursor"),
 		CursorConfigMapNamespace: getEnv(envLifecycleCursorConfigMapNamespace, "nebari-operator-system"),
 	}
