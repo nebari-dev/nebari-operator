@@ -17,6 +17,10 @@ limitations under the License.
 package lifecycle
 
 import (
+	"context"
+	"errors"
+	"time"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -35,6 +39,17 @@ import (
 )
 
 const testNamespace = "default"
+
+// failingCreateClient is the real client with Create replaced by a fixed
+// error, to simulate an API server that cannot answer a dry-run.
+type failingCreateClient struct {
+	client.Client
+	err error
+}
+
+func (c *failingCreateClient) Create(context.Context, client.Object, ...client.CreateOption) error {
+	return c.err
+}
 
 // newHook returns a minimal valid hook. Tests mutate it to produce the
 // invalid variants they need.
@@ -256,6 +271,70 @@ var _ = Describe("UserCleanupHook Controller", func() {
 		Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 		Expect(cond.Reason).To(Equal(lifecyclev1alpha1.ReasonTemplateInvalid))
 		Expect(cond.ObservedGeneration).To(Equal(updated.Generation))
+	})
+
+	It("rejects a template whose ServiceAccount does not exist", func() {
+		hook := newHook("missing-sa")
+		hook.Spec.Template.Spec.ServiceAccountName = "no-such-sa"
+		createHook(hook)
+
+		result := reconcile("missing-sa")
+
+		cond := accepted(getHook("missing-sa"))
+		Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+		Expect(cond.Reason).To(Equal(lifecyclev1alpha1.ReasonServiceAccountMissing))
+		Expect(cond.Message).To(ContainSubstring("no-such-sa"))
+		Expect(result).To(Equal(ctrl.Result{}))
+	})
+
+	It("accepts a template whose ServiceAccount exists", func() {
+		sa := &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: "cleanup-sa", Namespace: testNamespace}}
+		Expect(k8sClient.Create(ctx, sa)).To(Succeed())
+		DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, sa))).To(Succeed()) })
+
+		hook := newHook("with-sa")
+		hook.Spec.Template.Spec.ServiceAccountName = "cleanup-sa"
+		createHook(hook)
+
+		reconcile("with-sa")
+
+		cond := accepted(getHook("with-sa"))
+		Expect(cond.Status).To(Equal(metav1.ConditionTrue))
+		Expect(cond.Reason).To(Equal(lifecyclev1alpha1.ReasonTemplateValid))
+	})
+
+	It("retries a hook whose dry-run could not be evaluated", func() {
+		createHook(newHook("unavailable"))
+
+		// Make the dry-run fail with something that is neither success nor a
+		// rejection: the API server answering 500 to the create.
+		reconciler.Client = &failingCreateClient{
+			Client: k8sClient,
+			err:    apierrors.NewInternalError(errors.New("etcd leader changed")),
+		}
+
+		result := reconcile("unavailable")
+		hook := getHook("unavailable")
+		cond := accepted(hook)
+		Expect(cond.Status).To(Equal(metav1.ConditionUnknown))
+		Expect(cond.Reason).To(Equal(lifecyclev1alpha1.ReasonValidationUnavailable))
+		Expect(hook.Status.ObservedGeneration).NotTo(Equal(hook.Generation), "an Unknown must not count as evaluated")
+		Expect(result.RequeueAfter).To(Equal(time.Minute))
+
+		// A second failing pass changes nothing and must not write status,
+		// otherwise every write would trigger the next pass in a tight loop.
+		before := hook.ResourceVersion
+		result = reconcile("unavailable")
+		Expect(getHook("unavailable").ResourceVersion).To(Equal(before))
+		Expect(result.RequeueAfter).To(Equal(time.Minute))
+
+		// Once the API server answers again the retry reaches a verdict.
+		reconciler.Client = k8sClient
+		result = reconcile("unavailable")
+		hook = getHook("unavailable")
+		Expect(accepted(hook).Status).To(Equal(metav1.ConditionTrue))
+		Expect(hook.Status.ObservedGeneration).To(Equal(hook.Generation))
+		Expect(result).To(Equal(ctrl.Result{}))
 	})
 
 	It("returns cleanly when the hook no longer exists", func() {

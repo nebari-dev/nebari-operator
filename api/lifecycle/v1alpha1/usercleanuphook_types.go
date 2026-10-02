@@ -78,9 +78,14 @@ type UserCleanupHookSpec struct {
 // Condition types for UserCleanupHook
 const (
 	// ConditionTypeAccepted indicates whether the pod template renders to a valid Job.
-	// True means the API server accepted a dry-run create of the rendered Job.
-	// False means it was rejected and the reason and message carry the API server error.
-	// Unknown means the operator could not evaluate the template.
+	// True means the API server accepted a dry-run create of the rendered Job and
+	// the ServiceAccount it names exists. False means one of those checks failed
+	// and the reason and message say which. Unknown means the operator could not
+	// evaluate the template.
+	//
+	// A dry-run never creates a pod, so checks that happen at pod admission are
+	// not covered, such as Pod Security Admission, image pulls, and resource quotas
+	// on pods. A hook can be Accepted and its Job still fail for one of those reasons.
 	ConditionTypeAccepted = "Accepted"
 )
 
@@ -91,6 +96,13 @@ const (
 
 	// ReasonTemplateInvalid is set when the API server rejected the rendered Job.
 	ReasonTemplateInvalid = "TemplateInvalid"
+
+	// ReasonServiceAccountMissing is set when the template names a ServiceAccount
+	// that does not exist in the hook's namespace. The Job would be created but
+	// its pod never would. The check runs once per spec generation: creating the
+	// ServiceAccount afterwards does not re-evaluate the hook, so re-apply the
+	// hook or change its spec once the account exists.
+	ReasonServiceAccountMissing = "ServiceAccountMissing"
 
 	// ReasonValidationUnavailable is set when the dry-run request itself failed,
 	// for example because the API server was unreachable, so the template could

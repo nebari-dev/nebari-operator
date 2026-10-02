@@ -180,12 +180,13 @@ func main() {
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "d77e3dc7.nebari.dev",
-		// The operator only reads one ConfigMap, the user deletion cursor. Caching
-		// the type would start a cluster-wide informer that needs list and watch
-		// on every ConfigMap, so read it from the API server directly instead.
+		// ConfigMaps and ServiceAccounts are read once in a while by name: the
+		// user deletion cursor, and the ServiceAccount a hook's template names.
+		// Caching either type would start a cluster-wide informer that needs
+		// list and watch on every object, so read them from the API server.
 		Client: client.Options{
 			Cache: &client.CacheOptions{
-				DisableFor: []client.Object{&corev1.ConfigMap{}},
+				DisableFor: []client.Object{&corev1.ConfigMap{}, &corev1.ServiceAccount{}},
 			},
 		},
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily

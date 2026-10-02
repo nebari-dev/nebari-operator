@@ -18,9 +18,11 @@ package lifecycle
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -42,6 +44,7 @@ type UserCleanupHookReconciler struct {
 
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=create
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=core,resources=serviceaccounts,verbs=get
 // +kubebuilder:rbac:groups=lifecycle.nebari.dev,resources=usercleanuphooks,verbs=get;list;watch
 // +kubebuilder:rbac:groups=lifecycle.nebari.dev,resources=usercleanuphooks/status,verbs=get;update;patch
 
@@ -59,10 +62,14 @@ func (r *UserCleanupHookReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	// Return if there have been no changes
+	// Return if there have been no changes. observedGeneration is only advanced
+	// by a definitive verdict, so a hook whose last check could not be made
+	// comes through here again on the retry.
 	if hook.Generation == hook.Status.ObservedGeneration {
 		return ctrl.Result{}, nil
 	}
+
+	original := hook.DeepCopy()
 
 	// Render the Job for a placeholder user. A dry-run still checks that the
 	// name is free, so use GenerateName to avoid colliding with a real Job.
@@ -77,14 +84,39 @@ func (r *UserCleanupHookReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		ObservedGeneration: hook.Generation,
 	}
 
+	// The dry-run never creates a pod, so a missing ServiceAccount only shows up
+	// when the real Job tries to. Check it here so the hook is rejected up front.
+	// An empty name means the namespace default, which Kubernetes creates
+	// itself, so only an explicit name is checked.
+	saName := job.Spec.Template.Spec.ServiceAccountName
+	var saErr error
+	if err == nil && saName != "" {
+		saErr = r.Get(ctx, client.ObjectKey{Namespace: hook.Namespace, Name: saName}, &corev1.ServiceAccount{})
+	}
+
 	switch {
 	// Job validation was successful and the UserCleanupHook Accepted status is true
-	case err == nil:
+	case err == nil && saErr == nil:
 		cond.Status = metav1.ConditionTrue
 		cond.Reason = lifecyclev1alpha1.ReasonTemplateValid
-		cond.Message = "rendered Job passed API server validation"
+		cond.Message = "rendered Job passed API server validation; pod-level checks such as Pod Security Admission and image pulls are not covered"
 		r.Recorder.Event(&hook, corev1.EventTypeNormal, lifecyclev1alpha1.ReasonTemplateValid, cond.Message)
 		log.Info("template accepted", "stage", hook.Spec.Stage)
+	// The Job is valid but its pod could never be created
+	case err == nil && apierrors.IsNotFound(saErr):
+		cond.Status = metav1.ConditionFalse
+		cond.Reason = lifecyclev1alpha1.ReasonServiceAccountMissing
+		cond.Message = fmt.Sprintf("serviceAccount %q not found in namespace %q", saName, hook.Namespace)
+		r.Recorder.Event(&hook, corev1.EventTypeWarning, lifecyclev1alpha1.ReasonServiceAccountMissing, cond.Message)
+		log.Info("template rejected, ServiceAccount missing", "serviceAccount", saName)
+	// The ServiceAccount lookup itself failed; same handling as a failed dry-run
+	case err == nil && saErr != nil:
+		cond.Status = metav1.ConditionUnknown
+		cond.Reason = lifecyclev1alpha1.ReasonValidationUnavailable
+		cond.Message = saErr.Error()
+		result = ctrl.Result{RequeueAfter: time.Minute}
+		r.Recorder.Event(&hook, corev1.EventTypeWarning, lifecyclev1alpha1.ReasonValidationUnavailable, cond.Message)
+		log.Error(saErr, "ServiceAccount lookup failed, retrying in a minute")
 	// Job validation failed and the UserCleanupHook Accepted status is false
 	case apierrors.IsInvalid(err) || apierrors.IsBadRequest(err):
 		cond.Status = metav1.ConditionFalse
@@ -103,10 +135,21 @@ func (r *UserCleanupHookReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 
 	meta.SetStatusCondition(&hook.Status.Conditions, cond)
-	hook.Status.ObservedGeneration = hook.Generation
-	if err := r.Status().Update(ctx, &hook); err != nil {
-		log.Error(err, "failed to update UserCleanupHook status")
-		return ctrl.Result{}, err
+
+	// Only a definitive verdict counts as having evaluated this generation. An
+	// Unknown leaves observedGeneration behind so the requeue re-evaluates
+	// instead of hitting the generation check and returning.
+	if cond.Status != metav1.ConditionUnknown {
+		hook.Status.ObservedGeneration = hook.Generation
+	}
+
+	// Write only when something changed, otherwise a repeated Unknown would
+	// write the same status every pass and each write would trigger the next.
+	if !equality.Semantic.DeepEqual(original.Status, hook.Status) {
+		if err := r.Status().Update(ctx, &hook); err != nil {
+			log.Error(err, "failed to update UserCleanupHook status")
+			return ctrl.Result{}, err
+		}
 	}
 
 	// Only the Unknown branch sets a RequeueAfter; the other two return an
