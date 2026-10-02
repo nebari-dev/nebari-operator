@@ -148,15 +148,18 @@ func (r *UserDeletionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 	discoverHooks(&marker, hooks)
 
+	// Record the outcome of every Job that has finished since the last pass.
+	// This runs before creating new Jobs because Job reads go through the
+	// cache and a Job created in this pass is not in it yet. It is observed
+	// on the next pass, which its own create event triggers.
+	if err := r.observeJobs(ctx, &marker); err != nil {
+		return ctrl.Result{}, err
+	}
+
 	// Create Jobs for the entries whose stage is due. A disable entry is due as
 	// soon as it exists and a delete entry only once the grace period has elapsed
 	blocked, err := r.createDueJobs(ctx, &marker, hooks)
 	if err != nil {
-		return ctrl.Result{}, err
-	}
-
-	// Record the outcome of every Job that has finished since the last pass
-	if err := r.observeJobs(ctx, &marker); err != nil {
 		return ctrl.Result{}, err
 	}
 
