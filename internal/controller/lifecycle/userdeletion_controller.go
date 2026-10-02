@@ -340,9 +340,10 @@ func (r *UserDeletionReconciler) listAcceptedHooks(ctx context.Context) ([]lifec
 }
 
 // discoverHooks makes the marker's hook entries match the hooks that exist.
-// A hook without an entry gets one as Pending. An entry whose hook is gone and
-// has not reached a terminal state is Skipped, so the marker can still
-// complete. Entries whose hook still exists are left to the Job logic.
+// A hook without an entry gets one as Pending. A Pending entry whose hook is
+// gone is Skipped, so the marker can still complete. Running and terminal
+// entries are left alone: their Job already exists or already finished, and
+// the hook disappearing changes nothing about what it did.
 func discoverHooks(marker *lifecyclev1alpha1.UserDeletion, hooks []lifecyclev1alpha1.UserCleanupHook) {
 	present := make(map[types.NamespacedName]bool, len(hooks))
 	for _, hook := range hooks {
@@ -355,7 +356,9 @@ func discoverHooks(marker *lifecyclev1alpha1.UserDeletion, hooks []lifecyclev1al
 		key := types.NamespacedName{Namespace: entry.Namespace, Name: entry.Name}
 		recorded[key] = true
 
-		if !present[key] && !entry.State.IsTerminal() {
+		// Only a Pending entry is skipped. A Running one has a Job that is still
+		// executing and is observed to its real outcome even if the hook is gone.
+		if !present[key] && entry.State == lifecyclev1alpha1.HookPending {
 			now := metav1.Now()
 			entry.State = lifecyclev1alpha1.HookSkipped
 			entry.Reason = lifecyclev1alpha1.HookReasonHookRemoved
