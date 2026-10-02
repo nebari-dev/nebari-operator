@@ -52,6 +52,10 @@ const (
 	// jobLostGrace is how long a Running entry's Job may be missing from the
 	// cache before it is considered gone rather than not yet seen
 	jobLostGrace = time.Minute
+
+	// conflictRetryInterval is how soon to retry after a write conflict, long
+	// enough for the cache to receive the version that caused it
+	conflictRetryInterval = time.Second
 )
 
 // UserDeletionReconciler reconciles a UserDeletion object
@@ -99,7 +103,7 @@ func (r *UserDeletionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// the status write at the end still applies.
 	if controllerutil.AddFinalizer(&marker, lifecyclev1alpha1.UserDeletionFinalizer) {
 		if err := r.Update(ctx, &marker); err != nil {
-			return ctrl.Result{}, err
+			return retryOnConflict(err)
 		}
 	}
 
@@ -179,7 +183,7 @@ func (r *UserDeletionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// Only update the resource if status has changed
 	if !equality.Semantic.DeepEqual(original.Status, marker.Status) {
 		if err := r.Status().Update(ctx, &marker); err != nil {
-			return ctrl.Result{}, err
+			return retryOnConflict(err)
 		}
 	}
 
@@ -200,7 +204,7 @@ func (r *UserDeletionReconciler) finalize(ctx context.Context, marker *lifecycle
 	}
 	if !equality.Semantic.DeepEqual(original.Status, marker.Status) {
 		if err := r.Status().Update(ctx, marker); err != nil {
-			return ctrl.Result{}, err
+			return retryOnConflict(err)
 		}
 	}
 
@@ -213,9 +217,20 @@ func (r *UserDeletionReconciler) finalize(ctx context.Context, marker *lifecycle
 
 	controllerutil.RemoveFinalizer(marker, lifecyclev1alpha1.UserDeletionFinalizer)
 	if err := r.Update(ctx, marker); err != nil {
-		return ctrl.Result{}, client.IgnoreNotFound(err)
+		return retryOnConflict(client.IgnoreNotFound(err))
 	}
 	return ctrl.Result{}, nil
+}
+
+// retryOnConflict turns a write conflict into a short requeue. A conflict means
+// the marker was read from the cache before a newer version arrived, which is
+// routine for a cache-backed client and not a failure: the next pass reads the
+// current version and recomputes. Any other error is returned as is.
+func retryOnConflict(err error) (ctrl.Result, error) {
+	if apierrors.IsConflict(err) {
+		return ctrl.Result{RequeueAfter: conflictRetryInterval}, nil
+	}
+	return ctrl.Result{}, err
 }
 
 // summarize derives the phase and the HooksSucceeded condition from the hook
