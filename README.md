@@ -97,14 +97,16 @@ control loop is **continuously reconciled** — drift from desired state is corr
 Install the latest stable release with a single command:
 
 ```bash
-kubectl apply -f https://github.com/nebari-dev/nebari-operator/releases/latest/download/install.yaml
+kubectl apply --server-side -f https://github.com/nebari-dev/nebari-operator/releases/latest/download/install.yaml
 ```
+
+Server-side apply is needed because the `UserCleanupHook` CRD embeds the pod schema and exceeds the size kubectl can store in its client-side apply annotation.
 
 ### Install a Specific Version
 
 ```bash
 VERSION=v0.1.0
-kubectl apply -f https://github.com/nebari-dev/nebari-operator/releases/download/${VERSION}/install.yaml
+kubectl apply --server-side -f https://github.com/nebari-dev/nebari-operator/releases/download/${VERSION}/install.yaml
 ```
 
 ### Helm Install

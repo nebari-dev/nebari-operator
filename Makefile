@@ -44,7 +44,7 @@ help: ## Display this help.
 .PHONY: manifests
 manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
 	@set +e; \
-	"$(CONTROLLER_GEN)" rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases 2>&1 | grep -v 'Warning: unrecognized format' | grep -v 'gateway-api@v1.4.1'; \
+	"$(CONTROLLER_GEN)" rbac:roleName=manager-role crd:maxDescLen=0 webhook paths="./..." output:crd:artifacts:config=config/crd/bases 2>&1 | grep -v 'Warning: unrecognized format' | grep -v 'gateway-api@v1.4.1'; \
 	if [ -f config/crd/bases/reconcilers.nebari.dev_nebariapps.yaml ]; then \
 		echo "CRDs generated successfully"; exit 0; \
 	else \
