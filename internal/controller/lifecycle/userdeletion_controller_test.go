@@ -490,6 +490,15 @@ var _ = Describe("UserDeletion Controller", func() {
 		Expect(entry.FinishedAt).NotTo(BeNil())
 	})
 
+	// backdateStart moves an entry's startedAt into the past so a missing Job
+	// is treated as lost rather than as not yet visible in the cache.
+	backdateStart := func(userID, hookName string, by time.Duration) {
+		marker := getMarker(userID)
+		started := metav1.NewTime(time.Now().Add(-by))
+		findEntry(marker, hookName).StartedAt = &started
+		Expect(k8sClient.Status().Update(ctx, marker)).To(Succeed())
+	}
+
 	It("marks a Job that disappeared as lost", func() {
 		_, job := runningEntry("ud-hook-lost", "ud-lost")
 
@@ -497,12 +506,37 @@ var _ = Describe("UserDeletion Controller", func() {
 		// leaves a finalizer for the garbage collector that envtest does not
 		// run. Background propagation removes the object immediately.
 		Expect(k8sClient.Delete(ctx, job, client.PropagationPolicy(metav1.DeletePropagationBackground))).To(Succeed())
+		backdateStart("ud-lost", "ud-hook-lost", 2*jobLostGrace)
 		reconcileMarker("ud-lost")
 
 		entry := findEntry(getMarker("ud-lost"), "ud-hook-lost")
 		Expect(entry.State).To(Equal(lifecyclev1alpha1.HookFailed))
 		Expect(entry.Reason).To(Equal(lifecyclev1alpha1.HookReasonJobLost))
 		Expect(entry.FinishedAt).NotTo(BeNil())
+	})
+
+	It("does not call a Job lost while it may still be arriving in the cache", func() {
+		_, job := runningEntry("ud-hook-lagging", "ud-lagging")
+
+		Expect(k8sClient.Delete(ctx, job, client.PropagationPolicy(metav1.DeletePropagationBackground))).To(Succeed())
+		reconcileMarker("ud-lagging")
+
+		entry := findEntry(getMarker("ud-lagging"), "ud-hook-lagging")
+		Expect(entry.State).To(Equal(lifecyclev1alpha1.HookRunning), "startedAt is seconds old, so a miss is cache lag")
+	})
+
+	It("keeps observing a running Job after its hook is removed", func() {
+		_, job := runningEntry("ud-hook-gone-mid-run", "ud-gone-mid-run")
+
+		hook := &lifecyclev1alpha1.UserCleanupHook{ObjectMeta: metav1.ObjectMeta{Name: "ud-hook-gone-mid-run", Namespace: testNamespace}}
+		Expect(k8sClient.Delete(ctx, hook)).To(Succeed())
+		reconcileMarker("ud-gone-mid-run")
+		Expect(findEntry(getMarker("ud-gone-mid-run"), "ud-hook-gone-mid-run").State).To(Equal(lifecyclev1alpha1.HookRunning), "a running entry is not skipped")
+
+		setJobCondition(job, batchv1.JobComplete, "", "")
+		reconcileMarker("ud-gone-mid-run")
+
+		Expect(findEntry(getMarker("ud-gone-mid-run"), "ud-hook-gone-mid-run").State).To(Equal(lifecyclev1alpha1.HookSucceeded))
 	})
 
 	It("leaves a Job without a terminal condition as Running", func() {
