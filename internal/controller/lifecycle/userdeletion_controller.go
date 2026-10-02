@@ -48,6 +48,10 @@ const (
 	// finalizerRetryInterval is how soon to check again whether running Jobs have
 	// finished on a marker that is being deleted
 	finalizerRetryInterval = 30 * time.Second
+
+	// jobLostGrace is how long a Running entry's Job may be missing from the
+	// cache before it is considered gone rather than not yet seen
+	jobLostGrace = time.Minute
 )
 
 // UserDeletionReconciler reconciles a UserDeletion object
@@ -500,6 +504,11 @@ func (r *UserDeletionReconciler) observeJobs(ctx context.Context, marker *lifecy
 		if err := r.Get(ctx, key, &job); err != nil {
 			if !apierrors.IsNotFound(err) {
 				return fmt.Errorf("failed to get Job %s: %w", key, err)
+			}
+			// A Job created moments ago may not be in the cache yet. Only call
+			// it lost once it has been missing for longer than any cache lag.
+			if entry.StartedAt != nil && time.Since(entry.StartedAt.Time) < jobLostGrace {
+				continue
 			}
 			failEntry(entry, time.Now(), lifecyclev1alpha1.HookReasonJobLost,
 				"Job disappeared before the controller saw it finish; the cleanup may or may not have run")
