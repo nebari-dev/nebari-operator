@@ -476,7 +476,7 @@ jobs:
 
             **Test the operator:**
             \`\`\`bash
-            kubectl apply -k https://github.com/${{ github.repository }}.git/config/default?ref=${{ github.head_ref || github.ref_name }}
+            kubectl apply --server-side --force-conflicts -k https://github.com/${{ github.repository }}.git/config/default?ref=${{ github.head_ref || github.ref_name }}
             kubectl set image deployment/nebari-operator-controller-manager manager=${operatorImage} -n nebari-operator-system
             \`\`\`
             `;

@@ -87,6 +87,27 @@ spec:
           #     secretKeyRef:
           #       name: keycloak-admin-credentials
           #       key: admin-password
+          # User cleanup configuration. Values are Go durations.
+          # How often to poll Keycloak for user deletions.
+          - name: LIFECYCLE_POLL_INTERVAL
+            value: "5m"
+          # Time between a Keycloak deletion and the "delete" cleanup stage.
+          - name: LIFECYCLE_GRACE_PERIOD
+            value: "720h"
+          # How long Keycloak keeps admin events. Must not exceed the realm's
+          # adminEventsExpiration. Used as the lookback when no cursor exists.
+          - name: LIFECYCLE_EVENT_RETENTION
+            value: "168h"
+          # How long a completed UserDeletion is kept as a tombstone before it is
+          # deleted. Must be at least LIFECYCLE_EVENT_RETENTION so a replayed
+          # Keycloak event cannot run cleanup twice.
+          - name: LIFECYCLE_MARKER_RETENTION
+            value: "2160h"
+          # ConfigMap where the poller stores the last processed event time.
+          - name: LIFECYCLE_CURSOR_CONFIGMAP_NAME
+            value: "user-deletion-cursor"
+          - name: LIFECYCLE_CURSOR_CONFIGMAP_NAMESPACE
+            value: "nebari-operator-system"
         ports: []
         securityContext:
           readOnlyRootFilesystem: true

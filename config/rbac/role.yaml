@@ -7,6 +7,14 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - configmaps
+  verbs:
+  - create
+  - get
+  - update
+- apiGroups:
+  - ""
+  resources:
   - events
   verbs:
   - create
@@ -30,6 +38,22 @@ rules:
   - list
   - patch
   - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - serviceaccounts
+  verbs:
+  - get
+- apiGroups:
+  - batch
+  resources:
+  - jobs
+  verbs:
+  - create
+  - delete
+  - get
+  - list
   - watch
 - apiGroups:
   - cert-manager.io
@@ -77,6 +101,41 @@ rules:
   - patch
   - update
   - watch
+- apiGroups:
+  - lifecycle.nebari.dev
+  resources:
+  - usercleanuphooks
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - lifecycle.nebari.dev
+  resources:
+  - usercleanuphooks/status
+  - userdeletions/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - lifecycle.nebari.dev
+  resources:
+  - userdeletions
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - lifecycle.nebari.dev
+  resources:
+  - userdeletions/finalizers
+  verbs:
+  - update
 - apiGroups:
   - rbac.authorization.k8s.io
   resources:

@@ -36,7 +36,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
+	appsv1 "github.com/nebari-dev/nebari-operator/api/reconcilers/v1"
 
 	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/auth"
 	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/core"

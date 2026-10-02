@@ -9,7 +9,259 @@ This reference documents all CRD types exposed by the Nebari Operator.
 For configuration examples and usage guides, see the [Configuration Reference](configuration-reference.md).
 
 ## Packages
+- [lifecycle.nebari.dev/v1alpha1](#lifecyclenebaridevv1alpha1)
 - [reconcilers.nebari.dev/v1](#reconcilersnebaridevv1)
+
+
+## lifecycle.nebari.dev/v1alpha1
+
+Package v1alpha1 contains API Schema definitions for the lifecycle v1alpha1 API group.
+
+
+### Resource Types
+- [UserCleanupHook](#usercleanuphook)
+- [UserCleanupHookList](#usercleanuphooklist)
+- [UserDeletion](#userdeletion)
+- [UserDeletionList](#userdeletionlist)
+
+
+
+---
+
+#### CleanupStage
+
+_Underlying type:_ _string_
+
+CleanupStage identifies the moment in a user's deletion when a hook runs.
+_Validation:_
+- Enum: [disable delete]
+_Appears in:_
+- [HookStatus](#hookstatus)
+- [UserCleanupHookSpec](#usercleanuphookspec)
+| Value | Description |
+| --- | --- |
+| `disable` | CleanupStageDisable runs as soon as the deletion is detected.<br /> |
+| `delete` | CleanupStageDelete runs once the grace period has elapsed.<br /> |
+
+
+---
+
+#### DeletionActor
+
+DeletionActor identifies who performed the deletion in Keycloak.
+
+_Appears in:_
+- [UserDeletionSpec](#userdeletionspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `clientId` _string_ | clientId is the Keycloak client the deletion was made through. |  | Optional: \{\} <br /> |
+| `userId` _string_ | userId is the Keycloak id of the admin who deleted the user. Not the deleted user. |  | Optional: \{\} <br /> |
+| `ipAddress` _string_ | ipAddress is the address the deletion request came from. |  | Optional: \{\} <br /> |
+
+
+---
+
+#### HookState
+
+_Underlying type:_ _string_
+
+HookState is the state of one hook's cleanup for one UserDeletion.
+_Validation:_
+- Enum: [Pending Running Succeeded Failed Skipped]
+_Appears in:_
+- [HookStatus](#hookstatus)
+| Value | Description |
+| --- | --- |
+| `Pending` | HookPending means the Job has not been created, either because the stage<br />is not due yet or because the reconciler has not got to it.<br /> |
+| `Running` | HookRunning means the Job exists and has not finished.<br /> |
+| `Succeeded` | HookSucceeded means the Job completed.<br /> |
+| `Failed` | HookFailed means the Job failed, or disappeared before finishing.<br /> |
+| `Skipped` | HookSkipped means the Job was never created, for example because the hook<br />was removed before its stage came due.<br /> |
+
+
+---
+
+#### HookStatus
+
+HookStatus records the cleanup of one UserCleanupHook for this user.
+
+_Appears in:_
+- [UserDeletionStatus](#userdeletionstatus)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `name` _string_ | name of the UserCleanupHook. |  | Required: \{\} <br /> |
+| `namespace` _string_ | namespace of the UserCleanupHook. Jobs run there. |  | Required: \{\} <br /> |
+| `stage` _[CleanupStage](#cleanupstage)_ | stage the hook subscribed to, copied so the entry stays meaningful after the hook is gone. |  | Enum: [disable delete] <br />Required: \{\} <br /> |
+| `state` _[HookState](#hookstate)_ | state of the cleanup. |  | Enum: [Pending Running Succeeded Failed Skipped] <br />Required: \{\} <br /> |
+| `job` _string_ | job is the name of the Job created for this hook, once created. |  | Optional: \{\} <br /> |
+| `startedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#time-v1-meta)_ | startedAt is when the Job started. |  | Optional: \{\} <br /> |
+| `firstFailedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#time-v1-meta)_ | firstFailedAt is when creating the Job first failed for a reason that may<br />clear on its own. Retries continue for a bounded window from this time,<br />then the entry becomes Failed. Cleared when a create succeeds. |  | Optional: \{\} <br /> |
+| `finishedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#time-v1-meta)_ | finishedAt is when the Job reached a terminal state, or when the entry was skipped. |  | Optional: \{\} <br /> |
+| `reason` _string_ | reason is a CamelCase word explaining a Failed or Skipped state, or why a<br />Pending entry has not advanced, for example a Job create that keeps failing. |  | Optional: \{\} <br /> |
+| `message` _string_ | message is a human readable explanation to go with reason. |  | Optional: \{\} <br /> |
+
+
+---
+
+#### UserCleanupHook
+
+UserCleanupHook is the Schema for the usercleanuphooks API
+
+_Appears in:_
+- [UserCleanupHookList](#usercleanuphooklist)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `lifecycle.nebari.dev/v1alpha1` | | |
+| `kind` _string_ | `UserCleanupHook` | | |
+| `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  | Optional: \{\} <br /> |
+| `spec` _[UserCleanupHookSpec](#usercleanuphookspec)_ | spec defines the desired state of UserCleanupHook |  | Required: \{\} <br /> |
+| `status` _[UserCleanupHookStatus](#usercleanuphookstatus)_ | status defines the observed state of UserCleanupHook |  | Optional: \{\} <br /> |
+
+
+---
+
+#### UserCleanupHookList
+
+UserCleanupHookList contains a list of UserCleanupHook
+
+
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `lifecycle.nebari.dev/v1alpha1` | | |
+| `kind` _string_ | `UserCleanupHookList` | | |
+| `metadata` _[ListMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#listmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
+| `items` _[UserCleanupHook](#usercleanuphook) array_ |  |  |  |
+
+
+---
+
+#### UserCleanupHookSpec
+
+UserCleanupHookSpec defines the desired state of UserCleanupHook
+
+_Appears in:_
+- [UserCleanupHook](#usercleanuphook)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `stage` _[CleanupStage](#cleanupstage)_ | stage is the moment in the user's deletion when this hook runs.<br />"disable" runs as soon as the deletion is detected. "delete" runs once the grace period has elapsed. |  | Enum: [disable delete] <br />Required: \{\} <br /> |
+| `template` _[PodTemplateSpec](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#podtemplatespec-v1-core)_ | template is the pod the operator wraps in a Job when the stage is due.<br />The operator injects the user identifiers as env vars into every container.<br />restartPolicy defaults to Never when omitted. |  | Required: \{\} <br /> |
+| `backoffLimit` _integer_ | backoffLimit is the number of failed pods the Job tolerates before it is marked Failed. | 3 | Minimum: 0 <br />Optional: \{\} <br /> |
+| `activeDeadlineSeconds` _integer_ | activeDeadlineSeconds is the maximum time the Job may run before it is killed and marked Failed. | 900 | Minimum: 1 <br />Optional: \{\} <br /> |
+| `ttlSecondsAfterFinished` _integer_ | ttlSecondsAfterFinished is how long a finished Job and its pods are kept before Kubernetes deletes them.<br />The floor of one hour ensures the operator records the Job outcome before the Job disappears. | 604800 | Minimum: 3600 <br />Optional: \{\} <br /> |
+| `dryRun` _boolean_ | dryRun is passed to the script as NEBARI_CLEANUP_DRY_RUN. When true the script should<br />log what it would do without doing it. | false | Optional: \{\} <br /> |
+
+
+---
+
+#### UserCleanupHookStatus
+
+UserCleanupHookStatus defines the observed state of UserCleanupHook.
+
+_Appears in:_
+- [UserCleanupHook](#usercleanuphook)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#condition-v1-meta) array_ | conditions represent the current state of the UserCleanupHook resource.<br />Each condition has a unique type and reflects the status of a specific aspect of the resource.<br />Condition types:<br />- "Accepted": the pod template renders to a valid Job<br />The status of each condition is one of True, False, or Unknown. |  | Optional: \{\} <br /> |
+| `observedGeneration` _integer_ | ObservedGeneration is the most recent generation observed for this UserCleanupHook.<br />It corresponds to the UserCleanupHook's generation, which is updated on mutation by the API Server. |  | Optional: \{\} <br /> |
+
+
+---
+
+#### UserDeletion
+
+UserDeletion marks that a user was deleted in Keycloak. The poller creates one per
+deleted user and the UserDeletion controller runs the registered cleanup hooks for it.
+
+_Appears in:_
+- [UserDeletionList](#userdeletionlist)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `lifecycle.nebari.dev/v1alpha1` | | |
+| `kind` _string_ | `UserDeletion` | | |
+| `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  | Optional: \{\} <br /> |
+| `spec` _[UserDeletionSpec](#userdeletionspec)_ | spec defines the desired state of UserDeletion |  | Required: \{\} <br /> |
+| `status` _[UserDeletionStatus](#userdeletionstatus)_ | status defines the observed state of UserDeletion |  | Optional: \{\} <br /> |
+
+
+---
+
+#### UserDeletionList
+
+UserDeletionList contains a list of UserDeletion
+
+
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `lifecycle.nebari.dev/v1alpha1` | | |
+| `kind` _string_ | `UserDeletionList` | | |
+| `metadata` _[ListMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#listmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
+| `items` _[UserDeletion](#userdeletion) array_ |  |  |  |
+
+
+---
+
+#### UserDeletionPhase
+
+_Underlying type:_ _string_
+
+UserDeletionPhase summarizes where a UserDeletion is in its life.
+_Validation:_
+- Enum: [Pending InProgress Completed]
+_Appears in:_
+- [UserDeletionStatus](#userdeletionstatus)
+| Value | Description |
+| --- | --- |
+| `Pending` | UserDeletionPending means no cleanup Job has been created yet.<br /> |
+| `InProgress` | UserDeletionInProgress means at least one hook has a Job and at least one is not terminal.<br /> |
+| `Completed` | UserDeletionCompleted means every hook entry is terminal. The marker is kept<br />as a tombstone so a replayed Keycloak event does not run cleanup twice.<br /> |
+
+
+---
+
+#### UserDeletionSpec
+
+UserDeletionSpec records a user deletion in Keycloak. It is written once by the
+poller from the admin event and never changes.
+
+_Appears in:_
+- [UserDeletion](#userdeletion)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `userId` _string_ | userId is the Keycloak id of the deleted user, same as the OIDC sub claim.<br />It is also the name of this object. |  | Required: \{\} <br /> |
+| `username` _string_ | username is the deleted user's username. Empty when the Keycloak event did not carry it. |  | Optional: \{\} <br /> |
+| `deletedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#time-v1-meta)_ | deletedAt is when the user was deleted in Keycloak. The grace period counts from here. |  | Required: \{\} <br /> |
+| `deletedBy` _[DeletionActor](#deletionactor)_ | deletedBy identifies who performed the deletion. For audit only. |  | Optional: \{\} <br /> |
+| `adminEventId` _string_ | adminEventId is the id of the Keycloak admin event this deletion was created from. |  | Optional: \{\} <br /> |
+
+
+---
+
+#### UserDeletionStatus
+
+UserDeletionStatus is the observed progress of the cleanup. It is owned by the
+UserDeletion controller and can be rebuilt from the Jobs that exist.
+
+_Appears in:_
+- [UserDeletion](#userdeletion)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `observedGeneration` _integer_ | observedGeneration is the spec generation this status was computed from. |  | Optional: \{\} <br /> |
+| `phase` _[UserDeletionPhase](#userdeletionphase)_ | phase summarizes the cleanup: Pending, InProgress or Completed. |  | Enum: [Pending InProgress Completed] <br />Optional: \{\} <br /> |
+| `dueAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#time-v1-meta)_ | dueAt is when the "delete" stage may run: deletedAt plus the cluster-wide<br />grace period at the time the marker was first reconciled. It is frozen so<br />a later change to the grace period does not move markers already in flight. |  | Optional: \{\} <br /> |
+| `completedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#time-v1-meta)_ | completedAt is when every hook entry became terminal. The tombstone is<br />removed some time after this. |  | Optional: \{\} <br /> |
+| `hooks` _[HookStatus](#hookstatus) array_ | hooks has one entry per UserCleanupHook seen while this deletion was in flight. |  | Optional: \{\} <br /> |
+| `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#condition-v1-meta) array_ | conditions:<br />- "IdentifiersComplete": the username is known. False when the Keycloak<br />  event carried no representation, so packs keyed on username may do nothing.<br />- "HooksSucceeded": every hook entry is terminal and none failed or was skipped. |  | Optional: \{\} <br /> |
+
 
 
 ## reconcilers.nebari.dev/v1
