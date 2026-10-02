@@ -587,7 +587,7 @@ func (r *UserDeletionReconciler) hookToOpenMarkers(ctx context.Context, _ client
 		return nil
 	}
 
-	var requests []reconcile.Request
+	requests := make([]reconcile.Request, 0, len(markers.Items))
 	for i := range markers.Items {
 		if markers.Items[i].Status.Phase == lifecyclev1alpha1.UserDeletionCompleted {
 			continue
