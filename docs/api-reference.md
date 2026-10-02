@@ -97,9 +97,10 @@ _Appears in:_
 | `state` _[HookState](#hookstate)_ | state of the cleanup. |  | Enum: [Pending Running Succeeded Failed Skipped] <br />Required: \{\} <br /> |
 | `job` _string_ | job is the name of the Job created for this hook, once created. |  | Optional: \{\} <br /> |
 | `startedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#time-v1-meta)_ | startedAt is when the Job started. |  | Optional: \{\} <br /> |
+| `firstFailedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#time-v1-meta)_ | firstFailedAt is when creating the Job first failed for a reason that may<br />clear on its own. Retries continue for a bounded window from this time,<br />then the entry becomes Failed. Cleared when a create succeeds. |  | Optional: \{\} <br /> |
 | `finishedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#time-v1-meta)_ | finishedAt is when the Job reached a terminal state, or when the entry was skipped. |  | Optional: \{\} <br /> |
-| `reason` _string_ | reason is a CamelCase word explaining a Failed or Skipped state. |  | Optional: \{\} <br /> |
-| `message` _string_ | message is a human readable explanation of a Failed or Skipped state. |  | Optional: \{\} <br /> |
+| `reason` _string_ | reason is a CamelCase word explaining a Failed or Skipped state, or why a<br />Pending entry has not advanced, for example a Job create that keeps failing. |  | Optional: \{\} <br /> |
+| `message` _string_ | message is a human readable explanation to go with reason. |  | Optional: \{\} <br /> |
 
 
 ---
