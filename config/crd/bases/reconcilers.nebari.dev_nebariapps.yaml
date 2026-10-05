@@ -149,6 +149,20 @@ spec:
                       Groups specifies the list of groups that should have access to this application.
                       When specified, only users belonging to these groups will be authorized.
                       Group matching is case-sensitive and depends on the OIDC provider's group claim.
+
+                      Each entry may be given in one of two forms:
+
+                        - Bare name (e.g. "team-example"): looked up as a top-level group by exact
+                          name. Created in Keycloak if missing.
+                        - Path form (e.g. "/team-example" or "/parent/child"): looked up by group
+                          PATH via Keycloak's group-by-path API. Never auto-created; if the path
+                          does not resolve, reconciliation fails with an explicit error so operators
+                          can create the group hierarchy intentionally.
+
+                      Use the path form when your Keycloak client's "groups" scope mapper has
+                      full.path=true (JWTs then carry group PATHS, and this field must match the
+                      JWT shape literally for landing-page visibility — see nebari-landing's
+                      canAccessPolicy, which does string equality).
                     items:
                       type: string
                     type: array
