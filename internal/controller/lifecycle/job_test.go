@@ -34,7 +34,11 @@ func testHook(name, namespace string, stage lifecyclev1alpha1.CleanupStage) *lif
 		Spec: lifecyclev1alpha1.UserCleanupHookSpec{
 			Stage:  stage,
 			DryRun: true,
-			Template: corev1.PodTemplateSpec{
+			Template: lifecyclev1alpha1.PodTemplate{
+				Metadata: lifecyclev1alpha1.PodTemplateMetadata{
+					Labels:      map[string]string{"hub.jupyter.org/network-access-hub": "true"},
+					Annotations: map[string]string{"note": "kept"},
+				},
 				Spec: corev1.PodSpec{
 					InitContainers: []corev1.Container{{Name: "init", Image: "busybox"}},
 					Containers: []corev1.Container{
@@ -44,6 +48,20 @@ func testHook(name, namespace string, stage lifecyclev1alpha1.CleanupStage) *lif
 				},
 			},
 		},
+	}
+}
+
+// The hook's pod labels and annotations must reach the Job's pod template,
+// a NetworkPolicy may depend on them.
+func TestBuildJobCarriesTemplateMetadata(t *testing.T) {
+	hook := testHook("hub", "ns", lifecyclev1alpha1.CleanupStageDisable)
+	job := buildJob(hook, testMarker("u1"))
+
+	if got := job.Spec.Template.Labels["hub.jupyter.org/network-access-hub"]; got != "true" {
+		t.Errorf("pod label: got %q, want %q", got, "true")
+	}
+	if got := job.Spec.Template.Annotations["note"]; got != "kept" {
+		t.Errorf("pod annotation: got %q, want %q", got, "kept")
 	}
 }
 

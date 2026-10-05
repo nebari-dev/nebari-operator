@@ -105,6 +105,39 @@ _Appears in:_
 
 ---
 
+#### PodTemplate
+
+PodTemplate is the pod a hook runs. It stands in for corev1.PodTemplateSpec
+because an embedded ObjectMeta renders as a bare object in the CRD schema and
+the API server prunes everything under it, labels included. Declaring the
+metadata fields keeps them.
+
+_Appears in:_
+- [UserCleanupHookSpec](#usercleanuphookspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `metadata` _[PodTemplateMetadata](#podtemplatemetadata)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  | Optional: \{\} <br /> |
+| `spec` _[PodSpec](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#podspec-v1-core)_ | spec is the pod spec, as in a Job. |  | Required: \{\} <br /> |
+
+
+---
+
+#### PodTemplateMetadata
+
+PodTemplateMetadata is the subset of pod metadata a hook can set.
+
+_Appears in:_
+- [PodTemplate](#podtemplate)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `labels` _object (keys:string, values:string)_ | labels are added to the pod, for example to match a NetworkPolicy. |  | Optional: \{\} <br /> |
+| `annotations` _object (keys:string, values:string)_ | annotations are added to the pod. |  | Optional: \{\} <br /> |
+
+
+---
+
 #### UserCleanupHook
 
 UserCleanupHook is the Schema for the usercleanuphooks API
@@ -149,7 +182,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `stage` _[CleanupStage](#cleanupstage)_ | stage is the moment in the user's deletion when this hook runs.<br />"disable" runs as soon as the deletion is detected. "delete" runs once the grace period has elapsed. |  | Enum: [disable delete] <br />Required: \{\} <br /> |
-| `template` _[PodTemplateSpec](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#podtemplatespec-v1-core)_ | template is the pod the operator wraps in a Job when the stage is due.<br />The operator injects the user identifiers as env vars into every container.<br />restartPolicy defaults to Never when omitted. |  | Required: \{\} <br /> |
+| `template` _[PodTemplate](#podtemplate)_ | template is the pod the operator wraps in a Job when the stage is due.<br />The operator injects the user identifiers as env vars into every container.<br />restartPolicy defaults to Never when omitted. |  | Required: \{\} <br /> |
 | `backoffLimit` _integer_ | backoffLimit is the number of failed pods the Job tolerates before it is marked Failed. | 3 | Minimum: 0 <br />Optional: \{\} <br /> |
 | `activeDeadlineSeconds` _integer_ | activeDeadlineSeconds is the maximum time the Job may run before it is killed and marked Failed. | 900 | Minimum: 1 <br />Optional: \{\} <br /> |
 | `ttlSecondsAfterFinished` _integer_ | ttlSecondsAfterFinished is how long a finished Job and its pods are kept before Kubernetes deletes them.<br />The floor of one hour ensures the operator records the Job outcome before the Job disappears. | 604800 | Minimum: 3600 <br />Optional: \{\} <br /> |

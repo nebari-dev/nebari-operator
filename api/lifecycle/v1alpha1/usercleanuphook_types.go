@@ -33,6 +33,31 @@ const (
 	CleanupStageDelete CleanupStage = "delete"
 )
 
+// PodTemplate is the pod a hook runs. It stands in for corev1.PodTemplateSpec
+// because an embedded ObjectMeta renders as a bare object in the CRD schema and
+// the API server prunes everything under it, labels included. Declaring the
+// metadata fields keeps them.
+type PodTemplate struct {
+	// metadata is applied to the pods the Job creates.
+	// +optional
+	Metadata PodTemplateMetadata `json:"metadata,omitempty"`
+
+	// spec is the pod spec, as in a Job.
+	// +required
+	Spec corev1.PodSpec `json:"spec"`
+}
+
+// PodTemplateMetadata is the subset of pod metadata a hook can set.
+type PodTemplateMetadata struct {
+	// labels are added to the pod, for example to match a NetworkPolicy.
+	// +optional
+	Labels map[string]string `json:"labels,omitempty"`
+
+	// annotations are added to the pod.
+	// +optional
+	Annotations map[string]string `json:"annotations,omitempty"`
+}
+
 // UserCleanupHookSpec defines the desired state of UserCleanupHook
 type UserCleanupHookSpec struct {
 	// stage is the moment in the user's deletion when this hook runs.
@@ -47,7 +72,7 @@ type UserCleanupHookSpec struct {
 	// +kubebuilder:validation:XValidation:rule="!has(self.spec.restartPolicy) || self.spec.restartPolicy in ['Never', 'OnFailure']",message="template.spec.restartPolicy must be Never or OnFailure"
 	// +kubebuilder:validation:XValidation:rule="size(self.spec.containers) > 0",message="template.spec.containers must not be empty"
 	// +kubebuilder:validation:XValidation:rule="self.spec.containers.all(c, has(c.image) && c.image != '')",message="every container needs an image"
-	Template corev1.PodTemplateSpec `json:"template"`
+	Template PodTemplate `json:"template"`
 
 	// backoffLimit is the number of failed pods the Job tolerates before it is marked Failed.
 	// +optional

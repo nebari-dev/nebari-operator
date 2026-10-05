@@ -61,7 +61,7 @@ func newHook(name string) *lifecyclev1alpha1.UserCleanupHook {
 		},
 		Spec: lifecyclev1alpha1.UserCleanupHookSpec{
 			Stage: lifecyclev1alpha1.CleanupStageDelete,
-			Template: corev1.PodTemplateSpec{
+			Template: lifecyclev1alpha1.PodTemplate{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyNever,
 					Containers: []corev1.Container{{

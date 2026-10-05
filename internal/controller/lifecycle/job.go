@@ -71,7 +71,14 @@ func jobName(marker *lifecyclev1alpha1.UserDeletion, hook *lifecyclev1alpha1.Use
 // reference before a real create.
 func buildJob(hook *lifecyclev1alpha1.UserCleanupHook, marker *lifecyclev1alpha1.UserDeletion) *batchv1.Job {
 	// Make sure to use a copy to avoid modifying the original object
-	podTemplate := *hook.Spec.Template.DeepCopy()
+	tmpl := hook.Spec.Template.DeepCopy()
+	podTemplate := corev1.PodTemplateSpec{
+		ObjectMeta: metav1.ObjectMeta{
+			Labels:      tmpl.Metadata.Labels,
+			Annotations: tmpl.Metadata.Annotations,
+		},
+		Spec: tmpl.Spec,
+	}
 
 	// Fill default RestartPolicy if not set
 	if podTemplate.Spec.RestartPolicy == "" {
