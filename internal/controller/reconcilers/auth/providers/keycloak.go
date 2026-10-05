@@ -1011,12 +1011,42 @@ func MergeGroupMembers(groups []string, keycloakConfig *appsv1.KeycloakClientCon
 	return groupMembers
 }
 
-// ensureGroup checks if a group exists in the realm and creates it if missing.
-// Returns the group's Keycloak ID.
+// ensureGroup resolves a NebariApp auth-groups entry to a Keycloak group ID.
+// It accepts two input forms:
+//
+//   - Bare name (e.g. "team-example"): looked up as a top-level group by
+//     exact name. Created if missing. Backwards-compatible default.
+//   - Path form (e.g. "/team-example" or "/parent/child"): looked up by group
+//     PATH via Keycloak's GetGroupByPath API. If the path does not resolve,
+//     the call fails with an explicit error — the operator does not create
+//     path-form groups because the user supplied a path, which implies the
+//     group hierarchy is managed outside this controller.
+//
+// The path form exists because of the common deployment pattern where
+// Keycloak clients ship the "groups" client-scope with a group-membership
+// mapper set to full.path=true, so JWTs carry group PATHS ("/team-example")
+// rather than NAMES ("team-example"). nebari-landing's canAccessPolicy does
+// literal string equality between a service's requiredGroups and the user's
+// JWT groups claim, so operators must put the same path form in
+// spec.auth.groups for the match to work. Before this change the operator
+// would treat "/team-example" as a literal group name and create a brand-new
+// empty "ghost" group whose name included the slash. See upstream issue #191.
 func (p *KeycloakProvider) ensureGroup(ctx context.Context, kcClient *gocloak.GoCloak, token *gocloak.JWT, realm, groupName string) (string, error) {
 	logger := log.FromContext(ctx)
 
-	// Search for existing group by exact name
+	// Path form: look up existing group by path. Never create.
+	if strings.HasPrefix(groupName, "/") {
+		group, err := kcClient.GetGroupByPath(ctx, token.AccessToken, realm, groupName)
+		if err != nil {
+			return "", fmt.Errorf("group path %q not found in realm %q (path-form entries are never auto-created to avoid guessing at a nested hierarchy — create the group manually via Keycloak admin, or use the bare name form to opt into auto-creation): %w", groupName, realm, err)
+		}
+		if group == nil || group.ID == nil {
+			return "", fmt.Errorf("GetGroupByPath returned nil group for path %q in realm %q", groupName, realm)
+		}
+		return *group.ID, nil
+	}
+
+	// Bare-name form: search for existing group by exact name
 	groups, err := kcClient.GetGroups(ctx, token.AccessToken, realm, gocloak.GetGroupsParams{
 		Search: &groupName,
 		Exact:  gocloak.BoolP(true),
