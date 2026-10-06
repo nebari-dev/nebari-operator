@@ -100,7 +100,7 @@ Install the latest stable release with a single command:
 kubectl apply --server-side -f https://github.com/nebari-dev/nebari-operator/releases/latest/download/install.yaml
 ```
 
-Server-side apply is needed because the `UserCleanupHook` CRD embeds the pod schema and exceeds the size kubectl can store in its client-side apply annotation.
+The `UserCleanupHook` CRD embeds the pod schema and, even with field descriptions stripped, takes a quarter of the size kubectl can store in its client-side apply annotation. Server-side apply keeps the install working if it grows.
 
 ### Install a Specific Version
 
