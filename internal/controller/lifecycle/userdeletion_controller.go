@@ -39,6 +39,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	lifecyclev1alpha1 "github.com/nebari-dev/nebari-operator/api/lifecycle/v1alpha1"
+	"github.com/nebari-dev/nebari-operator/internal/controller/utils/namespace"
 )
 
 const (
@@ -79,6 +80,7 @@ type UserDeletionReconciler struct {
 // +kubebuilder:rbac:groups=lifecycle.nebari.dev,resources=userdeletions/finalizers,verbs=update
 // +kubebuilder:rbac:groups=lifecycle.nebari.dev,resources=usercleanuphooks,verbs=get;list;watch
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;delete
+// +kubebuilder:rbac:groups=core,resources=namespaces,verbs=get
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
 
 // Reconcile registers user cleanup hooks and submit their corresponding jobs when
@@ -330,9 +332,24 @@ func (r *UserDeletionReconciler) listAcceptedHooks(ctx context.Context) ([]lifec
 		return nil, fmt.Errorf("failed to list UserCleanupHooks: %w", err)
 	}
 
+	// Only hooks in opted-in namespaces run. The hook reconciler already rejects
+	// the others, but a namespace can lose its label after the hook was accepted,
+	// so the check is repeated here, once per namespace per pass.
+	managed := map[string]bool{}
 	accepted := make([]lifecyclev1alpha1.UserCleanupHook, 0, len(list.Items))
 	for _, hook := range list.Items {
-		if meta.IsStatusConditionTrue(hook.Status.Conditions, lifecyclev1alpha1.ConditionTypeAccepted) {
+		if !meta.IsStatusConditionTrue(hook.Status.Conditions, lifecyclev1alpha1.ConditionTypeAccepted) {
+			continue
+		}
+		ok, known := managed[hook.Namespace]
+		if !known {
+			var err error
+			if ok, err = namespace.IsManaged(ctx, r.Client, hook.Namespace); err != nil {
+				return nil, err
+			}
+			managed[hook.Namespace] = ok
+		}
+		if ok {
 			accepted = append(accepted, hook)
 		}
 	}

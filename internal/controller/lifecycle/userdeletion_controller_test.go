@@ -335,6 +335,29 @@ var _ = Describe("UserDeletion Controller", func() {
 		Expect(jobs.Items).To(HaveLen(1))
 	})
 
+	It("ignores an accepted hook in a namespace that is not managed", func() {
+		// Accepted by hand, as if the namespace lost its label after validation.
+		hook := newHook("ud-hook-unmanaged")
+		hook.Namespace = unmanagedNamespace
+		hook.Spec.Stage = lifecyclev1alpha1.CleanupStageDisable
+		Expect(k8sClient.Create(ctx, hook)).To(Succeed())
+		DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, hook))).To(Succeed()) })
+		meta.SetStatusCondition(&hook.Status.Conditions, metav1.Condition{
+			Type: lifecyclev1alpha1.ConditionTypeAccepted, Status: metav1.ConditionTrue, Reason: lifecyclev1alpha1.ReasonTemplateValid,
+		})
+		Expect(k8sClient.Status().Update(ctx, hook)).To(Succeed())
+		createMarker("ud-unmanaged", "jane")
+
+		reconcileMarker("ud-unmanaged")
+
+		for _, entry := range getMarker("ud-unmanaged").Status.Hooks {
+			Expect(entry.Namespace).NotTo(Equal(unmanagedNamespace))
+		}
+		var jobs batchv1.JobList
+		Expect(k8sClient.List(ctx, &jobs, client.InNamespace(unmanagedNamespace))).To(Succeed())
+		Expect(jobs.Items).To(BeEmpty())
+	})
+
 	It("marks an entry Failed when the API server rejects the Job", func() {
 		// A dangling volume mount passes the CRD schema but fails Job
 		// validation, so the create is rejected with Invalid.

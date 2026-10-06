@@ -125,9 +125,15 @@ const (
 	// ReasonServiceAccountMissing is set when the template names a ServiceAccount
 	// that does not exist in the hook's namespace. The Job would be created but
 	// its pod never would. The check runs once per spec generation: creating the
-	// ServiceAccount afterwards does not re-evaluate the hook, so re-apply the
-	// hook or change its spec once the account exists.
+	// ServiceAccount afterwards does not re-evaluate the hook, so change its
+	// spec once the account exists.
 	ReasonServiceAccountMissing = "ServiceAccountMissing"
+
+	// ReasonNamespaceNotManaged is set when the hook's namespace is not labeled
+	// nebari.dev/managed=true. The operator only runs hooks in opted-in
+	// namespaces. Like the ServiceAccount check, labeling the namespace later
+	// does not re-evaluate the hook: change its spec.
+	ReasonNamespaceNotManaged = "NamespaceNotManaged"
 
 	// ReasonValidationUnavailable is set when the dry-run request itself failed,
 	// for example because the API server was unreachable, so the template could

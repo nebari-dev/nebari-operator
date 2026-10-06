@@ -26,6 +26,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -34,8 +37,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	lifecyclev1alpha1 "github.com/nebari-dev/nebari-operator/api/lifecycle/v1alpha1"
+	"github.com/nebari-dev/nebari-operator/internal/controller/utils/namespace"
 	// +kubebuilder:scaffold:imports
 )
+
+// unmanagedNamespace has no nebari.dev/managed label. Hooks created there
+// must be rejected and never discovered.
+const unmanagedNamespace = "unmanaged"
 
 // These tests use Ginkgo (BDD-style Go testing framework). Refer to
 // http://onsi.github.io/ginkgo/ to learn more about Ginkgo.
@@ -84,6 +92,16 @@ var _ = BeforeSuite(func() {
 	k8sClient, err = client.New(cfg, client.Options{Scheme: scheme.Scheme})
 	Expect(err).NotTo(HaveOccurred())
 	Expect(k8sClient).NotTo(BeNil())
+
+	// Hooks only run in opted-in namespaces. Label the one the tests use and
+	// keep a second one unlabeled for the negative cases.
+	ns := &corev1.Namespace{}
+	Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testNamespace}, ns)).To(Succeed())
+	ns.Labels = map[string]string{namespace.ManagedNamespaceLabel: "true"}
+	Expect(k8sClient.Update(ctx, ns)).To(Succeed())
+	Expect(k8sClient.Create(ctx, &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: unmanagedNamespace},
+	})).To(Succeed())
 })
 
 var _ = AfterSuite(func() {

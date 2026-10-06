@@ -33,6 +33,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	lifecyclev1alpha1 "github.com/nebari-dev/nebari-operator/api/lifecycle/v1alpha1"
+	"github.com/nebari-dev/nebari-operator/internal/controller/utils/namespace"
 )
 
 // UserCleanupHookReconciler reconciles a UserCleanupHook object
@@ -44,6 +45,7 @@ type UserCleanupHookReconciler struct {
 
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=create
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=core,resources=namespaces,verbs=get
 // +kubebuilder:rbac:groups=core,resources=serviceaccounts,verbs=get
 // +kubebuilder:rbac:groups=lifecycle.nebari.dev,resources=usercleanuphooks,verbs=get;list;watch
 // +kubebuilder:rbac:groups=lifecycle.nebari.dev,resources=usercleanuphooks/status,verbs=get;update;patch
@@ -71,17 +73,24 @@ func (r *UserCleanupHookReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	original := hook.DeepCopy()
 
+	var result ctrl.Result
+	cond := metav1.Condition{
+		Type:               lifecyclev1alpha1.ConditionTypeAccepted,
+		ObservedGeneration: hook.Generation,
+	}
+
+	// The operator only runs hooks in opted-in namespaces. Check that first:
+	// a template in a namespace that is not managed is rejected whatever it says.
+	managed, nsErr := namespace.IsManaged(ctx, r.Client, hook.Namespace)
+
 	// Render the Job for a placeholder user. A dry-run still checks that the
 	// name is free, so use GenerateName to avoid colliding with a real Job.
 	job := buildJob(&hook, placeholderMarker())
 	job.Name = ""
 	job.GenerateName = jobNamePrefix + "-"
-	err := r.Create(ctx, job, client.DryRunAll)
-
-	var result ctrl.Result
-	cond := metav1.Condition{
-		Type:               lifecyclev1alpha1.ConditionTypeAccepted,
-		ObservedGeneration: hook.Generation,
+	var err error
+	if nsErr == nil && managed {
+		err = r.Create(ctx, job, client.DryRunAll)
 	}
 
 	// The dry-run never creates a pod, so a missing ServiceAccount only shows up
@@ -90,11 +99,26 @@ func (r *UserCleanupHookReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	// itself, so only an explicit name is checked.
 	saName := job.Spec.Template.Spec.ServiceAccountName
 	var saErr error
-	if err == nil && saName != "" {
+	if nsErr == nil && managed && err == nil && saName != "" {
 		saErr = r.Get(ctx, client.ObjectKey{Namespace: hook.Namespace, Name: saName}, &corev1.ServiceAccount{})
 	}
 
 	switch {
+	// The namespace could not be read; same handling as a failed dry-run
+	case nsErr != nil:
+		cond.Status = metav1.ConditionUnknown
+		cond.Reason = lifecyclev1alpha1.ReasonValidationUnavailable
+		cond.Message = nsErr.Error()
+		result = ctrl.Result{RequeueAfter: time.Minute}
+		r.Recorder.Event(&hook, corev1.EventTypeWarning, lifecyclev1alpha1.ReasonValidationUnavailable, cond.Message)
+		log.Error(nsErr, "namespace lookup failed, retrying in a minute")
+	// The namespace is not opted in, the hook will never run
+	case !managed:
+		cond.Status = metav1.ConditionFalse
+		cond.Reason = lifecyclev1alpha1.ReasonNamespaceNotManaged
+		cond.Message = fmt.Sprintf("namespace %q is not labeled %s=true", hook.Namespace, namespace.ManagedNamespaceLabel)
+		r.Recorder.Event(&hook, corev1.EventTypeWarning, lifecyclev1alpha1.ReasonNamespaceNotManaged, cond.Message)
+		log.Info("template rejected, namespace not managed")
 	// Job validation was successful and the UserCleanupHook Accepted status is true
 	case err == nil && saErr == nil:
 		cond.Status = metav1.ConditionTrue

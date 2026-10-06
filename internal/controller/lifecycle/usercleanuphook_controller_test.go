@@ -287,6 +287,25 @@ var _ = Describe("UserCleanupHook Controller", func() {
 		Expect(result).To(Equal(ctrl.Result{}))
 	})
 
+	It("rejects a hook in a namespace that is not managed", func() {
+		hook := newHook("unmanaged-ns")
+		hook.Namespace = unmanagedNamespace
+		createHook(hook)
+
+		result, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: types.NamespacedName{
+			Name: "unmanaged-ns", Namespace: unmanagedNamespace,
+		}})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal(ctrl.Result{}))
+
+		updated := &lifecyclev1alpha1.UserCleanupHook{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "unmanaged-ns", Namespace: unmanagedNamespace}, updated)).To(Succeed())
+		cond := accepted(updated)
+		Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+		Expect(cond.Reason).To(Equal(lifecyclev1alpha1.ReasonNamespaceNotManaged))
+		Expect(cond.Message).To(ContainSubstring(unmanagedNamespace))
+	})
+
 	It("accepts a template whose ServiceAccount exists", func() {
 		sa := &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: "cleanup-sa", Namespace: testNamespace}}
 		Expect(k8sClient.Create(ctx, sa)).To(Succeed())
