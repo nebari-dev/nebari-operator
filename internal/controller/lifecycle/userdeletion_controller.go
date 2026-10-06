@@ -151,12 +151,13 @@ func (r *UserDeletionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 	meta.SetStatusCondition(&marker.Status.Conditions, identifiers)
 
-	// Reconcile the marker's hook entries against the hooks that exist in the cluster
-	hooks, err := r.listAcceptedHooks(ctx)
+	// Reconcile the marker's hook entries against the hooks in the cluster.
+	// hooks is the eligible subset, the only one Jobs are created from.
+	all, hooks, err := r.listHooks(ctx)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	discoverHooks(&marker, hooks)
+	discoverHooks(&marker, all, hooks)
 
 	// Record the outcome of every Job that has finished since the last pass.
 	// This runs before creating new Jobs because Job reads go through the
@@ -322,48 +323,48 @@ func nextRequeue(marker *lifecyclev1alpha1.UserDeletion, blocked bool, retention
 	}
 }
 
-// listAcceptedHooks returns every UserCleanupHook whose template passed
-// validation. A hook that is not Accepted is ignored rather than recorded, so
-// a pack fixing its template gets picked up on the next pass as if it had just
-// been installed.
-func (r *UserDeletionReconciler) listAcceptedHooks(ctx context.Context) ([]lifecyclev1alpha1.UserCleanupHook, error) {
+// listHooks returns every UserCleanupHook in the cluster and the subset that
+// may run: Accepted and in a managed namespace. Both are needed because a hook
+// that exists but may not run right now is different from one that is gone.
+func (r *UserDeletionReconciler) listHooks(ctx context.Context) (all, eligible []lifecyclev1alpha1.UserCleanupHook, err error) {
 	var list lifecyclev1alpha1.UserCleanupHookList
 	if err := r.List(ctx, &list); err != nil {
-		return nil, fmt.Errorf("failed to list UserCleanupHooks: %w", err)
+		return nil, nil, fmt.Errorf("failed to list UserCleanupHooks: %w", err)
 	}
 
 	// Only hooks in opted-in namespaces run. The hook reconciler already rejects
 	// the others, but a namespace can lose its label after the hook was accepted,
 	// so the check is repeated here, once per namespace per pass.
 	managed := map[string]bool{}
-	accepted := make([]lifecyclev1alpha1.UserCleanupHook, 0, len(list.Items))
+	eligible = make([]lifecyclev1alpha1.UserCleanupHook, 0, len(list.Items))
 	for _, hook := range list.Items {
 		if !meta.IsStatusConditionTrue(hook.Status.Conditions, lifecyclev1alpha1.ConditionTypeAccepted) {
 			continue
 		}
 		ok, known := managed[hook.Namespace]
 		if !known {
-			var err error
 			if ok, err = namespace.IsManaged(ctx, r.Client, hook.Namespace); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			managed[hook.Namespace] = ok
 		}
 		if ok {
-			accepted = append(accepted, hook)
+			eligible = append(eligible, hook)
 		}
 	}
-	return accepted, nil
+	return list.Items, eligible, nil
 }
 
-// discoverHooks makes the marker's hook entries match the hooks that exist.
-// A hook without an entry gets one as Pending. A Pending entry whose hook is
-// gone is Skipped, so the marker can still complete. Running and terminal
-// entries are left alone: their Job already exists or already finished, and
-// the hook disappearing changes nothing about what it did.
-func discoverHooks(marker *lifecyclev1alpha1.UserDeletion, hooks []lifecyclev1alpha1.UserCleanupHook) {
-	present := make(map[types.NamespacedName]bool, len(hooks))
-	for _, hook := range hooks {
+// discoverHooks makes the marker's hook entries match the hooks in the cluster.
+// An eligible hook without an entry gets one as Pending. A Pending entry whose
+// hook no longer exists is Skipped, so the marker can still complete. A hook
+// that exists but is not eligible right now, rejected after an upgrade or in a
+// namespace that lost its label, keeps its Pending entry: the Job is created
+// once it is eligible again. Running and terminal entries are left alone,
+// their Job already exists or already finished.
+func discoverHooks(marker *lifecyclev1alpha1.UserDeletion, all, eligible []lifecyclev1alpha1.UserCleanupHook) {
+	present := make(map[types.NamespacedName]bool, len(all))
+	for _, hook := range all {
 		present[types.NamespacedName{Namespace: hook.Namespace, Name: hook.Name}] = true
 	}
 
@@ -384,7 +385,7 @@ func discoverHooks(marker *lifecyclev1alpha1.UserDeletion, hooks []lifecyclev1al
 		}
 	}
 
-	for _, hook := range hooks {
+	for _, hook := range eligible {
 		key := types.NamespacedName{Namespace: hook.Namespace, Name: hook.Name}
 		if recorded[key] {
 			continue
