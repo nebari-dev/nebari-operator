@@ -40,13 +40,14 @@ A pack MAY ship the resource by any mechanism: plain YAML, Kustomize, its own He
 
 ### 1.1 Required fields
 
-Three fields are required by the schema. Everything else has a default or is optional.
+Two fields are required by the schema. Everything else has a default or is optional.
 
 | Field | Type | Meaning |
 | ----- | ---- | ------- |
 | `spec.hostname` | string | The external hostname the pack is served on |
 | `spec.service` | object | The in-cluster service to route to, requiring `name` and `port` |
-| `spec.routing` | object | How requests reach the service |
+
+A pack that relies on the platform for routing MUST also set `spec.routing`, even if only as an empty object. The schema does not require it, but omitting it tells the operator that routing is managed externally: the operator creates no `HTTPRoute`, removes any it created before, and treats TLS as disabled. An empty `spec.routing` routes all traffic for the hostname to the service, with TLS on.
 
 A pack MUST NOT assume any other field is present by default. Consult [`api-reference.md`](api-reference.md) for the current defaults rather than hardcoding the ones a pack was written against.
 
@@ -54,7 +55,7 @@ A pack MUST NOT assume any other field is present by default. Consult [`api-refe
 
 Routing is declared, not implemented. A pack MUST NOT create its own `HTTPRoute`, `Gateway`, or ingress resource for traffic the platform is meant to route.
 
-- A pack MUST declare its route rules under `spec.routing.routes`.
+- A pack MUST declare its route rules under `spec.routing.routes`. If it declares none, all traffic for the hostname goes to the service.
 - A pack MUST declare any route that has to bypass authentication under `spec.routing.publicRoutes`, and MUST keep that set as small as the app genuinely requires. Health and readiness endpoints are the normal case.
 - A pack SHOULD prefer an exact path match over a prefix match for a public route, so that a bypass cannot widen unintentionally.
 
@@ -63,19 +64,19 @@ Routing is declared, not implemented. A pack MUST NOT create its own `HTTPRoute`
 The platform provides identity. A pack MUST NOT implement its own login flow for platform users, and MUST NOT ask users for platform credentials.
 
 - A pack that needs authentication MUST declare it under `spec.auth`, rather than wiring an identity provider itself.
-- The identity provider is Keycloak. A pack MUST NOT depend on a different one.
-- A pack SHOULD let the operator provision its client (`provisionClient`), so that client lifecycle follows the resource lifecycle.
+- The platform's identity provider is Keycloak, and `spec.auth.provider` defaults to `keycloak`. A pack MAY use `generic-oidc` instead, against the platform's Keycloak or any other OIDC-compliant provider. With `generic-oidc` the operator cannot provision the client or configure token exchange, so the client MUST be created in the provider by hand, `spec.auth.issuerURL` MUST be set, and `spec.auth.provisionClient` MUST be set to `false`. It defaults to `true`, and with `generic-oidc` that default fails reconciliation with `ProvisioningNotSupported`.
+- A pack using the `keycloak` provider SHOULD let the operator provision its client (`provisionClient`), so that client lifecycle follows the resource lifecycle.
 - A pack MUST request the minimum OIDC scopes it needs. Scope creep here is a security regression that no reviewer sees.
-- A pack MUST read credentials from the Secret the operator creates. It MUST NOT hardcode a client secret in chart values, templates, or an image.
+- A pack MUST read client credentials from the Secret `<nebariapp-name>-oidc-client` in its namespace. The operator creates it when it provisions the client; otherwise it MUST be created by hand under that name. A pack MUST NOT hardcode a client secret in chart values, templates, or an image.
 
 Enforcement can happen at the gateway, in the application, or both. [`reconcilers/authentication.md`](reconcilers/authentication.md) describes what the operator creates in each case and is the reference for choosing.
 
 ## 4. TLS
 
-A pack MUST NOT manage its own certificates for its platform hostname.
+TLS is on by default. When `spec.routing` is present and `spec.routing.tls.enabled` is unset or `true`, the operator configures an HTTPS listener for the pack's hostname. A pack turns TLS off only by setting `enabled: false`.
 
-- A pack requests TLS by setting `spec.routing.tls.enabled`.
-- Certificates are issued through cert-manager by the platform.
+- By default the platform issues the certificate through cert-manager. A pack MUST NOT run its own cert-manager `Certificate` or ACME client for its platform hostname.
+- A pack MAY instead point `spec.routing.tls.secretName` at a pre-provisioned `kubernetes.io/tls` Secret in the gateway's namespace (`envoy-gateway-system`), for example a wildcard certificate or an air-gapped cluster without ACME access. The operator then uses that Secret and creates no `Certificate`. Whoever creates that Secret is responsible for renewing it.
 - A pack MUST NOT terminate TLS itself for traffic arriving through the platform gateway.
 
 ## 5. Landing page
