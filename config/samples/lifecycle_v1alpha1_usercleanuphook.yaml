@@ -1,0 +1,21 @@
+apiVersion: lifecycle.nebari.dev/v1alpha1
+kind: UserCleanupHook
+metadata:
+  labels:
+    app.kubernetes.io/name: nebari-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: usercleanuphook-sample
+spec:
+  stage: delete  # one of [disable, delete]
+  template:
+    spec:
+      serviceAccountName: hub-user-cleanup
+      restartPolicy: Never
+      containers:
+        - name: cleanup
+          image: python:3.12-slim
+          command: [python, /opt/nebari/user_cleanup.py]
+  backoffLimit: 3
+  activeDeadlineSeconds: 900
+  ttlSecondsAfterFinished: 604800  # seven days
+  dryRun: false

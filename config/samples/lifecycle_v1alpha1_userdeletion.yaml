@@ -1,0 +1,16 @@
+apiVersion: lifecycle.nebari.dev/v1alpha1
+kind: UserDeletion
+metadata:
+  labels:
+    app.kubernetes.io/name: nebari-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: 91fb5e10-5017-48ad-8568-0e9210a306cb
+spec:
+  userId: 91fb5e10-5017-48ad-8568-0e9210a306cb
+  username: delete-me
+  deletedAt: 2026-09-17T14:30:55Z
+  deletedBy:
+    clientId: ebe55ba1-09e2-4835-99aa-fd38e5761f84
+    userId: 18a5a8cc-f27f-44d7-b3d7-8366b2fca605
+    ipAddress: 172.18.0.1
+  adminEventId: c067d551-c623-4448-a4aa-0dbf41208d5c

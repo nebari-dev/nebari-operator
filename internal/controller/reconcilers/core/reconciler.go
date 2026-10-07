@@ -20,8 +20,9 @@ import (
 	"context"
 	"fmt"
 
-	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
+	appsv1 "github.com/nebari-dev/nebari-operator/api/reconcilers/v1"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/conditions"
+	"github.com/nebari-dev/nebari-operator/internal/controller/utils/namespace"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/naming"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -89,11 +90,6 @@ func (r *CoreReconciler) ValidateSpec(ctx context.Context, nebariApp *appsv1.Neb
 	return nil
 }
 
-const (
-	// ManagedNamespaceLabel is the label that indicates a namespace is opted-in to Nebari management
-	ManagedNamespaceLabel = "nebari.dev/managed"
-)
-
 // ####################################################################
 // All validation of the required spec fields for NebariApp resources.
 // ####################################################################
@@ -101,17 +97,14 @@ const (
 // ValidateNamespaceOptIn checks if the namespace has the required label for Nebari management.
 // Returns an error if the namespace is not opted-in or cannot be accessed.
 func ValidateNamespaceOptIn(ctx context.Context, c client.Client, nebariApp *appsv1.NebariApp) error {
-	namespace := &corev1.Namespace{}
-
-	if err := c.Get(ctx, client.ObjectKey{Name: nebariApp.Namespace}, namespace); err != nil {
-		return fmt.Errorf("failed to get namespace: %w", err)
+	managed, err := namespace.IsManaged(ctx, c, nebariApp.Namespace)
+	if err != nil {
+		return err
 	}
-
-	if namespace.Labels == nil || namespace.Labels[ManagedNamespaceLabel] != "true" {
+	if !managed {
 		return fmt.Errorf("namespace %s is not opted-in to Nebari management (missing label: %s=true)",
-			nebariApp.Namespace, ManagedNamespaceLabel)
+			nebariApp.Namespace, namespace.ManagedNamespaceLabel)
 	}
-
 	return nil
 }
 

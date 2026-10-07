@@ -27,10 +27,12 @@ import (
 
 	certmanagerv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
 	egv1alpha1 "github.com/envoyproxy/gateway/api/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
@@ -38,15 +40,18 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
-	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
+	lifecyclev1alpha1 "github.com/nebari-dev/nebari-operator/api/lifecycle/v1alpha1"
+	appsv1 "github.com/nebari-dev/nebari-operator/api/reconcilers/v1"
 	"github.com/nebari-dev/nebari-operator/internal/config"
 	"github.com/nebari-dev/nebari-operator/internal/controller"
+	lifecyclecontroller "github.com/nebari-dev/nebari-operator/internal/controller/lifecycle"
 	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/auth"
 	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/auth/providers"
 	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/core"
 	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/routing"
 	tlsreconciler "github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/tls"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/constants"
+	"github.com/nebari-dev/nebari-operator/internal/keycloak"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -62,6 +67,7 @@ func init() {
 	utilruntime.Must(gatewayapiv1.Install(scheme))
 	utilruntime.Must(egv1alpha1.AddToScheme(scheme))
 	utilruntime.Must(certmanagerv1.AddToScheme(scheme))
+	utilruntime.Must(lifecyclev1alpha1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -174,6 +180,15 @@ func main() {
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "d77e3dc7.nebari.dev",
+		// ConfigMaps and ServiceAccounts are read once in a while by name: the
+		// user deletion cursor, and the ServiceAccount a hook's template names.
+		// Caching either type would start a cluster-wide informer that needs
+		// list and watch on every object, so read them from the API server.
+		Client: client.Options{
+			Cache: &client.CacheOptions{
+				DisableFor: []client.Object{&corev1.ConfigMap{}, &corev1.ServiceAccount{}},
+			},
+		},
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
 		// when the Manager ends. This requires the binary to immediately end when the
 		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
@@ -233,6 +248,50 @@ func main() {
 		}
 
 		setupLog.Info("Keycloak OIDC provider initialized successfully")
+
+		// User cleanup depends on Keycloak admin events, so the whole feature,
+		// poller and both controllers, only runs when Keycloak is enabled.
+		lifecycleConfig := config.LoadLifecycleConfig()
+		if err := lifecycleConfig.Validate(); err != nil {
+			setupLog.Error(err, "invalid lifecycle configuration")
+			os.Exit(1)
+		}
+		if err := (&lifecyclecontroller.UserCleanupHookReconciler{
+			Client:   mgr.GetClient(),
+			Scheme:   mgr.GetScheme(),
+			Recorder: mgr.GetEventRecorderFor("usercleanuphook-controller"),
+		}).SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create controller", "controller", "lifecycle-usercleanuphook")
+			os.Exit(1)
+		}
+		if err := (&lifecyclecontroller.UserDeletionReconciler{
+			Client:      mgr.GetClient(),
+			Scheme:      mgr.GetScheme(),
+			Recorder:    mgr.GetEventRecorderFor("userdeletion-controller"),
+			GracePeriod: lifecycleConfig.GracePeriod,
+			// Reuse the event retention as the bound on create retries: by then
+			// the Keycloak event is gone and the marker is on its way to tombstone.
+			JobCreateRetryWindow: lifecycleConfig.EventRetention,
+			MarkerRetention:      lifecycleConfig.MarkerRetention,
+		}).SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create controller", "controller", "lifecycle-userdeletion")
+			os.Exit(1)
+		}
+		poller := &lifecyclecontroller.KeycloakDeletionPoller{
+			Client:          mgr.GetClient(),
+			Events:          keycloak.NewClient(authConfig.Keycloak, mgr.GetClient()),
+			PollInterval:    lifecycleConfig.PollInterval,
+			EventRetention:  lifecycleConfig.EventRetention,
+			CursorName:      lifecycleConfig.CursorConfigMapName,
+			CursorNamespace: lifecycleConfig.CursorConfigMapNamespace,
+		}
+		if err := mgr.Add(poller); err != nil {
+			setupLog.Error(err, "unable to add user deletion poller")
+			os.Exit(1)
+		}
+		setupLog.Info("User deletion poller initialized",
+			"pollInterval", lifecycleConfig.PollInterval,
+			"cursor", lifecycleConfig.CursorConfigMapNamespace+"/"+lifecycleConfig.CursorConfigMapName)
 	}
 
 	// Initialize generic OIDC provider

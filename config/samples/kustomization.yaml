@@ -1,4 +1,6 @@
 ## Append samples of your project ##
 resources:
 - reconcilers_v1_nebariapp.yaml
+- lifecycle_v1alpha1_usercleanuphook.yaml
+- lifecycle_v1alpha1_userdeletion.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

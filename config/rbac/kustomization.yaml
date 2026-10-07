@@ -7,6 +7,7 @@ resources:
 - service_account.yaml
 - role.yaml
 - role_binding.yaml
+- namespaced_role_binding.yaml
 - leader_election_role.yaml
 - leader_election_role_binding.yaml
 # The following RBAC configurations are used to protect
@@ -22,6 +23,12 @@ resources:
 # default, aiding admins in cluster management. Those roles are
 # not used by the nebari-operator itself. You can comment the following lines
 # if you do not want those helpers be installed with your Project.
+- lifecycle_userdeletion_admin_role.yaml
+- lifecycle_userdeletion_editor_role.yaml
+- lifecycle_userdeletion_viewer_role.yaml
+- lifecycle_usercleanuphook_admin_role.yaml
+- lifecycle_usercleanuphook_editor_role.yaml
+- lifecycle_usercleanuphook_viewer_role.yaml
 - nebariapp_admin_role.yaml
 - nebariapp_editor_role.yaml
 - nebariapp_viewer_role.yaml

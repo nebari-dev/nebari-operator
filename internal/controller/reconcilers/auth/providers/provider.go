@@ -19,7 +19,7 @@ package providers
 import (
 	"context"
 
-	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
+	appsv1 "github.com/nebari-dev/nebari-operator/api/reconcilers/v1"
 )
 
 // OIDCEndpointOverrides holds explicit OIDC endpoint URLs that override

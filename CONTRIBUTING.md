@@ -35,7 +35,7 @@ Thank you for your interest in contributing! This guide will help you get starte
 
 ### Modifying the API
 
-When you modify the NebariApp CRD (in `api/v1/nebariapp_types.go`):
+When you modify the NebariApp CRD (in `api/reconcilers/v1/nebariapp_types.go`):
 
 1. **Make your changes** to the Go types
 2. **Regenerate CRDs and code**:
@@ -153,7 +153,7 @@ make run
 
 ### Adding a New Field to NebariApp
 
-1. Edit `api/v1/nebariapp_types.go`
+1. Edit `api/reconcilers/v1/nebariapp_types.go`
 2. Add kubebuilder markers for validation
 3. Run `make generate-dev`
 4. Update controller logic in `internal/controller/`

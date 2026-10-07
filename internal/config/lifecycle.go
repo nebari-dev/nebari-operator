@@ -1,0 +1,103 @@
+/*
+Copyright (c) 2026, OpenTeams
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package config
+
+import (
+	"fmt"
+	"time"
+)
+
+// Environment variables read by LoadLifecycleConfig.
+const (
+	envLifecyclePollInterval             = "LIFECYCLE_POLL_INTERVAL"
+	envLifecycleGracePeriod              = "LIFECYCLE_GRACE_PERIOD"
+	envLifecycleEventRetention           = "LIFECYCLE_EVENT_RETENTION"
+	envLifecycleMarkerRetention          = "LIFECYCLE_MARKER_RETENTION"
+	envLifecycleCursorConfigMapName      = "LIFECYCLE_CURSOR_CONFIGMAP_NAME"
+	envLifecycleCursorConfigMapNamespace = "LIFECYCLE_CURSOR_CONFIGMAP_NAMESPACE"
+)
+
+// LifecycleConfig holds the user cleanup settings for the operator. These are
+// cluster policy rather than per-hook settings, so they live on the operator
+// deployment and not on the UserCleanupHook CRD.
+type LifecycleConfig struct {
+	// PollInterval is how often the poller asks Keycloak for user deletions.
+	// The "disable" stage of a hook runs within one interval of the deletion.
+	PollInterval time.Duration
+
+	// GracePeriod is how long after a Keycloak deletion the "delete" stage runs.
+	// It is cluster-wide so that a restore during the window is all or nothing.
+	GracePeriod time.Duration
+
+	// EventRetention is how long Keycloak keeps admin events. When the poller
+	// has no cursor, on first run or after the cursor ConfigMap was deleted, it
+	// asks for deletions this far back so nothing Keycloak still has is missed.
+	// It must not exceed the realm's adminEventsExpiration, which NIC sets to
+	// seven days. Markers must outlive this window plus the grace period so a
+	// replay is dropped as AlreadyExists rather than run twice.
+	EventRetention time.Duration
+
+	// MarkerRetention is how long a completed UserDeletion is kept as a
+	// tombstone before the operator deletes it. While it exists, a replayed
+	// Keycloak event collides on the name and cleanup does not run twice, so it
+	// must be at least EventRetention. Longer keeps the audit record longer.
+	MarkerRetention time.Duration
+
+	// CursorConfigMapName is the ConfigMap the poller uses to remember the last
+	// admin event it processed, so a restart does not replay old deletions.
+	CursorConfigMapName string
+
+	// CursorConfigMapNamespace is where the cursor ConfigMap lives. Should be the
+	// operator's own namespace.
+	CursorConfigMapNamespace string
+}
+
+// LoadLifecycleConfig loads user cleanup configuration from environment variables.
+func LoadLifecycleConfig() LifecycleConfig {
+	return LifecycleConfig{
+		PollInterval:             getEnvDuration(envLifecyclePollInterval, 5*time.Minute),
+		GracePeriod:              getEnvDuration(envLifecycleGracePeriod, 30*24*time.Hour),
+		EventRetention:           getEnvDuration(envLifecycleEventRetention, 7*24*time.Hour),
+		MarkerRetention:          getEnvDuration(envLifecycleMarkerRetention, 90*24*time.Hour),
+		CursorConfigMapName:      getEnv(envLifecycleCursorConfigMapName, "user-deletion-cursor"),
+		CursorConfigMapNamespace: getEnv(envLifecycleCursorConfigMapNamespace, "nebari-operator-system"),
+	}
+}
+
+// Validate rejects settings the controllers cannot run with. A non-positive
+// poll interval would panic the ticker, and a marker retention shorter than
+// the event retention lets a replayed event run cleanup twice. The grace
+// period may be zero: the delete stage then runs right away.
+func (c LifecycleConfig) Validate() error {
+	if c.PollInterval <= 0 {
+		return fmt.Errorf("%s must be positive, got %s", envLifecyclePollInterval, c.PollInterval)
+	}
+	if c.GracePeriod < 0 {
+		return fmt.Errorf("%s must not be negative, got %s", envLifecycleGracePeriod, c.GracePeriod)
+	}
+	if c.EventRetention <= 0 {
+		return fmt.Errorf("%s must be positive, got %s", envLifecycleEventRetention, c.EventRetention)
+	}
+	if c.MarkerRetention < c.EventRetention {
+		return fmt.Errorf("%s (%s) must be at least %s (%s)",
+			envLifecycleMarkerRetention, c.MarkerRetention, envLifecycleEventRetention, c.EventRetention)
+	}
+	if c.CursorConfigMapName == "" || c.CursorConfigMapNamespace == "" {
+		return fmt.Errorf("%s and %s must be set", envLifecycleCursorConfigMapName, envLifecycleCursorConfigMapNamespace)
+	}
+	return nil
+}

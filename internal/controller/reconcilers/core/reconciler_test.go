@@ -26,7 +26,8 @@ import (
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
+	appsv1 "github.com/nebari-dev/nebari-operator/api/reconcilers/v1"
+	"github.com/nebari-dev/nebari-operator/internal/controller/utils/namespace"
 )
 
 func TestValidateNamespaceOptIn(t *testing.T) {
@@ -47,7 +48,7 @@ func TestValidateNamespaceOptIn(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "test-ns",
 					Labels: map[string]string{
-						ManagedNamespaceLabel: "true",
+						namespace.ManagedNamespaceLabel: "true",
 					},
 				},
 			},
@@ -69,7 +70,7 @@ func TestValidateNamespaceOptIn(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "test-ns",
 					Labels: map[string]string{
-						ManagedNamespaceLabel: "false",
+						namespace.ManagedNamespaceLabel: "false",
 					},
 				},
 			},
@@ -253,7 +254,7 @@ func TestCoreReconciliationValidateSpec(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "test-ns",
 					Labels: map[string]string{
-						ManagedNamespaceLabel: "true",
+						namespace.ManagedNamespaceLabel: "true",
 					},
 				},
 			},
@@ -321,7 +322,7 @@ func TestCoreReconciliationValidateSpec(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "test-ns",
 					Labels: map[string]string{
-						ManagedNamespaceLabel: "true",
+						namespace.ManagedNamespaceLabel: "true",
 					},
 				},
 			},
