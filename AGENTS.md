@@ -276,6 +276,7 @@ CI (`build-pr.yml`) runs the unit, e2e, and chart suites on every PR. **Never di
 - **`docs/design/`** — living design docs and cross-component contracts: `auth-app-contract.md`, `epic-routing-securitypolicy.md`, `landing-page.md`, `user-workloads-discovery.md`, `user-workloads-discovery-contract.md`. Read the matching one before touching auth, routing, landing-page, or service discovery — these define the contract the reconcilers implement.
 - **`docs/plans/`** — in-flight implementation plans (e.g. `2026-02-20-tls-certificate-management*.md`). Check whether the work is already planned here before starting.
 - **`docs/reconcilers/`** — per-reconciler architecture with condition/reason/event tables and pipeline diagrams (`README.md`, `routing.md`, `validation.md`, `authentication.md`). The source of truth for reconciler behavior.
+- **`docs/lifecycle/`** — the user cleanup API (`lifecycle.nebari.dev`): `README.md` for operator configuration, marker lifecycle, and condition tables; `writing-hooks.md` for the contract a `UserCleanupHook` author relies on. Read both before touching `internal/controller/lifecycle/`.
 
 **Reference material:**
 

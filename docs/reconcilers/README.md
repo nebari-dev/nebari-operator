@@ -341,6 +341,8 @@ Dive deeper into each reconciler:
 - **[Routing Reconciler](routing.md)** - HTTPRoute management and Gateway integration
 - **[Authentication Reconciler](authentication.md)** - OIDC provider integration and SecurityPolicy configuration
 
+The user cleanup controllers belong to a separate API group and are documented under [docs/lifecycle](../lifecycle/README.md).
+
 ## Debugging Reconcilers
 
 ### View Operator Logs
