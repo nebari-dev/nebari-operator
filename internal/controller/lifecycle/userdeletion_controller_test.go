@@ -103,9 +103,10 @@ var _ = Describe("UserDeletion Controller", func() {
 		Expect(cond.Status).To(Equal(metav1.ConditionTrue))
 		Expect(cond.Reason).To(Equal(lifecyclev1alpha1.ReasonUsernameKnown))
 
-		// The requeue must land on dueAt: grace period minus the hour that has
-		// already elapsed since deletedAt, give or take test runtime.
-		Expect(result.RequeueAfter).To(BeNumerically("~", gracePeriod-time.Hour, 10*time.Second))
+		// The requeue must land on dueAt. Measured from now rather than from a
+		// fixed duration, since deletedAt was computed when the suite started
+		// and envtest startup time would otherwise eat into the tolerance.
+		Expect(result.RequeueAfter).To(BeNumerically("~", time.Until(marker.Status.DueAt.Time), 10*time.Second))
 	})
 
 	It("flags a marker whose username is unknown", func() {

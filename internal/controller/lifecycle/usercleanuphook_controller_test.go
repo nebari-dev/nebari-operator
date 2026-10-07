@@ -51,6 +51,21 @@ func (c *failingCreateClient) Create(context.Context, client.Object, ...client.C
 	return c.err
 }
 
+// failingServiceAccountGetClient is the real client with ServiceAccount reads
+// replaced by a fixed error, so the dry-run succeeds and only the lookup that
+// follows it fails.
+type failingServiceAccountGetClient struct {
+	client.Client
+	err error
+}
+
+func (c *failingServiceAccountGetClient) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	if _, ok := obj.(*corev1.ServiceAccount); ok {
+		return c.err
+	}
+	return c.Client.Get(ctx, key, obj, opts...)
+}
+
 // newHook returns a minimal valid hook. Tests mutate it to produce the
 // invalid variants they need.
 func newHook(name string) *lifecyclev1alpha1.UserCleanupHook {
@@ -361,7 +376,22 @@ var _ = Describe("UserCleanupHook Controller", func() {
 		Expect(result).To(Equal(ctrl.Result{}))
 	})
 
-	// The ValidationUnavailable branch is not covered here. envtest's API
-	// server is always reachable, so a dry-run can only succeed or be
-	// rejected.
+	It("leaves the verdict Unknown when the ServiceAccount lookup fails after a valid dry-run", func() {
+		hook := newHook("sa-lookup-fails")
+		hook.Spec.Template.Spec.ServiceAccountName = "cleanup-sa"
+		createHook(hook)
+		reconciler.Client = &failingServiceAccountGetClient{
+			Client: k8sClient,
+			err:    apierrors.NewInternalError(errors.New("etcd leader changed")),
+		}
+
+		result := reconcile("sa-lookup-fails")
+
+		updated := getHook("sa-lookup-fails")
+		cond := accepted(updated)
+		Expect(cond.Status).To(Equal(metav1.ConditionUnknown))
+		Expect(cond.Reason).To(Equal(lifecyclev1alpha1.ReasonValidationUnavailable))
+		Expect(updated.Status.ObservedGeneration).NotTo(Equal(updated.Generation))
+		Expect(result.RequeueAfter).To(Equal(time.Minute))
+	})
 })
