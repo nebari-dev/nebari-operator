@@ -254,10 +254,28 @@ var _ = Describe("KeycloakDeletionPoller", func() {
 		Expect(cursor.Nanosecond()).NotTo(BeZero(), "sub-second part must survive the round trip")
 	})
 
-	It("does not advance the cursor when a marker cannot be created", func() {
+	It("skips a marker the API server rejects and still advances the cursor", func() {
 		// An uppercase name violates DNS subdomain rules, so the create is
-		// rejected by the API server and the poll must stop before the cursor.
-		source.events = []keycloak.UserDeletionEvent{newEvent("Not-A-Valid-Name", newer)}
+		// rejected with Invalid on every poll. Stopping there would hold the
+		// cursor back for every newer deletion.
+		source.events = []keycloak.UserDeletionEvent{
+			newEvent("Not-A-Valid-Name", older),
+			newEvent("poller-after-bad", newer),
+		}
+		registerCleanup("poller-after-bad")
+
+		Expect(poller.poll(ctx)).To(Succeed())
+
+		var marker lifecyclev1alpha1.UserDeletion
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "poller-after-bad"}, &marker)).To(Succeed())
+		cursor, found := getCursor()
+		Expect(found).To(BeTrue())
+		Expect(cursor).To(BeTemporally("==", newer))
+	})
+
+	It("does not advance the cursor when a marker create fails transiently", func() {
+		poller.Client = &failingCreateClient{Client: k8sClient, err: apierrors.NewInternalError(errors.New("etcd unavailable"))}
+		source.events = []keycloak.UserDeletionEvent{newEvent("poller-transient", newer)}
 
 		Expect(poller.poll(ctx)).NotTo(Succeed())
 

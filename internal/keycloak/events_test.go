@@ -119,3 +119,23 @@ func TestParseAdminEvent(t *testing.T) {
 		})
 	}
 }
+
+// One event the operator cannot read must not hide the ones after it.
+func TestFilterDeletionsSkipsUnparseableEvents(t *testing.T) {
+	var sample adminEvent
+	if err := json.Unmarshal([]byte(sampleAdminEvent), &sample); err != nil {
+		t.Fatalf("decoding sample: %v", err)
+	}
+
+	bad := sample
+	bad.ID = "bad"
+	bad.ResourcePath = "groups/abc"
+	good := sample
+	good.ID = "good"
+	good.Time = sample.Time + 1000
+
+	got := filterDeletions([]adminEvent{bad, good}, time.UnixMilli(sample.Time).UTC())
+	if len(got) != 1 || got[0].AdminEventID != "good" {
+		t.Fatalf("expected only the readable event, got %+v", got)
+	}
+}

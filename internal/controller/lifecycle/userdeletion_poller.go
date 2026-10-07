@@ -121,7 +121,14 @@ func (p *KeycloakDeletionPoller) poll(ctx context.Context) error {
 
 	newest := since
 	for _, e := range events {
-		if err := p.createUserDeletion(ctx, e); err != nil {
+		err := p.createUserDeletion(ctx, e)
+		// A marker the API server rejects would be rejected on every poll and
+		// hold the cursor back, hiding every newer deletion behind it. Log it
+		// and move on. Anything else is retried on the next poll.
+		if apierrors.IsInvalid(err) {
+			log.Error(err, "skipping a deletion whose marker the API server rejects, it will not be cleaned up",
+				"userID", e.UserID, "eventID", e.AdminEventID)
+		} else if err != nil {
 			return err
 		}
 		if e.DeletedAt.After(newest) {

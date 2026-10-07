@@ -23,6 +23,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 const (
@@ -108,11 +110,23 @@ func (c *Client) ListUserDeletions(ctx context.Context, since time.Time) ([]User
 		}
 	}
 
+	return filterDeletions(events, since), nil
+}
+
+// filterDeletions parses the events and drops the ones before since. An
+// event that cannot be parsed is logged and skipped rather than failing the
+// batch: it would fail the same way on every poll and hold the cursor back,
+// hiding every newer deletion behind it until Keycloak expires it.
+func filterDeletions(events []adminEvent, since time.Time) []UserDeletionEvent {
+	log := logf.Log.WithName("keycloak")
+
 	deletions := make([]UserDeletionEvent, 0, len(events))
 	for _, e := range events {
 		deletion, err := parseAdminEvent(e)
 		if err != nil {
-			return nil, err
+			log.Error(err, "skipping admin event the operator cannot read, this deletion will not be cleaned up",
+				"eventID", e.ID, "resourcePath", e.ResourcePath)
+			continue
 		}
 		// Given that the keycloak API is day-granular, we discard those events recorded
 		// on the same day but before the cursor's date
@@ -122,7 +136,7 @@ func (c *Client) ListUserDeletions(ctx context.Context, since time.Time) ([]User
 		deletions = append(deletions, deletion)
 	}
 
-	return deletions, nil
+	return deletions
 }
 
 // parseAdminEvent turns a Keycloak API response into a UserDeletionEvent. The user id is
