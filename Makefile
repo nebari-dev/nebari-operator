@@ -41,10 +41,14 @@ help: ## Display this help.
 
 ##@ Development
 
+# The lifecycle CRDs embed the pod schema and only fit the client-side apply
+# limit without field descriptions, so they are regenerated stripped in a second
+# run. The other CRDs keep theirs. The API reference keeps the text for all.
 .PHONY: manifests
 manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
 	@set +e; \
-	"$(CONTROLLER_GEN)" rbac:roleName=manager-role crd:maxDescLen=0 webhook paths="./..." output:crd:artifacts:config=config/crd/bases 2>&1 | grep -v 'Warning: unrecognized format' | grep -v 'gateway-api@v1.4.1'; \
+	"$(CONTROLLER_GEN)" rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases 2>&1 | grep -v 'Warning: unrecognized format' | grep -v 'gateway-api@v1.4.1'; \
+	"$(CONTROLLER_GEN)" crd:maxDescLen=0 paths="./api/lifecycle/..." output:crd:artifacts:config=config/crd/bases 2>&1 | grep -v 'Warning: unrecognized format'; \
 	if [ -f config/crd/bases/reconcilers.nebari.dev_nebariapps.yaml ]; then \
 		echo "CRDs generated successfully"; exit 0; \
 	else \
