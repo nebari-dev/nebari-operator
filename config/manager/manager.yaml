@@ -106,8 +106,13 @@ spec:
           # ConfigMap where the poller stores the last processed event time.
           - name: LIFECYCLE_CURSOR_CONFIGMAP_NAME
             value: "user-deletion-cursor"
+          # The operator's own namespace. Kustomize does not rewrite env values,
+          # so the pod reports it rather than hardcoding the default install
+          # namespace. The Role granting access to the cursor is scoped here too.
           - name: LIFECYCLE_CURSOR_CONFIGMAP_NAMESPACE
-            value: "nebari-operator-system"
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
         ports: []
         securityContext:
           readOnlyRootFilesystem: true

@@ -41,7 +41,7 @@ Environment variables on the operator Deployment, next to the `KEYCLOAK_*` ones.
 | `LIFECYCLE_EVENT_RETENTION` | `168h` (7 days) | How long Keycloak keeps admin events. Used as the lookback when there is no cursor and as the retry window for Job creation. Must not exceed Keycloak's expiration |
 | `LIFECYCLE_MARKER_RETENTION` | `2160h` (90 days) | How long a completed marker is kept as a tombstone. Must be at least the event retention |
 | `LIFECYCLE_CURSOR_CONFIGMAP_NAME` | `user-deletion-cursor` | ConfigMap holding the last processed event time |
-| `LIFECYCLE_CURSOR_CONFIGMAP_NAMESPACE` | `nebari-operator-system` | Namespace of that ConfigMap |
+| `LIFECYCLE_CURSOR_CONFIGMAP_NAMESPACE` | `nebari-operator-system` | Namespace of that ConfigMap. The shipped manifest sets it to the operator's own namespace through the downward API, the default only applies when running outside the cluster |
 
 Durations use Go syntax, so `30d` is not valid, write `720h`.
 
