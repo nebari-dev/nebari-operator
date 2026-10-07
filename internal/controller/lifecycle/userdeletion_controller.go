@@ -79,7 +79,7 @@ type UserDeletionReconciler struct {
 // +kubebuilder:rbac:groups=lifecycle.nebari.dev,resources=userdeletions/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=lifecycle.nebari.dev,resources=userdeletions/finalizers,verbs=update
 // +kubebuilder:rbac:groups=lifecycle.nebari.dev,resources=usercleanuphooks,verbs=get;list;watch
-// +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;delete
+// +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create
 // +kubebuilder:rbac:groups=core,resources=namespaces,verbs=get
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
 

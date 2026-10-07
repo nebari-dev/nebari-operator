@@ -90,7 +90,7 @@ func (p *KeycloakDeletionPoller) NeedLeaderElection() bool {
 // cursorKey is the ConfigMap data key holding the last processed event time.
 const cursorKey = "lastEventTime"
 
-// +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;create;update
+// +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;create;update,namespace=nebari-operator-system
 // +kubebuilder:rbac:groups=lifecycle.nebari.dev,resources=userdeletions,verbs=create
 
 // poll reads the cursor, fetches deletions since it, creates a UserDeletion
