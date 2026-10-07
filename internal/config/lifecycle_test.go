@@ -18,6 +18,7 @@ package config
 
 import (
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -97,6 +98,50 @@ func TestLoadLifecycleConfig(t *testing.T) {
 			}
 			if got := LoadLifecycleConfig(); got != tt.expected {
 				t.Errorf("expected %+v, got %+v", tt.expected, got)
+			}
+		})
+	}
+}
+
+func TestLifecycleConfigValidate(t *testing.T) {
+	valid := LifecycleConfig{
+		PollInterval:             5 * time.Minute,
+		GracePeriod:              30 * 24 * time.Hour,
+		EventRetention:           7 * 24 * time.Hour,
+		MarkerRetention:          90 * 24 * time.Hour,
+		CursorConfigMapName:      "user-deletion-cursor",
+		CursorConfigMapNamespace: "nebari-operator-system",
+	}
+
+	tests := []struct {
+		name    string
+		mutate  func(*LifecycleConfig)
+		wantErr string
+	}{
+		{name: "defaults", mutate: func(*LifecycleConfig) {}},
+		{name: "zero grace period is allowed", mutate: func(c *LifecycleConfig) { c.GracePeriod = 0 }},
+		{name: "zero poll interval", mutate: func(c *LifecycleConfig) { c.PollInterval = 0 }, wantErr: "LIFECYCLE_POLL_INTERVAL"},
+		{name: "negative poll interval", mutate: func(c *LifecycleConfig) { c.PollInterval = -time.Second }, wantErr: "LIFECYCLE_POLL_INTERVAL"},
+		{name: "negative grace period", mutate: func(c *LifecycleConfig) { c.GracePeriod = -time.Hour }, wantErr: "LIFECYCLE_GRACE_PERIOD"},
+		{name: "zero event retention", mutate: func(c *LifecycleConfig) { c.EventRetention = 0 }, wantErr: "LIFECYCLE_EVENT_RETENTION"},
+		{name: "marker retention shorter than event retention", mutate: func(c *LifecycleConfig) { c.MarkerRetention = time.Hour }, wantErr: "LIFECYCLE_MARKER_RETENTION"},
+		{name: "marker retention equal to event retention", mutate: func(c *LifecycleConfig) { c.MarkerRetention = c.EventRetention }},
+		{name: "empty cursor name", mutate: func(c *LifecycleConfig) { c.CursorConfigMapName = "" }, wantErr: "LIFECYCLE_CURSOR_CONFIGMAP_NAME"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := valid
+			tt.mutate(&cfg)
+			err := cfg.Validate()
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("error: got %v, want it to mention %s", err, tt.wantErr)
 			}
 		})
 	}

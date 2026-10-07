@@ -102,9 +102,16 @@ func (p *KeycloakDeletionPoller) poll(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// Never ask for events older than the retention window. Without a cursor
+	// that is the whole window. With one, this keeps the newest event, which
+	// sits exactly at the cursor and is re-read every poll, from recreating its
+	// marker once the tombstone is gone and Keycloak still has the event.
+	oldest := time.Now().Add(-p.EventRetention)
 	if !found {
-		since = time.Now().Add(-p.EventRetention)
+		since = oldest
 		log.Info("no cursor found, using the event retention window", "since", since)
+	} else if since.Before(oldest) {
+		since = oldest
 	}
 
 	events, err := p.Events.ListUserDeletions(ctx, since)

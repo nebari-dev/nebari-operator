@@ -252,6 +252,10 @@ func main() {
 		// User cleanup depends on Keycloak admin events, so the whole feature,
 		// poller and both controllers, only runs when Keycloak is enabled.
 		lifecycleConfig := config.LoadLifecycleConfig()
+		if err := lifecycleConfig.Validate(); err != nil {
+			setupLog.Error(err, "invalid lifecycle configuration")
+			os.Exit(1)
+		}
 		if err := (&lifecyclecontroller.UserCleanupHookReconciler{
 			Client:   mgr.GetClient(),
 			Scheme:   mgr.GetScheme(),

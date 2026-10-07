@@ -190,6 +190,20 @@ var _ = Describe("KeycloakDeletionPoller", func() {
 		Expect(source.calledWith[0]).To(BeTemporally("==", older))
 	})
 
+	It("never asks for events older than the retention window", func() {
+		// A cursor this old means the newest event Keycloak has is past the
+		// retention and its tombstone may be gone. Asking since the cursor
+		// would replay it.
+		stale := time.Now().Add(-2 * retention)
+		seedCursor(stale)
+		before := time.Now()
+
+		Expect(poller.poll(ctx)).To(Succeed())
+
+		Expect(source.calledWith).To(HaveLen(1))
+		Expect(source.calledWith[0]).To(BeTemporally("~", before.Add(-retention), 5*time.Second))
+	})
+
 	It("keeps the cursor where it was when no events are returned", func() {
 		seedCursor(older)
 

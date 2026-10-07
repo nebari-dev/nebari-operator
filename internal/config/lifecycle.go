@@ -16,7 +16,10 @@ limitations under the License.
 
 package config
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // Environment variables read by LoadLifecycleConfig.
 const (
@@ -73,4 +76,28 @@ func LoadLifecycleConfig() LifecycleConfig {
 		CursorConfigMapName:      getEnv(envLifecycleCursorConfigMapName, "user-deletion-cursor"),
 		CursorConfigMapNamespace: getEnv(envLifecycleCursorConfigMapNamespace, "nebari-operator-system"),
 	}
+}
+
+// Validate rejects settings the controllers cannot run with. A non-positive
+// poll interval would panic the ticker, and a marker retention shorter than
+// the event retention lets a replayed event run cleanup twice. The grace
+// period may be zero: the delete stage then runs right away.
+func (c LifecycleConfig) Validate() error {
+	if c.PollInterval <= 0 {
+		return fmt.Errorf("%s must be positive, got %s", envLifecyclePollInterval, c.PollInterval)
+	}
+	if c.GracePeriod < 0 {
+		return fmt.Errorf("%s must not be negative, got %s", envLifecycleGracePeriod, c.GracePeriod)
+	}
+	if c.EventRetention <= 0 {
+		return fmt.Errorf("%s must be positive, got %s", envLifecycleEventRetention, c.EventRetention)
+	}
+	if c.MarkerRetention < c.EventRetention {
+		return fmt.Errorf("%s (%s) must be at least %s (%s)",
+			envLifecycleMarkerRetention, c.MarkerRetention, envLifecycleEventRetention, c.EventRetention)
+	}
+	if c.CursorConfigMapName == "" || c.CursorConfigMapNamespace == "" {
+		return fmt.Errorf("%s and %s must be set", envLifecycleCursorConfigMapName, envLifecycleCursorConfigMapNamespace)
+	}
+	return nil
 }
