@@ -178,7 +178,7 @@ func (r *UserDeletionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	summarize(&marker, now)
 	if marker.Status.Phase == lifecyclev1alpha1.UserDeletionCompleted && original.Status.Phase != lifecyclev1alpha1.UserDeletionCompleted {
 		log.Info("cleanup completed", "hooks", len(marker.Status.Hooks))
-		r.Recorder.Event(&marker, corev1.EventTypeNormal, "Completed", "All cleanup hooks reached a terminal state")
+		r.Recorder.Event(&marker, corev1.EventTypeNormal, lifecyclev1alpha1.EventReasonCompleted, "All cleanup hooks reached a terminal state")
 	}
 
 	marker.Status.ObservedGeneration = marker.Generation
@@ -476,7 +476,7 @@ func (r *UserDeletionReconciler) createDueJobs(ctx context.Context, marker *life
 		switch {
 		case err == nil:
 			log.Info("created cleanup Job", "job", job.Name, "namespace", job.Namespace, "hook", entry.Name, "stage", entry.Stage)
-			r.Recorder.Eventf(marker, corev1.EventTypeNormal, "JobCreated", "Created Job %s/%s for hook %s stage %s", job.Namespace, job.Name, entry.Name, entry.Stage)
+			r.Recorder.Eventf(marker, corev1.EventTypeNormal, lifecyclev1alpha1.EventReasonJobCreated, "Created Job %s/%s for hook %s stage %s", job.Namespace, job.Name, entry.Name, entry.Stage)
 		case apierrors.IsAlreadyExists(err):
 			log.Info("adopting existing cleanup Job", "job", job.Name, "namespace", job.Namespace)
 		case permanentCreateError(err):
@@ -574,7 +574,7 @@ func (r *UserDeletionReconciler) observeJobs(ctx context.Context, marker *lifecy
 			entry.Reason = cond.Reason
 			entry.Message = cond.Message
 			log.Info("cleanup Job failed", "job", key.String(), "hook", entry.Name, "stage", entry.Stage, "reason", cond.Reason)
-			r.Recorder.Eventf(marker, corev1.EventTypeWarning, "JobFailed",
+			r.Recorder.Eventf(marker, corev1.EventTypeWarning, lifecyclev1alpha1.EventReasonJobFailed,
 				"Job %s for hook %s/%s failed: %s: %s", key, entry.Namespace, entry.Name, cond.Reason, cond.Message)
 		}
 	}

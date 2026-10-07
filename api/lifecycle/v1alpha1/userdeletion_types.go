@@ -220,6 +220,17 @@ const (
 	HookReasonJobCreateTimedOut = "JobCreateTimedOut"
 )
 
+// Event reasons emitted on a UserDeletion that have no HookStatus counterpart.
+// The HookReason* constants above double as event reasons for their failures.
+const (
+	// EventReasonCompleted is emitted once when the marker reaches Completed.
+	EventReasonCompleted = "Completed"
+	// EventReasonJobCreated is emitted for every Job the controller creates.
+	EventReasonJobCreated = "JobCreated"
+	// EventReasonJobFailed is emitted when a Job finished with the Failed condition.
+	EventReasonJobFailed = "JobFailed"
+)
+
 // UserDeletionFinalizer keeps a marker until its running Jobs have finished.
 const UserDeletionFinalizer = "lifecycle.nebari.dev/in-flight-jobs"
 
