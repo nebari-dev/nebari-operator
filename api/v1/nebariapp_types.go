@@ -213,9 +213,16 @@ type AuthConfig struct {
 	// denies every request whose access token has none of these groups in its
 	// "groups" claim (HTTP 403).
 	//
-	// Entries are matched as full group paths, exactly and case-sensitively:
-	// "finance" is treated as "/finance", and "/finance" does not admit members
-	// of "/finance/analysts" only. List each subgroup that needs access.
+	// Each entry may be given in one of two forms:
+	//
+	//   - Bare name (e.g. "finance"): looked up as a top-level group by name.
+	//     Created in Keycloak if missing.
+	//   - Path form (e.g. "/finance" or "/parent/child"): looked up by group PATH.
+	//     Never auto-created; if the path does not resolve, reconciliation fails
+	//     with an error so operators can create the group hierarchy intentionally.
+	//
+	// Entries are matched as full group paths, exactly and case-sensitively.
+	// Listing "/finance" does not admit a user who is only in "/finance/analysts".
 	//
 	// Removing a user from a group takes effect when their access token expires
 	// (the realm's access token lifespan, 5 minutes by default).
