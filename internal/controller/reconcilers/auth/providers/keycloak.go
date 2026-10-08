@@ -1036,7 +1036,7 @@ func (p *KeycloakProvider) ensureGroup(ctx context.Context, kcClient *gocloak.Go
 
 	// Path form: look up existing group by path. Never create.
 	if strings.HasPrefix(groupName, "/") {
-		group, err := kcClient.GetGroupByPath(ctx, token.AccessToken, realm, groupName)
+		group, err := kcClient.GetGroupByPath(ctx, token.AccessToken, realm, strings.TrimPrefix(groupName, "/"))
 		if err != nil {
 			return "", fmt.Errorf("group path %q not found in realm %q (path-form entries are never auto-created to avoid guessing at a nested hierarchy — create the group manually via Keycloak admin, or use the bare name form to opt into auto-creation): %w", groupName, realm, err)
 		}
