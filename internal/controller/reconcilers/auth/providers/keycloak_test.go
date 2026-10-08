@@ -1731,6 +1731,71 @@ func TestEnsureGroup_PathVsName(t *testing.T) {
 	}
 }
 
+// TestEnsureGroup_PathLookupURL verifies the group-by-path request URL never
+// contains a double slash. gocloak joins path segments with "/", so passing the
+// leading "/" through yields ".../group-by-path//name", which Keycloak rejects
+// with HTTP 400 missingNormalization even when the group exists.
+func TestEnsureGroup_PathLookupURL(t *testing.T) {
+	token := &gocloak.JWT{AccessToken: "test-token"}
+
+	tests := []struct {
+		name      string
+		groupName string
+		wantPath  string
+		wantID    string
+	}{
+		{
+			name:      "top-level path",
+			groupName: "/team-example",
+			wantPath:  "/admin/realms/test/group-by-path/team-example",
+			wantID:    "top-uuid",
+		},
+		{
+			name:      "nested path",
+			groupName: "/parent/child",
+			wantPath:  "/admin/realms/test/group-by-path/parent/child",
+			wantID:    "nested-uuid",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotURI string
+			// A bare handler (no ServeMux) so "//" is not cleaned or redirected
+			// before we see it.
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotURI = r.RequestURI
+				if strings.Contains(r.RequestURI, "//") {
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = w.Write([]byte(`{"error":"missingNormalization"}`))
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"id":"` + tt.wantID + `","path":"` + tt.groupName + `"}`))
+			}))
+			defer server.Close()
+
+			provider := &KeycloakProvider{Config: config.KeycloakConfig{URL: server.URL, Realm: "test"}}
+			kc := gocloak.NewClient(server.URL)
+
+			gotID, err := provider.ensureGroup(context.Background(), kc, token, "test", tt.groupName)
+
+			if strings.Contains(gotURI, "//") {
+				t.Errorf("group-by-path request URI contains \"//\": %q", gotURI)
+			}
+			if gotURI != tt.wantPath {
+				t.Errorf("request URI = %q, want %q", gotURI, tt.wantPath)
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if gotID != tt.wantID {
+				t.Errorf("got id=%q, want %q", gotID, tt.wantID)
+			}
+		})
+	}
+}
+
 func TestKeycloakProvider_GetJWKSURL(t *testing.T) {
 	tests := []struct {
 		name string
