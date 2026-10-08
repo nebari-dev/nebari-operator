@@ -18,9 +18,13 @@ package auth
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
+	"sort"
 	"testing"
 
 	egv1alpha1 "github.com/envoyproxy/gateway/api/v1alpha1"
@@ -1657,6 +1661,79 @@ func TestReconcileAuth_SpecChangeCycle(t *testing.T) {
 			}
 			if provider.provisionCount != 2 {
 				t.Errorf("reconcile 4: expected provisioning to be skipped again (count=2), got %d", provider.provisionCount)
+			}
+		})
+	}
+}
+
+// legacyAuthConfigHash reproduces computeAuthConfigHash as it was before the
+// groups claim format changed, so the test can prove every existing app
+// reprovisions once on upgrade.
+func legacyAuthConfigHash(t *testing.T, app *appsv1.NebariApp) string {
+	t.Helper()
+	auth := app.Spec.Auth
+	scopes := append([]string(nil), auth.Scopes...)
+	sort.Strings(scopes)
+	groups := append([]string(nil), auth.Groups...)
+	sort.Strings(groups)
+	state := struct {
+		Namespace      string                       `json:"namespace"`
+		Name           string                       `json:"name"`
+		Hostname       string                       `json:"hostname"`
+		Provider       string                       `json:"provider"`
+		RedirectURI    string                       `json:"redirectURI"`
+		IssuerURL      string                       `json:"issuerURL"`
+		Scopes         []string                     `json:"scopes"`
+		Groups         []string                     `json:"groups"`
+		SPAClient      *appsv1.SPAClientConfig      `json:"spaClient,omitempty"`
+		KeycloakConfig *appsv1.KeycloakClientConfig `json:"keycloakConfig,omitempty"`
+	}{app.Namespace, app.Name, app.Spec.Hostname, auth.Provider, auth.RedirectURI, auth.IssuerURL, scopes, groups, auth.SPAClient, auth.KeycloakConfig}
+	data, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+func TestComputeAuthConfigHash_Groups(t *testing.T) {
+	app := func(groups ...string) *appsv1.NebariApp {
+		return &appsv1.NebariApp{
+			ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "default"},
+			Spec: appsv1.NebariAppSpec{
+				Hostname: "app.example.com",
+				Auth:     &appsv1.AuthConfig{Provider: constants.ProviderKeycloak, Scopes: []string{"openid"}, Groups: groups},
+			},
+		}
+	}
+	tests := []struct {
+		name      string
+		a, b      *appsv1.NebariApp
+		wantEqual bool
+	}{
+		{name: "bare and path forms hash equal", a: app("finance"), b: app("/finance"), wantEqual: true},
+		{name: "trailing slash hashes equal", a: app("/finance/"), b: app("/finance"), wantEqual: true},
+		{name: "different groups hash differently", a: app("/finance"), b: app("/ops"), wantEqual: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := computeAuthConfigHash(tt.a) == computeAuthConfigHash(tt.b); got != tt.wantEqual {
+				t.Errorf("hashes equal = %v, want %v", got, tt.wantEqual)
+			}
+		})
+	}
+
+	upgradeCases := []struct {
+		name string
+		app  *appsv1.NebariApp
+	}{
+		{name: "path groups", app: app("/finance")},
+		{name: "no groups", app: app()},
+	}
+	for _, tt := range upgradeCases {
+		t.Run("differs from pre-upgrade hash: "+tt.name, func(t *testing.T) {
+			if computeAuthConfigHash(tt.app) == legacyAuthConfigHash(t, tt.app) {
+				t.Error("hash matches the pre-upgrade hash, so the app would skip reprovisioning and keep its old mapper")
 			}
 		})
 	}

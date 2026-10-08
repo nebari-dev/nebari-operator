@@ -77,6 +77,9 @@ type authProvisionState struct {
 	IssuerURL      string                       `json:"issuerURL"`
 	Scopes         []string                     `json:"scopes"`
 	Groups         []string                     `json:"groups"`
+	// GroupsClaimFormat changes whenever the groups claim format the operator
+	// provisions changes, so every app reprovisions once on upgrade.
+	GroupsClaimFormat string                       `json:"groupsClaimFormat"`
 	SPAClient      *appsv1.SPAClientConfig      `json:"spaClient,omitempty"`
 	KeycloakConfig *appsv1.KeycloakClientConfig `json:"keycloakConfig,omitempty"`
 }
@@ -90,8 +93,8 @@ func computeAuthConfigHash(nebariApp *appsv1.NebariApp) string {
 	scopes := append([]string(nil), auth.Scopes...)
 	sort.Strings(scopes)
 
-	groups := append([]string(nil), auth.Groups...)
-	sort.Strings(groups)
+	// Normalized so that "finance" and "/finance" do not trigger reprovisioning.
+	groups := NormalizeGroupPaths(auth.Groups)
 
 	state := authProvisionState{
 		Namespace:      nebariApp.Namespace,
@@ -102,6 +105,7 @@ func computeAuthConfigHash(nebariApp *appsv1.NebariApp) string {
 		IssuerURL:      auth.IssuerURL,
 		Scopes:         scopes,
 		Groups:         groups,
+		GroupsClaimFormat: groupsClaimFormatVersion,
 		SPAClient:      auth.SPAClient,
 		KeycloakConfig: auth.KeycloakConfig,
 	}
