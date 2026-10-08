@@ -225,6 +225,73 @@ cluster DNS, avoiding public TLS-chain trust and hairpin-routing requirements.
 - Condition: `AuthReady=False` with reason `SecurityPolicyFailed`
 - Error message includes underlying error
 
+## Group-based access control
+
+When `spec.auth.groups` is non-empty, the provider is `keycloak`, and `enforceAtGateway` is `true`, the operator adds
+three sections to the SecurityPolicy so that the gateway itself rejects users outside the listed groups. For app
+`finance-dash` in namespace `finance` with `groups: [finance, /ops/oncall]`:
+
+```yaml
+spec:
+  oidc:
+    # ...as above, plus:
+    cookieNames:
+      accessToken: nebari-at-finance-finance-dash
+  jwt:
+    providers:
+      - name: nebari-groups
+        remoteJWKS:
+          uri: http://{keycloak-service}.{namespace}.svc:{port}/realms/{realm}/protocol/openid-connect/certs
+        extractFrom:
+          cookies:
+            - nebari-at-finance-finance-dash
+  authorization:
+    defaultAction: Deny
+    rules:
+      - name: allow-groups
+        action: Allow
+        principal:
+          jwt:
+            provider: nebari-groups
+            claims:
+              - name: groups
+                valueType: StringArray
+                values: ["/finance", "/ops/oncall"]
+```
+
+The `oidc` section's access-token cookie is renamed to `nebari-at-<namespace>-<name>` so the `jwt` provider can read a
+known cookie and verify the token against the realm JWKS. Existing apps are logged out once on upgrade because the old
+cookie name is no longer read. A token with no `groups` claim matches no rule and receives 403. Envoy Gateway caps each
+claim at 128 values, so with more than 128 groups the values are split across rules `allow-groups`, `allow-groups-2`,
+and so on.
+
+**Claim format.** The `groups` claim carries full group paths such as `/finance` or `/ops/oncall`. The default
+`group-membership` mapper is switched to `full.path=true` for every app, not only apps that set `auth.groups`. Entries
+in `auth.groups` are normalized to full paths (`finance` becomes `/finance`) and matched exactly and case-sensitively.
+A parent group does not admit members of its subgroups; list the subgroup itself. When the app defines custom
+`keycloakConfig.protocolMappers` and sets `auth.groups`, the operator appends a mapper named `nebari-group-membership`
+unless a custom mapper already emits `groups`.
+
+**Removal delay.** Group membership is read from the access token, so removing a user from a group takes effect when
+their token expires: the realm's access token lifespan, 5 minutes by default.
+
+**Token size.** A user in many groups produces a large access token, and browsers cap a cookie near 4 KB. Users with
+very many group memberships may fail to sign in.
+
+**Unsupported configurations.** The operator writes a deny-all policy (`authorization.defaultAction: Deny` with no
+rules) rather than deleting the policy or leaving it open:
+
+| Reason | When | Conditions |
+|--------|------|------------|
+| `GroupsRequireKeycloak` | `generic-oidc` with groups and `enforceAtGateway: true` | `AuthReady=False`, `Ready=False` |
+| `GroupsClaimConflict` | A custom mapper emits `groups` without `full.path: "true"` and `access.token.claim: "true"` | `AuthReady=False`, `Ready=False` |
+
+With `enforceAtGateway: false` the operator provisions the claim but writes no authorization rules, and `AuthReady` is
+`True` with reason `GroupsEnforcedByApplication`.
+
+**Fail closed.** If any auth step fails while groups are enforced (for example, a path listed in `auth.groups` does not
+exist in Keycloak), the operator still writes the enforced policy, so the app denies users instead of opening up.
+
 ## Status Management
 
 ### Conditions

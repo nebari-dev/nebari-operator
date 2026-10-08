@@ -366,15 +366,35 @@ Defines the OIDC scopes to request during authentication.
 
 **Type:** `array of strings` (optional)
 
-Specifies the list of groups that should have access to this application. When specified, only users belonging to these
-groups will be authorized. Group matching is case-sensitive and depends on the OIDC provider's group claim.
+Lists the Keycloak groups whose members may access this application. When `enforceAtGateway` is `true` (the default)
+and the provider is `keycloak`, the gateway returns 403 to any signed-in user whose access token has none of these
+groups in its `groups` claim.
+
+- Entries are matched as full group paths, exactly and case-sensitively. `finance` is treated as `/finance`.
+- A parent group does not admit members of its subgroups. To admit `/finance/analysts`, list `/finance/analysts`.
+- Removing a user from a group takes effect when their access token expires: the realm's access token lifespan,
+  5 minutes by default.
+- With `provider: generic-oidc` and `enforceAtGateway: true`, setting `groups` denies every request and sets
+  `AuthReady=False` with reason `GroupsRequireKeycloak`. The app's `Ready` condition is also `False`.
+- With `enforceAtGateway: false`, the operator still provisions the `groups` claim, and the application must
+  enforce it. `AuthReady` reports reason `GroupsEnforcedByApplication`.
+- If `keycloakConfig.protocolMappers` defines a mapper for the `groups` claim, it must be an
+  `oidc-group-membership-mapper` with `full.path: "true"` and `access.token.claim: "true"`. Otherwise every request is
+  denied and `AuthReady` reports reason `GroupsClaimConflict`. The app's `Ready` condition is also `False`.
+- When `keycloakConfig.protocolMappers` is set and no custom mapper emits `groups`, the operator appends its own
+  mapper named `nebari-group-membership`.
+- The operator syncs the listed groups in Keycloak. A bare name (`finance`) is looked up by name and created if it is
+  missing. A path entry (`/ops/oncall`) is looked up by path and is never created automatically; reconcile fails if
+  the path does not resolve. A failed reconcile still leaves the enforced policy in place, so the app stays closed.
+
+See [Group-based access control](reconcilers/authentication.md#group-based-access-control) for the SecurityPolicy the
+operator writes.
 
 **Example:**
 ```yaml
 groups:
-  - admin
-  - developers
-  - data-scientists
+  - /admin
+  - /data-science-team
 ```
 
 #### auth.provisionClient
@@ -485,7 +505,7 @@ Each entry has:
 
 Client-level protocol mappers to configure on the OIDC client. These are applied directly to the client (not to shared client scopes), so each NebariApp gets isolated mapper configuration.
 
-When specified, the operator's default mappers (e.g., group-membership) are not auto-created - this configuration takes full control.
+When specified, the operator's default mappers (e.g., group-membership) are not auto-created - this configuration takes full control. The one exception: when `auth.groups` is set and no mapper emits the `groups` claim, the operator appends a mapper named `nebari-group-membership`. The default `group-membership` mapper emits full group paths (`full.path=true`) for every app.
 
 Each entry has:
 - `name` (string, required): Name of the protocol mapper
@@ -509,7 +529,7 @@ spec:
           protocolMapper: oidc-group-membership-mapper
           config:
             claim.name: groups
-            full.path: "false"
+            full.path: "true"
             id.token.claim: "true"
             access.token.claim: "true"
 ```
@@ -982,7 +1002,7 @@ spec:
           protocolMapper: oidc-group-membership-mapper
           config:
             claim.name: groups
-            full.path: "false"
+            full.path: "true"
             id.token.claim: "true"
             access.token.claim: "true"
   gateway: public
