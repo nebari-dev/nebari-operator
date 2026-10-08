@@ -20,6 +20,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -1828,6 +1829,63 @@ func TestKeycloakProvider_GetJWKSURL(t *testing.T) {
 			}
 			if got != tt.want {
 				t.Errorf("GetJWKSURL() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestKeycloakProvider_SyncClientProtocolMappers_PrunesStaleGroupsMappers(t *testing.T) {
+	existing := `{"id":"cid","protocolMappers":[
+		{"id":"m-stale","name":"old-groups","protocol":"openid-connect","protocolMapper":"oidc-hardcoded-claim-mapper","config":{"claim.name":"groups"}},
+		{"id":"m-desired","name":"nebari-group-membership","protocol":"openid-connect","protocolMapper":"oidc-group-membership-mapper","config":{"claim.name":"groups"}},
+		{"id":"m-other","name":"dept","protocol":"openid-connect","protocolMapper":"oidc-hardcoded-claim-mapper","config":{"claim.name":"department"}}
+	]}`
+	customDept := []appsv1.KeycloakProtocolMapperConfig{{
+		Name: "dept", ProtocolMapper: "oidc-hardcoded-claim-mapper",
+		Config: map[string]string{"claim.name": "department"},
+	}}
+	tests := []struct {
+		name        string
+		groups      []string
+		mappers     []appsv1.KeycloakProtocolMapperConfig
+		wantDeleted []string
+	}{
+		{name: "stale groups mapper deleted, desired and other-claim kept", groups: []string{"/finance"}, mappers: customDept, wantDeleted: []string{"m-stale"}},
+		{name: "no groups: nothing deleted", mappers: customDept, wantDeleted: nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var deleted []string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/admin/realms/test/clients/cid":
+					_, _ = w.Write([]byte(existing))
+				case r.Method == http.MethodDelete && strings.Contains(r.URL.Path, "/protocol-mappers/models/"):
+					deleted = append(deleted, r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:])
+					w.WriteHeader(http.StatusNoContent)
+				case r.Method == http.MethodPut:
+					w.WriteHeader(http.StatusNoContent)
+				case r.Method == http.MethodPost:
+					w.Header().Set("Location", r.URL.Path+"/new")
+					w.WriteHeader(http.StatusCreated)
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer server.Close()
+
+			provider := &KeycloakProvider{Config: config.KeycloakConfig{URL: server.URL, Realm: "test"}}
+			app := &appsv1.NebariApp{Spec: appsv1.NebariAppSpec{Hostname: "t.example.com", Auth: &appsv1.AuthConfig{
+				Enabled: true, Groups: tt.groups,
+				KeycloakConfig: &appsv1.KeycloakClientConfig{ProtocolMappers: tt.mappers},
+			}}}
+			err := provider.syncClientProtocolMappers(context.Background(), gocloak.NewClient(server.URL), &gocloak.JWT{AccessToken: "t"}, "cid", app)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !reflect.DeepEqual(deleted, tt.wantDeleted) {
+				t.Errorf("deleted = %v, want %v", deleted, tt.wantDeleted)
 			}
 		})
 	}

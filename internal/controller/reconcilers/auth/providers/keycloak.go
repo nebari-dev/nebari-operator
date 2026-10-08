@@ -921,6 +921,28 @@ func (p *KeycloakProvider) syncClientProtocolMappers(ctx context.Context, kcClie
 		}
 	}
 
+	// The gateway trusts the groups claim when auth.groups is set, so a stale
+	// mapper that still emits it (for example one the user removed from the
+	// spec) must not survive. Only mappers for the groups claim are pruned.
+	if len(nebariApp.Spec.Auth.Groups) > 0 {
+		desiredNames := make(map[string]struct{}, len(desiredMappers))
+		for _, d := range desiredMappers {
+			desiredNames[d.Name] = struct{}{}
+		}
+		for name, existing := range existingByName {
+			if _, keep := desiredNames[name]; keep {
+				continue
+			}
+			if existing.Config == nil || (*existing.Config)["claim.name"] != groupsClaim || existing.ID == nil {
+				continue
+			}
+			if err := kcClient.DeleteClientProtocolMapper(ctx, token.AccessToken, p.Config.Realm, clientInternalID, *existing.ID); err != nil {
+				return fmt.Errorf("failed to delete stale groups protocol mapper %q: %w", name, err)
+			}
+			logger.Info("Deleted stale groups client protocol mapper", "mapper", name)
+		}
+	}
+
 	return nil
 }
 
