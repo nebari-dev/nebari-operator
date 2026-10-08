@@ -41,7 +41,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 // verifyEndpointOverrides checks that the SecurityPolicy's endpoint overrides match expectations.
@@ -1763,6 +1765,9 @@ func TestReconcileAuth_Groups(t *testing.T) {
 		wantReason     string
 		wantPolicy     bool
 		wantAllowRule  bool
+		wantValues     []string
+		noSecret       bool
+		policyWriteErr error
 	}{
 		{
 			name:        "gateway mode: allow rule and AuthConfigured",
@@ -1778,18 +1783,53 @@ func TestReconcileAuth_Groups(t *testing.T) {
 			existingPolicy: true,
 			wantErr:        true,
 			wantStatus:     metav1.ConditionFalse, wantReason: "ProvisioningFailed", wantPolicy: true, wantAllowRule: true,
+			wantValues: []string{"/missing"},
 		},
 		{
 			name:        "generic-oidc with groups: deny all and GroupsRequireKeycloak",
 			auth:        &appsv1.AuthConfig{Enabled: true, Provider: constants.ProviderGenericOIDC, ProvisionClient: ptr.To(false), Groups: []string{"finance"}},
 			providerKey: constants.ProviderGenericOIDC,
-			wantStatus:  metav1.ConditionFalse, wantReason: appsv1.ReasonGroupsRequireKeycloak, wantPolicy: true,
+			wantStatus:  metav1.ConditionFalse, wantReason: appsv1.ReasonGroupsRequireKeycloak, wantPolicy: true, wantErr: true,
 		},
 		{
 			name:        "conflicting mapper: deny all and GroupsClaimConflict",
 			auth:        &appsv1.AuthConfig{Enabled: true, Provider: constants.ProviderKeycloak, ProvisionClient: ptr.To(true), Groups: []string{"finance"}, KeycloakConfig: conflicting},
 			providerKey: constants.ProviderKeycloak,
-			wantStatus:  metav1.ConditionFalse, wantReason: appsv1.ReasonGroupsClaimConflict, wantPolicy: true,
+			wantStatus:  metav1.ConditionFalse, wantReason: appsv1.ReasonGroupsClaimConflict, wantPolicy: true, wantErr: true,
+		},
+		{
+			name:           "validation fails: enforced policy still written over the old one",
+			auth:           &appsv1.AuthConfig{Enabled: true, Provider: constants.ProviderKeycloak, ProvisionClient: ptr.To(false), Groups: []string{"finance"}},
+			providerKey:    constants.ProviderKeycloak,
+			noSecret:       true,
+			existingPolicy: true,
+			wantErr:        true,
+			wantStatus:     metav1.ConditionFalse, wantReason: "ValidationFailed", wantPolicy: true, wantAllowRule: true,
+		},
+		{
+			name:           "provisioning unsupported: deny all written over the old policy",
+			auth:           &appsv1.AuthConfig{Enabled: true, Provider: constants.ProviderGenericOIDC, Groups: []string{"finance"}},
+			providerKey:    constants.ProviderGenericOIDC,
+			existingPolicy: true,
+			wantErr:        true,
+			wantStatus:     metav1.ConditionFalse, wantReason: "ProvisioningNotSupported", wantPolicy: true,
+		},
+		{
+			name:           "claim conflict and provisioning failure: deny all written",
+			auth:           &appsv1.AuthConfig{Enabled: true, Provider: constants.ProviderKeycloak, ProvisionClient: ptr.To(true), Groups: []string{"finance"}, KeycloakConfig: conflicting},
+			providerKey:    constants.ProviderKeycloak,
+			provisionError: errors.New("keycloak unavailable"),
+			wantErr:        true,
+			wantStatus:     metav1.ConditionFalse, wantReason: "ProvisioningFailed", wantPolicy: true,
+		},
+		{
+			name:           "provisioning and policy write both fail: both errors returned",
+			auth:           &appsv1.AuthConfig{Enabled: true, Provider: constants.ProviderKeycloak, ProvisionClient: ptr.To(true), Groups: []string{"finance"}},
+			providerKey:    constants.ProviderKeycloak,
+			provisionError: errors.New("keycloak unavailable"),
+			policyWriteErr: errors.New("apiserver rejected policy"),
+			wantErr:        true,
+			wantStatus:     metav1.ConditionFalse, wantReason: "ProvisioningFailed", wantPolicy: false,
 		},
 		{
 			name:        "enforceAtGateway false: no policy and GroupsEnforcedByApplication",
@@ -1808,7 +1848,26 @@ func TestReconcileAuth_Groups(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{Name: naming.ClientSecretName(app), Namespace: "finance"},
 				Data:       map[string][]byte{constants.ClientSecretKey: []byte("s")},
 			}
-			builder := fake.NewClientBuilder().WithScheme(scheme).WithObjects(secret)
+			builder := fake.NewClientBuilder().WithScheme(scheme)
+			if !tt.noSecret {
+				builder = builder.WithObjects(secret)
+			}
+			if tt.policyWriteErr != nil {
+				builder = builder.WithInterceptorFuncs(interceptor.Funcs{
+					Create: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+						if _, ok := obj.(*egv1alpha1.SecurityPolicy); ok {
+							return tt.policyWriteErr
+						}
+						return cl.Create(ctx, obj, opts...)
+					},
+					Update: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
+						if _, ok := obj.(*egv1alpha1.SecurityPolicy); ok {
+							return tt.policyWriteErr
+						}
+						return cl.Update(ctx, obj, opts...)
+					},
+				})
+			}
 			if tt.existingPolicy {
 				builder = builder.WithObjects(&egv1alpha1.SecurityPolicy{
 					ObjectMeta: metav1.ObjectMeta{Name: naming.SecurityPolicyName(app), Namespace: "finance"},
@@ -1828,6 +1887,12 @@ func TestReconcileAuth_Groups(t *testing.T) {
 			err := r.ReconcileAuth(context.Background(), app)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("ReconcileAuth() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.provisionError != nil && !errors.Is(err, tt.provisionError) {
+				t.Errorf("error %v does not wrap provisioning error %v", err, tt.provisionError)
+			}
+			if tt.policyWriteErr != nil && !errors.Is(err, tt.policyWriteErr) {
+				t.Errorf("error %v does not wrap policy write error %v", err, tt.policyWriteErr)
 			}
 
 			cond := conditions.GetCondition(app, appsv1.ConditionTypeAuthReady)
@@ -1849,6 +1914,13 @@ func TestReconcileAuth_Groups(t *testing.T) {
 			}
 			if gotAllow := len(sp.Spec.Authorization.Rules) > 0; gotAllow != tt.wantAllowRule {
 				t.Errorf("allow rule present = %v, want %v", gotAllow, tt.wantAllowRule)
+			}
+			if tt.wantValues != nil {
+				rule := sp.Spec.Authorization.Rules[0]
+				if rule.Principal.JWT == nil || len(rule.Principal.JWT.Claims) != 1 ||
+					!reflect.DeepEqual(rule.Principal.JWT.Claims[0].Values, tt.wantValues) {
+					t.Errorf("allow rule claims = %+v, want values %v", rule.Principal.JWT, tt.wantValues)
+				}
 			}
 		})
 	}
