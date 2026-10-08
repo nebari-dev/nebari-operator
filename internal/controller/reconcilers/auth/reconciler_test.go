@@ -71,9 +71,13 @@ type mockProvider struct {
 	issuerError            error
 	provisionCount         int // tracks how many times ProvisionClient was called
 	jwksURL                string
+	jwksError              error
 }
 
 func (m *mockProvider) GetJWKSURL(_ context.Context, _ *appsv1.NebariApp) (string, error) {
+	if m.jwksError != nil {
+		return "", m.jwksError
+	}
 	return m.jwksURL, nil
 }
 

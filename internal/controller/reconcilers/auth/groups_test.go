@@ -18,11 +18,14 @@ package auth
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 
 	egv1alpha1 "github.com/envoyproxy/gateway/api/v1alpha1"
 	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
+	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/auth/providers"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/constants"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/ptr"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -142,6 +145,19 @@ func TestBuildSecurityPolicySpec_Groups(t *testing.T) {
 			}},
 		}}
 	}
+	// genGroups returns n sorted paths /g000../g<n-1>.
+	genGroups := func(n int) []string {
+		out := make([]string, n)
+		for i := range out {
+			out[i] = fmt.Sprintf("/g%03d", i)
+		}
+		return out
+	}
+	ruleNamed := func(name string, values []string) egv1alpha1.AuthorizationRule {
+		r := allowRule(values...)[0]
+		r.Name = ptr.To(name)
+		return r
+	}
 	conflicting := &appsv1.KeycloakClientConfig{ProtocolMappers: []appsv1.KeycloakProtocolMapperConfig{{
 		Name: "g", ProtocolMapper: "oidc-group-membership-mapper",
 		Config: map[string]string{"claim.name": "groups", "full.path": "false", "access.token.claim": "true"},
@@ -164,6 +180,23 @@ func TestBuildSecurityPolicySpec_Groups(t *testing.T) {
 			wantCookie: ptr.To(cookie),
 			wantJWT:    true,
 			wantAuthz:  &egv1alpha1.Authorization{DefaultAction: &deny, Rules: allowRule("/finance", "/ops/oncall")},
+		},
+		{
+			name:       "exactly 128 groups: one rule",
+			auth:       &appsv1.AuthConfig{Enabled: true, Provider: constants.ProviderKeycloak, Groups: genGroups(128)},
+			wantCookie: ptr.To(cookie),
+			wantJWT:    true,
+			wantAuthz:  &egv1alpha1.Authorization{DefaultAction: &deny, Rules: allowRule(genGroups(128)...)},
+		},
+		{
+			name:       "129 groups: split into two rules",
+			auth:       &appsv1.AuthConfig{Enabled: true, Provider: constants.ProviderKeycloak, Groups: genGroups(129)},
+			wantCookie: ptr.To(cookie),
+			wantJWT:    true,
+			wantAuthz: &egv1alpha1.Authorization{DefaultAction: &deny, Rules: []egv1alpha1.AuthorizationRule{
+				ruleNamed("allow-groups", genGroups(129)[:128]),
+				ruleNamed("allow-groups-2", genGroups(129)[128:]),
+			}},
 		},
 		{
 			name:       "only empty entries: deny all, no allow rule",
@@ -223,6 +256,46 @@ func TestBuildSecurityPolicySpec_Groups(t *testing.T) {
 
 			if !reflect.DeepEqual(spec.Authorization, tt.wantAuthz) {
 				t.Errorf("authorization = %+v, want %+v", spec.Authorization, tt.wantAuthz)
+			}
+		})
+	}
+}
+
+type oidcOnlyProvider struct{ providers.OIDCProvider }
+
+func TestBuildSecurityPolicySpec_GroupsProviderErrors(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = appsv1.AddToScheme(scheme)
+	_ = egv1alpha1.AddToScheme(scheme)
+
+	tests := []struct {
+		name     string
+		provider providers.OIDCProvider
+	}{
+		{
+			name:     "provider does not implement GroupsClaimProvider",
+			provider: oidcOnlyProvider{&mockProvider{issuerURL: "https://kc.example.com/realms/nebari", clientID: "c"}},
+		},
+		{
+			name:     "GetJWKSURL fails",
+			provider: &mockProvider{issuerURL: "https://kc.example.com/realms/nebari", clientID: "c", jwksError: errors.New("boom")},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := &AuthReconciler{Client: fake.NewClientBuilder().WithScheme(scheme).Build(), Scheme: scheme}
+			app := &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{Name: "finance-dash", Namespace: "finance"},
+				Spec: appsv1.NebariAppSpec{Hostname: "dash.example.com", Auth: &appsv1.AuthConfig{
+					Enabled: true, Provider: constants.ProviderKeycloak, Groups: []string{"finance"},
+				}},
+			}
+			spec, err := r.buildSecurityPolicySpec(context.Background(), app, tt.provider)
+			if err == nil {
+				t.Fatal("buildSecurityPolicySpec() error = nil, want error")
+			}
+			if !reflect.DeepEqual(spec, egv1alpha1.SecurityPolicySpec{}) {
+				t.Errorf("spec should be zero on error, got %+v", spec)
 			}
 		})
 	}
