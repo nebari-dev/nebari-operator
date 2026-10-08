@@ -208,14 +208,10 @@ type AuthConfig struct {
 	// +optional
 	Scopes []string `json:"scopes,omitempty"`
 
-	// Groups specifies the list of groups that should have access to this application.
-	// When specified, only users belonging to these groups will be authorized.
-	// Group matching is case-sensitive and depends on the OIDC provider's group claim.
-	//
-	// Path semantics and the "create if missing" behavior below apply only when
-	// provider="keycloak" with provisionClient=true. For provider="generic-oidc",
-	// entries are opaque strings forwarded to the provider's group claim; the
-	// operator does not create or resolve them, and GroupsNotResolved never fires.
+	// Groups lists the Keycloak groups whose members may access this application.
+	// When enforceAtGateway is true and the provider is keycloak, the gateway
+	// denies every request whose access token has none of these groups in its
+	// "groups" claim (HTTP 403).
 	//
 	// With provider="keycloak" and provisionClient=true, each entry is a Keycloak
 	// group path, such as "/team-example" or "/parent/child". A bare name such as
@@ -227,6 +223,20 @@ type AuthConfig struct {
 	//     configuration, including the SecurityPolicy, is still applied, but
 	//     AuthReady and Ready are set to False with reason GroupsNotResolved
 	//     until the group exists. The lookup is retried every minute.
+	//
+	// Entries are matched as full group paths, exactly and case-sensitively:
+	// "finance" is treated as "/finance", and "/finance" does not admit members
+	// of "/finance/analysts" only. List each subgroup that needs access.
+	//
+	// Removing a user from a group takes effect when their access token expires
+	// (the realm's access token lifespan, 5 minutes by default).
+	//
+	// For provider="generic-oidc", the operator does not create or resolve
+	// entries, and GroupsNotResolved never fires. With enforceAtGateway true,
+	// setting groups denies every request (AuthReady reason
+	// GroupsRequireKeycloak). With enforceAtGateway false, the claim is
+	// provisioned and the application must enforce it.
+	// +kubebuilder:validation:items:MinLength=1
 	// +optional
 	Groups []string `json:"groups,omitempty"`
 
@@ -725,6 +735,18 @@ const (
 	// not exist in the identity provider. The rest of the auth configuration,
 	// including the SecurityPolicy, is applied, and the lookup is retried.
 	ReasonGroupsNotResolved = "GroupsNotResolved"
+
+	// ReasonGroupsRequireKeycloak indicates spec.auth.groups is set with a provider
+	// that cannot enforce groups at the gateway. Every request is denied.
+	ReasonGroupsRequireKeycloak = "GroupsRequireKeycloak"
+
+	// ReasonGroupsClaimConflict indicates a custom protocol mapper emits the groups
+	// claim in a format the gateway rule cannot match. Every request is denied.
+	ReasonGroupsClaimConflict = "GroupsClaimConflict"
+
+	// ReasonGroupsEnforcedByApplication indicates spec.auth.groups is set with
+	// enforceAtGateway=false, so the application must check the groups claim.
+	ReasonGroupsEnforcedByApplication = "GroupsEnforcedByApplication"
 )
 
 // Event reasons for recording Kubernetes events
