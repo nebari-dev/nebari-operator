@@ -101,3 +101,11 @@ func (e *GroupsNotResolvedError) Error() string {
 	return fmt.Sprintf("group paths not found in realm %q: %s (paths are never created: create them in Keycloak, or list a top-level group by bare name to have it created)",
 		e.Realm, strings.Join(e.Paths, ", "))
 }
+
+// GroupsClaimProvider is implemented by providers whose access tokens carry a
+// groups claim that the gateway can verify against the provider's signing keys.
+type GroupsClaimProvider interface {
+	// GetJWKSURL returns the JWKS URL Envoy fetches to verify access tokens.
+	// It must be reachable from the Envoy proxy pods.
+	GetJWKSURL(ctx context.Context, nebariApp *appsv1.NebariApp) (string, error)
+}
