@@ -21,9 +21,11 @@ import (
 	"sort"
 	"strings"
 
+	egv1alpha1 "github.com/envoyproxy/gateway/api/v1alpha1"
 	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
 	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/auth/providers"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/constants"
+	"github.com/nebari-dev/nebari-operator/internal/controller/utils/ptr"
 )
 
 const (
@@ -107,4 +109,44 @@ func NormalizeGroupPaths(groups []string) []string {
 // operator cannot know when it builds the jwt provider that reads the cookie.
 func groupsAccessTokenCookieName(nebariApp *appsv1.NebariApp) string {
 	return fmt.Sprintf("nebari-at-%s-%s", nebariApp.Namespace, nebariApp.Name)
+}
+
+// denyAllAuthorization denies every request. It is used when groups are set
+// but cannot be enforced, so the route never falls back to admitting every
+// authenticated user.
+func denyAllAuthorization() *egv1alpha1.Authorization {
+	return &egv1alpha1.Authorization{DefaultAction: ptr.To(egv1alpha1.AuthorizationActionDeny)}
+}
+
+// applyGroupsEnforcement adds the jwt provider and authorization rule that
+// admit only members of groupPaths. The oauth2 filter runs before jwt_authn,
+// so the jwt provider reads the access token from the oauth2 cookie, which
+// the client cannot forge. With no groupPaths the policy denies every request.
+func applyGroupsEnforcement(spec *egv1alpha1.SecurityPolicySpec, cookieName, jwksURL string, groupPaths []string) {
+	spec.OIDC.CookieNames = &egv1alpha1.OIDCCookieNames{AccessToken: ptr.To(cookieName)}
+	spec.JWT = &egv1alpha1.JWT{
+		Providers: []egv1alpha1.JWTProvider{{
+			Name:        groupsJWTProviderName,
+			RemoteJWKS:  &egv1alpha1.RemoteJWKS{URI: jwksURL},
+			ExtractFrom: &egv1alpha1.JWTExtractor{Cookies: []string{cookieName}},
+		}},
+	}
+	spec.Authorization = denyAllAuthorization()
+	if len(groupPaths) == 0 {
+		return
+	}
+	spec.Authorization.Rules = []egv1alpha1.AuthorizationRule{{
+		Name:   ptr.To(groupsAllowRuleName),
+		Action: egv1alpha1.AuthorizationActionAllow,
+		Principal: egv1alpha1.Principal{
+			JWT: &egv1alpha1.JWTPrincipal{
+				Provider: groupsJWTProviderName,
+				Claims: []egv1alpha1.JWTClaim{{
+					Name:      groupsClaimName,
+					ValueType: ptr.To(egv1alpha1.JWTClaimValueTypeStringArray),
+					Values:    groupPaths,
+				}},
+			},
+		},
+	}}
 }
