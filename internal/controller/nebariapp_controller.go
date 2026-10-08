@@ -258,7 +258,7 @@ func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 // Visibility and RequiredGroups are computed from spec.auth to ensure consistency:
 // - auth disabled → visibility="public", requiredGroups=[]
 // - auth enabled, no groups → visibility="private", requiredGroups=[]
-// - auth enabled, with groups → visibility="private", requiredGroups=auth.groups
+// - auth enabled, with groups → visibility="private", requiredGroups=normalized auth.groups (full paths)
 func buildServiceDiscoveryStatus(app *appsv1.NebariApp) *appsv1.ServiceDiscoveryStatus {
 	if app.Spec.LandingPage == nil || !app.Spec.LandingPage.Enabled {
 		return &appsv1.ServiceDiscoveryStatus{Enabled: false}
@@ -276,7 +276,7 @@ func buildServiceDiscoveryStatus(app *appsv1.NebariApp) *appsv1.ServiceDiscovery
 	var requiredGroups []string
 	if app.Spec.Auth != nil && app.Spec.Auth.Enabled {
 		visibility = "private"
-		requiredGroups = app.Spec.Auth.Groups
+		requiredGroups = auth.NormalizeGroupPaths(app.Spec.Auth.Groups)
 	}
 
 	scheme := "https"
