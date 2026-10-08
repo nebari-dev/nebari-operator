@@ -35,6 +35,8 @@ const (
 	groupsJWTProviderName = "nebari-groups"
 	groupsAllowRuleName   = "allow-groups"
 	groupsClaimName       = "groups"
+	// authorizedPartyClaimName is the azp claim Keycloak sets to the client that requested the token.
+	authorizedPartyClaimName = "azp"
 
 	// maxClaimValuesPerRule is Envoy Gateway's cap on JWTClaim.Values
 	// (+kubebuilder:validation:MaxItems=128 at v1.6.3). Longer group lists are
@@ -130,7 +132,12 @@ func denyAllAuthorization() *egv1alpha1.Authorization {
 // provider therefore reads the access token from the oauth2 cookie. Group
 // paths are split into one allow rule per maxClaimValuesPerRule values. With
 // no groupPaths the policy denies every request.
-func applyGroupsEnforcement(spec *egv1alpha1.SecurityPolicySpec, cookieName, jwksURL string, groupPaths []string) {
+//
+// Every allow rule also requires the azp claim to equal clientID. The oauth2
+// HMAC secret is shared across all SecurityPolicies, so the cookie check alone
+// does not bind a token to this app; azp ties it to this app's OIDC client.
+// Claims in one principal are ANDed.
+func applyGroupsEnforcement(spec *egv1alpha1.SecurityPolicySpec, cookieName, jwksURL, clientID string, groupPaths []string) {
 	spec.OIDC.CookieNames = &egv1alpha1.OIDCCookieNames{AccessToken: ptr.To(cookieName)}
 	spec.JWT = &egv1alpha1.JWT{
 		Providers: []egv1alpha1.JWTProvider{{
@@ -155,11 +162,18 @@ func applyGroupsEnforcement(spec *egv1alpha1.SecurityPolicySpec, cookieName, jwk
 			Principal: egv1alpha1.Principal{
 				JWT: &egv1alpha1.JWTPrincipal{
 					Provider: groupsJWTProviderName,
-					Claims: []egv1alpha1.JWTClaim{{
-						Name:      groupsClaimName,
-						ValueType: ptr.To(egv1alpha1.JWTClaimValueTypeStringArray),
-						Values:    groupPaths[i:end],
-					}},
+					Claims: []egv1alpha1.JWTClaim{
+						{
+							Name:      groupsClaimName,
+							ValueType: ptr.To(egv1alpha1.JWTClaimValueTypeStringArray),
+							Values:    groupPaths[i:end],
+						},
+						{
+							Name:      authorizedPartyClaimName,
+							ValueType: ptr.To(egv1alpha1.JWTClaimValueTypeString),
+							Values:    []string{clientID},
+						},
+					},
 				},
 			},
 		})

@@ -1917,7 +1917,7 @@ func TestReconcileAuth_Groups(t *testing.T) {
 			}
 			if tt.wantValues != nil {
 				rule := sp.Spec.Authorization.Rules[0]
-				if rule.Principal.JWT == nil || len(rule.Principal.JWT.Claims) != 1 ||
+				if rule.Principal.JWT == nil || len(rule.Principal.JWT.Claims) != 2 ||
 					!reflect.DeepEqual(rule.Principal.JWT.Claims[0].Values, tt.wantValues) {
 					t.Errorf("allow rule claims = %+v, want values %v", rule.Principal.JWT, tt.wantValues)
 				}

@@ -577,7 +577,7 @@ func (r *AuthReconciler) buildSecurityPolicySpec(ctx context.Context, nebariApp 
 		if err != nil {
 			return egv1alpha1.SecurityPolicySpec{}, fmt.Errorf("failed to get JWKS URL: %w", err)
 		}
-		applyGroupsEnforcement(&spec, groupsAccessTokenCookieName(nebariApp), jwksURL, NormalizeGroupPaths(nebariApp.Spec.Auth.Groups))
+		applyGroupsEnforcement(&spec, groupsAccessTokenCookieName(nebariApp), jwksURL, clientID, NormalizeGroupPaths(nebariApp.Spec.Auth.Groups))
 	case groupsModeRequireKeycloak, groupsModeClaimConflict:
 		spec.Authorization = denyAllAuthorization()
 	}
