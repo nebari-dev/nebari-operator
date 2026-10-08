@@ -69,19 +69,19 @@ func shouldProvisionClient(auth *appsv1.AuthConfig) bool {
 // but do not alter what is actually provisioned inside Keycloak. SecurityPolicy
 // reconciliation runs unconditionally regardless of the hash.
 type authProvisionState struct {
-	Namespace      string                       `json:"namespace"`
-	Name           string                       `json:"name"`
-	Hostname       string                       `json:"hostname"`
-	Provider       string                       `json:"provider"`
-	RedirectURI    string                       `json:"redirectURI"`
-	IssuerURL      string                       `json:"issuerURL"`
-	Scopes         []string                     `json:"scopes"`
-	Groups         []string                     `json:"groups"`
+	Namespace   string   `json:"namespace"`
+	Name        string   `json:"name"`
+	Hostname    string   `json:"hostname"`
+	Provider    string   `json:"provider"`
+	RedirectURI string   `json:"redirectURI"`
+	IssuerURL   string   `json:"issuerURL"`
+	Scopes      []string `json:"scopes"`
+	Groups      []string `json:"groups"`
 	// GroupsClaimFormat changes whenever the groups claim format the operator
 	// provisions changes, so every app reprovisions once on upgrade.
 	GroupsClaimFormat string                       `json:"groupsClaimFormat"`
-	SPAClient      *appsv1.SPAClientConfig      `json:"spaClient,omitempty"`
-	KeycloakConfig *appsv1.KeycloakClientConfig `json:"keycloakConfig,omitempty"`
+	SPAClient         *appsv1.SPAClientConfig      `json:"spaClient,omitempty"`
+	KeycloakConfig    *appsv1.KeycloakClientConfig `json:"keycloakConfig,omitempty"`
 }
 
 // computeAuthConfigHash returns a SHA-256 hex digest of the NebariApp fields that
@@ -97,17 +97,17 @@ func computeAuthConfigHash(nebariApp *appsv1.NebariApp) string {
 	groups := NormalizeGroupPaths(auth.Groups)
 
 	state := authProvisionState{
-		Namespace:      nebariApp.Namespace,
-		Name:           nebariApp.Name,
-		Hostname:       nebariApp.Spec.Hostname,
-		Provider:       auth.Provider,
-		RedirectURI:    auth.RedirectURI,
-		IssuerURL:      auth.IssuerURL,
-		Scopes:         scopes,
-		Groups:         groups,
+		Namespace:         nebariApp.Namespace,
+		Name:              nebariApp.Name,
+		Hostname:          nebariApp.Spec.Hostname,
+		Provider:          auth.Provider,
+		RedirectURI:       auth.RedirectURI,
+		IssuerURL:         auth.IssuerURL,
+		Scopes:            scopes,
+		Groups:            groups,
 		GroupsClaimFormat: groupsClaimFormatVersion,
-		SPAClient:      auth.SPAClient,
-		KeycloakConfig: auth.KeycloakConfig,
+		SPAClient:         auth.SPAClient,
+		KeycloakConfig:    auth.KeycloakConfig,
 	}
 
 	data, err := json.Marshal(state)
