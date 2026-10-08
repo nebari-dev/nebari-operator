@@ -36,6 +36,11 @@ const (
 	groupsAllowRuleName   = "allow-groups"
 	groupsClaimName       = "groups"
 
+	// maxClaimValuesPerRule is Envoy Gateway's cap on JWTClaim.Values
+	// (+kubebuilder:validation:MaxItems=128 at v1.6.3). Longer group lists are
+	// split across several allow rules.
+	maxClaimValuesPerRule = 128
+
 	// groupsClaimFormatVersion is hashed into AuthConfigHash so that every app
 	// reprovisions once when the groups claim format changes.
 	groupsClaimFormatVersion = "full-path-v1"
@@ -118,10 +123,13 @@ func denyAllAuthorization() *egv1alpha1.Authorization {
 	return &egv1alpha1.Authorization{DefaultAction: ptr.To(egv1alpha1.AuthorizationActionDeny)}
 }
 
-// applyGroupsEnforcement adds the jwt provider and authorization rule that
-// admit only members of groupPaths. The oauth2 filter runs before jwt_authn,
-// so the jwt provider reads the access token from the oauth2 cookie, which
-// the client cannot forge. With no groupPaths the policy denies every request.
+// applyGroupsEnforcement adds the jwt provider and authorization rules that
+// admit only members of groupPaths. The oauth2 filter runs before jwt_authn
+// and validates its session cookies with an HMAC, so a modified token cookie
+// fails the oauth2 check and the request is sent back to login; the jwt
+// provider therefore reads the access token from the oauth2 cookie. Group
+// paths are split into one allow rule per maxClaimValuesPerRule values. With
+// no groupPaths the policy denies every request.
 func applyGroupsEnforcement(spec *egv1alpha1.SecurityPolicySpec, cookieName, jwksURL string, groupPaths []string) {
 	spec.OIDC.CookieNames = &egv1alpha1.OIDCCookieNames{AccessToken: ptr.To(cookieName)}
 	spec.JWT = &egv1alpha1.JWT{
@@ -132,21 +140,28 @@ func applyGroupsEnforcement(spec *egv1alpha1.SecurityPolicySpec, cookieName, jwk
 		}},
 	}
 	spec.Authorization = denyAllAuthorization()
-	if len(groupPaths) == 0 {
-		return
-	}
-	spec.Authorization.Rules = []egv1alpha1.AuthorizationRule{{
-		Name:   ptr.To(groupsAllowRuleName),
-		Action: egv1alpha1.AuthorizationActionAllow,
-		Principal: egv1alpha1.Principal{
-			JWT: &egv1alpha1.JWTPrincipal{
-				Provider: groupsJWTProviderName,
-				Claims: []egv1alpha1.JWTClaim{{
-					Name:      groupsClaimName,
-					ValueType: ptr.To(egv1alpha1.JWTClaimValueTypeStringArray),
-					Values:    groupPaths,
-				}},
+	for i := 0; i < len(groupPaths); i += maxClaimValuesPerRule {
+		end := i + maxClaimValuesPerRule
+		if end > len(groupPaths) {
+			end = len(groupPaths)
+		}
+		name := groupsAllowRuleName
+		if i > 0 {
+			name = fmt.Sprintf("%s-%d", groupsAllowRuleName, i/maxClaimValuesPerRule+1)
+		}
+		spec.Authorization.Rules = append(spec.Authorization.Rules, egv1alpha1.AuthorizationRule{
+			Name:   ptr.To(name),
+			Action: egv1alpha1.AuthorizationActionAllow,
+			Principal: egv1alpha1.Principal{
+				JWT: &egv1alpha1.JWTPrincipal{
+					Provider: groupsJWTProviderName,
+					Claims: []egv1alpha1.JWTClaim{{
+						Name:      groupsClaimName,
+						ValueType: ptr.To(egv1alpha1.JWTClaimValueTypeStringArray),
+						Values:    groupPaths[i:end],
+					}},
+				},
 			},
-		},
-	}}
+		})
+	}
 }
