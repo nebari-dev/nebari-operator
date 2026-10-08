@@ -75,6 +75,11 @@ spec:
             value: "http://keycloak-keycloakx-http.keycloak.svc.cluster.local/auth"
           - name: KEYCLOAK_REALM
             value: "nebari"
+          # Issuer service port and context path must match KEYCLOAK_URL above
+          - name: KEYCLOAK_ISSUER_SERVICE_PORT
+            value: "80"
+          - name: KEYCLOAK_ISSUER_CONTEXT_PATH
+            value: "/auth"
           - name: KEYCLOAK_ADMIN_SECRET_NAME
             value: "nebari-realm-admin-credentials"
           - name: KEYCLOAK_ADMIN_SECRET_NAMESPACE
