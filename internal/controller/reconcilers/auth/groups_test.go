@@ -132,6 +132,7 @@ func TestBuildSecurityPolicySpec_Groups(t *testing.T) {
 	const cookie = "nebari-at-finance-finance-dash"
 	deny := egv1alpha1.AuthorizationActionDeny
 	stringArray := egv1alpha1.JWTClaimValueTypeStringArray
+	str := egv1alpha1.JWTClaimValueTypeString
 
 	allowRule := func(values ...string) []egv1alpha1.AuthorizationRule {
 		return []egv1alpha1.AuthorizationRule{{
@@ -141,6 +142,8 @@ func TestBuildSecurityPolicySpec_Groups(t *testing.T) {
 				Provider: "nebari-groups",
 				Claims: []egv1alpha1.JWTClaim{{
 					Name: "groups", ValueType: &stringArray, Values: values,
+				}, {
+					Name: "azp", ValueType: &str, Values: []string{"c"},
 				}},
 			}},
 		}}
@@ -256,6 +259,20 @@ func TestBuildSecurityPolicySpec_Groups(t *testing.T) {
 
 			if !reflect.DeepEqual(spec.Authorization, tt.wantAuthz) {
 				t.Errorf("authorization = %+v, want %+v", spec.Authorization, tt.wantAuthz)
+			}
+			// Every allow rule must be bound to this app's client.
+			if spec.Authorization != nil {
+				for _, rule := range spec.Authorization.Rules {
+					hasAzp := false
+					for _, c := range rule.Principal.JWT.Claims {
+						if c.Name == "azp" && reflect.DeepEqual(c.Values, []string{"c"}) {
+							hasAzp = true
+						}
+					}
+					if !hasAzp {
+						t.Errorf("rule %q lacks the azp claim", *rule.Name)
+					}
+				}
 			}
 		})
 	}
