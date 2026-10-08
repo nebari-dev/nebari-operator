@@ -216,7 +216,7 @@ spec:
 		Expect(memberToken).NotTo(BeEmpty())
 		forged := loginScript(host, gatewayIP, "e2e-out", "forge", cookie, memberToken)
 		_, _ = fmt.Fprintf(GinkgoWriter, "forged-cookie status: %s\n", forged)
-		Expect(forged).NotTo(Equal("200"), "e2e-out session with e2e-in access-token cookie")
+		Expect(forged).To(Equal("302"), "oauth2 HMAC rejects the forged cookie and redirects to login")
 	})
 
 	It("does not admit subgroup members through the parent", func() {
