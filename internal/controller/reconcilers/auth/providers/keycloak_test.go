@@ -1730,3 +1730,40 @@ func TestEnsureGroup_PathVsName(t *testing.T) {
 		})
 	}
 }
+
+func TestKeycloakProvider_GetJWKSURL(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  config.KeycloakConfig
+		want string
+	}{
+		{
+			name: "in-cluster realm certs URL",
+			cfg: config.KeycloakConfig{
+				Realm: "nebari", IssuerServiceName: "keycloak-keycloakx-http", IssuerServiceNamespace: "keycloak",
+				IssuerServicePort: 80, IssuerContextPath: "/auth",
+			},
+			want: "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:80/auth/realms/nebari/protocol/openid-connect/certs",
+		},
+		{
+			name: "external URL does not change the JWKS URL",
+			cfg: config.KeycloakConfig{
+				Realm: "nebari", IssuerServiceName: "keycloak-keycloakx-http", IssuerServiceNamespace: "keycloak",
+				IssuerServicePort: 80, IssuerContextPath: "/auth", ExternalURL: "https://auth.example.com",
+			},
+			want: "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:80/auth/realms/nebari/protocol/openid-connect/certs",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &KeycloakProvider{Config: tt.cfg}
+			got, err := p.GetJWKSURL(context.Background(), &appsv1.NebariApp{})
+			if err != nil {
+				t.Fatalf("GetJWKSURL() error = %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("GetJWKSURL() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

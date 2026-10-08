@@ -80,3 +80,11 @@ type OIDCProvider interface {
 	// causes Keycloak to automatically remove the auto-created permission.
 	CleanupTokenExchange(ctx context.Context, nebariApp *appsv1.NebariApp) error
 }
+
+// GroupsClaimProvider is implemented by providers whose access tokens carry a
+// groups claim that the gateway can verify against the provider's signing keys.
+type GroupsClaimProvider interface {
+	// GetJWKSURL returns the JWKS URL Envoy fetches to verify access tokens.
+	// It must be reachable from the Envoy proxy pods.
+	GetJWKSURL(ctx context.Context, nebariApp *appsv1.NebariApp) (string, error)
+}

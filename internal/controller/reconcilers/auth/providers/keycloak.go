@@ -151,6 +151,12 @@ func (p *KeycloakProvider) GetExternalIssuerURL(ctx context.Context, nebariApp *
 	return external, nil
 }
 
+// GetJWKSURL returns the in-cluster realm certs URL. Envoy fetches it from the
+// proxy pods, the same path the token endpoint override already uses.
+func (p *KeycloakProvider) GetJWKSURL(_ context.Context, _ *appsv1.NebariApp) (string, error) {
+	return p.internalRealmURL() + "/protocol/openid-connect/certs", nil
+}
+
 // GetClientID returns the OIDC client ID for the NebariApp.
 func (p *KeycloakProvider) GetClientID(ctx context.Context, nebariApp *appsv1.NebariApp) string {
 	return naming.ClientID(nebariApp)
@@ -854,9 +860,11 @@ func (p *KeycloakProvider) syncClientScopes(ctx context.Context, kcClient *goclo
 // OIDC client (not on shared client scopes). This gives each NebariApp isolated
 // mapper configuration.
 //
-// If keycloakConfig.protocolMappers is specified, those mappers are used.
-// Otherwise, if "groups" is in the requested scopes, a default group-membership
-// mapper is created with full.path=false.
+// If keycloakConfig.protocolMappers is specified, those mappers are used, and
+// the operator's group-membership mapper is appended when spec.auth.groups is
+// set and no custom mapper emits the groups claim. Otherwise, if spec.auth.groups
+// is set or "groups" is a requested scope, a default group-membership mapper is
+// created with full.path=true.
 func (p *KeycloakProvider) syncClientProtocolMappers(ctx context.Context, kcClient *gocloak.GoCloak, token *gocloak.JWT, clientInternalID string, nebariApp *appsv1.NebariApp) error {
 	if nebariApp.Spec.Auth == nil {
 		return nil
@@ -864,27 +872,7 @@ func (p *KeycloakProvider) syncClientProtocolMappers(ctx context.Context, kcClie
 
 	logger := log.FromContext(ctx)
 
-	// Determine desired mappers
-	var desiredMappers []appsv1.KeycloakProtocolMapperConfig
-
-	if nebariApp.Spec.Auth.KeycloakConfig != nil && len(nebariApp.Spec.Auth.KeycloakConfig.ProtocolMappers) > 0 {
-		desiredMappers = nebariApp.Spec.Auth.KeycloakConfig.ProtocolMappers
-	} else if hasScope(nebariApp, "groups") {
-		// Default: group-membership mapper with full.path=false
-		desiredMappers = []appsv1.KeycloakProtocolMapperConfig{
-			{
-				Name:           "group-membership",
-				ProtocolMapper: "oidc-group-membership-mapper",
-				Config: map[string]string{
-					"claim.name":           "groups",
-					"full.path":            "false",
-					"id.token.claim":       "true",
-					"access.token.claim":   "true",
-					"userinfo.token.claim": "true",
-				},
-			},
-		}
-	}
+	desiredMappers := desiredProtocolMappers(nebariApp)
 
 	if len(desiredMappers) == 0 {
 		return nil
