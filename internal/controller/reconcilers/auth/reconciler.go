@@ -21,6 +21,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 
@@ -167,6 +168,8 @@ func (r *AuthReconciler) ReconcileAuth(ctx context.Context, nebariApp *appsv1.Ne
 		return err
 	}
 
+	groups := resolveGroupsMode(nebariApp.Spec.Auth)
+
 	// Provision OIDC client if requested and supported
 	if shouldProvisionClient(nebariApp.Spec.Auth) {
 		if !provider.SupportsProvisioning() {
@@ -191,6 +194,14 @@ func (r *AuthReconciler) ReconcileAuth(ctx context.Context, nebariApp *appsv1.Ne
 			if err := provider.ProvisionClient(ctx, nebariApp); err != nil {
 				conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionFalse,
 					"ProvisioningFailed", fmt.Sprintf("Failed to provision OIDC client: %v", err))
+				if groups.enforcedAtGateway() {
+					// Group sync can fail, for example on a group path that does not
+					// exist yet. Write the enforced policy anyway: an older OIDC-only
+					// policy would keep admitting every authenticated user.
+					if spErr := r.reconcileSecurityPolicy(ctx, nebariApp, provider); spErr != nil {
+						return errors.Join(err, spErr)
+					}
+				}
 				return err
 			}
 			logger.Info("OIDC client provisioned successfully")
@@ -256,6 +267,24 @@ func (r *AuthReconciler) ReconcileAuth(ctx context.Context, nebariApp *appsv1.Ne
 				"SecurityPolicyCleanupFailed", fmt.Sprintf("Failed to delete existing SecurityPolicy: %v", err))
 			return err
 		}
+	}
+
+	switch groups {
+	case groupsModeRequireKeycloak:
+		msg := fmt.Sprintf("spec.auth.groups requires provider %q for gateway enforcement; all requests are denied", constants.ProviderKeycloak)
+		conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionFalse, appsv1.ReasonGroupsRequireKeycloak, msg)
+		r.Recorder.Event(nebariApp, corev1.EventTypeWarning, appsv1.ReasonGroupsRequireKeycloak, msg)
+		return nil
+	case groupsModeClaimConflict:
+		msg := fmt.Sprintf("%v; all requests are denied", providers.CheckGroupsClaim(nebariApp.Spec.Auth.KeycloakConfig))
+		conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionFalse, appsv1.ReasonGroupsClaimConflict, msg)
+		r.Recorder.Event(nebariApp, corev1.EventTypeWarning, appsv1.ReasonGroupsClaimConflict, msg)
+		return nil
+	case groupsModeApplication:
+		msg := fmt.Sprintf("Authentication configured with provider %s; enforceAtGateway is false, so the application must check the groups claim", nebariApp.Spec.Auth.Provider)
+		conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionTrue, appsv1.ReasonGroupsEnforcedByApplication, msg)
+		r.Recorder.Event(nebariApp, corev1.EventTypeNormal, "Configured", msg)
+		return nil
 	}
 
 	// Auth configured successfully

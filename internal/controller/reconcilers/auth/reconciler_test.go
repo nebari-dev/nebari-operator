@@ -31,6 +31,7 @@ import (
 	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
 	"github.com/nebari-dev/nebari-operator/internal/config"
 	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/auth/providers"
+	"github.com/nebari-dev/nebari-operator/internal/controller/utils/conditions"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/constants"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/naming"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/ptr"
@@ -1734,6 +1735,120 @@ func TestComputeAuthConfigHash_Groups(t *testing.T) {
 		t.Run("differs from pre-upgrade hash: "+tt.name, func(t *testing.T) {
 			if computeAuthConfigHash(tt.app) == legacyAuthConfigHash(t, tt.app) {
 				t.Error("hash matches the pre-upgrade hash, so the app would skip reprovisioning and keep its old mapper")
+			}
+		})
+	}
+}
+
+func TestReconcileAuth_Groups(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = appsv1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+	_ = rbacv1.AddToScheme(scheme)
+	_ = egv1alpha1.AddToScheme(scheme)
+
+	conflicting := &appsv1.KeycloakClientConfig{ProtocolMappers: []appsv1.KeycloakProtocolMapperConfig{{
+		Name: "g", ProtocolMapper: "oidc-group-membership-mapper",
+		Config: map[string]string{"claim.name": "groups", "full.path": "false", "access.token.claim": "true"},
+	}}}
+
+	tests := []struct {
+		name           string
+		auth           *appsv1.AuthConfig
+		providerKey    string
+		provisionError error
+		existingPolicy bool
+		wantErr        bool
+		wantStatus     metav1.ConditionStatus
+		wantReason     string
+		wantPolicy     bool
+		wantAllowRule  bool
+	}{
+		{
+			name:        "gateway mode: allow rule and AuthConfigured",
+			auth:        &appsv1.AuthConfig{Enabled: true, Provider: constants.ProviderKeycloak, ProvisionClient: ptr.To(true), Groups: []string{"finance"}},
+			providerKey: constants.ProviderKeycloak,
+			wantStatus:  metav1.ConditionTrue, wantReason: "AuthConfigured", wantPolicy: true, wantAllowRule: true,
+		},
+		{
+			name:           "group sync fails: enforced policy still written over the old one",
+			auth:           &appsv1.AuthConfig{Enabled: true, Provider: constants.ProviderKeycloak, ProvisionClient: ptr.To(true), Groups: []string{"/missing"}},
+			providerKey:    constants.ProviderKeycloak,
+			provisionError: errors.New("failed to sync groups: group path \"/missing\" not found"),
+			existingPolicy: true,
+			wantErr:        true,
+			wantStatus:     metav1.ConditionFalse, wantReason: "ProvisioningFailed", wantPolicy: true, wantAllowRule: true,
+		},
+		{
+			name:        "generic-oidc with groups: deny all and GroupsRequireKeycloak",
+			auth:        &appsv1.AuthConfig{Enabled: true, Provider: constants.ProviderGenericOIDC, ProvisionClient: ptr.To(false), Groups: []string{"finance"}},
+			providerKey: constants.ProviderGenericOIDC,
+			wantStatus:  metav1.ConditionFalse, wantReason: appsv1.ReasonGroupsRequireKeycloak, wantPolicy: true,
+		},
+		{
+			name:        "conflicting mapper: deny all and GroupsClaimConflict",
+			auth:        &appsv1.AuthConfig{Enabled: true, Provider: constants.ProviderKeycloak, ProvisionClient: ptr.To(true), Groups: []string{"finance"}, KeycloakConfig: conflicting},
+			providerKey: constants.ProviderKeycloak,
+			wantStatus:  metav1.ConditionFalse, wantReason: appsv1.ReasonGroupsClaimConflict, wantPolicy: true,
+		},
+		{
+			name:        "enforceAtGateway false: no policy and GroupsEnforcedByApplication",
+			auth:        &appsv1.AuthConfig{Enabled: true, Provider: constants.ProviderKeycloak, ProvisionClient: ptr.To(true), Groups: []string{"finance"}, EnforceAtGateway: ptr.To(false)},
+			providerKey: constants.ProviderKeycloak,
+			wantStatus:  metav1.ConditionTrue, wantReason: appsv1.ReasonGroupsEnforcedByApplication, wantPolicy: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{Name: "finance-dash", Namespace: "finance"},
+				Spec:       appsv1.NebariAppSpec{Hostname: "dash.example.com", Auth: tt.auth},
+			}
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: naming.ClientSecretName(app), Namespace: "finance"},
+				Data:       map[string][]byte{constants.ClientSecretKey: []byte("s")},
+			}
+			builder := fake.NewClientBuilder().WithScheme(scheme).WithObjects(secret)
+			if tt.existingPolicy {
+				builder = builder.WithObjects(&egv1alpha1.SecurityPolicy{
+					ObjectMeta: metav1.ObjectMeta{Name: naming.SecurityPolicyName(app), Namespace: "finance"},
+					Spec:       egv1alpha1.SecurityPolicySpec{OIDC: &egv1alpha1.OIDC{}},
+				})
+			}
+			c := builder.Build()
+			provider := &mockProvider{
+				issuerURL: "https://kc.example.com/realms/nebari", clientID: "c", jwksURL: "http://kc/certs",
+				supportsProvisioning: tt.providerKey == constants.ProviderKeycloak, provisionError: tt.provisionError,
+			}
+			r := &AuthReconciler{
+				Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(20),
+				Providers: map[string]providers.OIDCProvider{tt.providerKey: provider},
+			}
+
+			err := r.ReconcileAuth(context.Background(), app)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("ReconcileAuth() error = %v, wantErr %v", err, tt.wantErr)
+			}
+
+			cond := conditions.GetCondition(app, appsv1.ConditionTypeAuthReady)
+			if cond == nil || cond.Status != tt.wantStatus || cond.Reason != tt.wantReason {
+				t.Errorf("AuthReady = %+v, want status %s reason %s", cond, tt.wantStatus, tt.wantReason)
+			}
+
+			sp := &egv1alpha1.SecurityPolicy{}
+			getErr := c.Get(context.Background(), types.NamespacedName{Name: naming.SecurityPolicyName(app), Namespace: "finance"}, sp)
+			if tt.wantPolicy != (getErr == nil) {
+				t.Fatalf("policy exists = %v, want %v (get error %v)", getErr == nil, tt.wantPolicy, getErr)
+			}
+			if !tt.wantPolicy {
+				return
+			}
+			if sp.Spec.Authorization == nil || sp.Spec.Authorization.DefaultAction == nil ||
+				*sp.Spec.Authorization.DefaultAction != egv1alpha1.AuthorizationActionDeny {
+				t.Fatalf("authorization = %+v, want defaultAction Deny", sp.Spec.Authorization)
+			}
+			if gotAllow := len(sp.Spec.Authorization.Rules) > 0; gotAllow != tt.wantAllowRule {
+				t.Errorf("allow rule present = %v, want %v", gotAllow, tt.wantAllowRule)
 			}
 		})
 	}
