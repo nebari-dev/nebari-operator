@@ -28,6 +28,10 @@ import (
 var ErrGroupsClaimConflict = errors.New("custom protocol mapper emits the groups claim without full paths in the access token")
 
 const (
+	// mapperConfigTrue is the string Keycloak mapper config uses for boolean true.
+	mapperConfigTrue = "true"
+	// groupsClaim is the token claim name that carries group membership.
+	groupsClaim               = "groups"
 	groupMembershipMapperType = "oidc-group-membership-mapper"
 	// defaultGroupsMapperName is the mapper created when no custom mappers are
 	// set. Existing clients already carry a mapper with this name, so the
@@ -45,11 +49,11 @@ func groupMembershipMapper(name string) appsv1.KeycloakProtocolMapperConfig {
 		Name:           name,
 		ProtocolMapper: groupMembershipMapperType,
 		Config: map[string]string{
-			"claim.name":           "groups",
-			"full.path":            "true",
-			"id.token.claim":       "true",
-			"access.token.claim":   "true",
-			"userinfo.token.claim": "true",
+			"claim.name":           groupsClaim,
+			"full.path":            mapperConfigTrue,
+			"id.token.claim":       mapperConfigTrue,
+			"access.token.claim":   mapperConfigTrue,
+			"userinfo.token.claim": mapperConfigTrue,
 		},
 	}
 }
@@ -57,7 +61,7 @@ func groupMembershipMapper(name string) appsv1.KeycloakProtocolMapperConfig {
 // emitsGroupsClaim reports whether any mapper writes the "groups" claim.
 func emitsGroupsClaim(mappers []appsv1.KeycloakProtocolMapperConfig) bool {
 	for _, m := range mappers {
-		if m.Config["claim.name"] == "groups" {
+		if m.Config["claim.name"] == groupsClaim {
 			return true
 		}
 	}
@@ -72,12 +76,12 @@ func CheckGroupsClaim(kc *appsv1.KeycloakClientConfig) error {
 		return nil
 	}
 	for _, m := range kc.ProtocolMappers {
-		if m.Config["claim.name"] != "groups" {
+		if m.Config["claim.name"] != groupsClaim {
 			continue
 		}
 		if m.ProtocolMapper != groupMembershipMapperType ||
-			m.Config["full.path"] != "true" ||
-			m.Config["access.token.claim"] != "true" {
+			m.Config["full.path"] != mapperConfigTrue ||
+			m.Config["access.token.claim"] != mapperConfigTrue {
 			return fmt.Errorf("%w: mapper %q", ErrGroupsClaimConflict, m.Name)
 		}
 	}
