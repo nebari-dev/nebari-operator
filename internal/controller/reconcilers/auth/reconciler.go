@@ -182,6 +182,19 @@ func (r *AuthReconciler) ReconcileAuth(ctx context.Context, nebariApp *appsv1.Ne
 
 	groups := resolveGroupsMode(nebariApp.Spec.Auth)
 
+	// failClosed wraps every error return after the provider lookup. Provisioning,
+	// RBAC, token exchange and validation can all fail. When groups are enforced
+	// at the gateway, write the enforced policy anyway: an older OIDC-only policy
+	// would keep admitting every authenticated user.
+	failClosed := func(err error) error {
+		if groups.enforcedAtGateway() {
+			if spErr := r.reconcileSecurityPolicy(ctx, nebariApp, provider); spErr != nil {
+				return errors.Join(err, spErr)
+			}
+		}
+		return err
+	}
+
 	// Set when provisioning succeeded except for spec.auth.groups paths that do
 	// not exist. Auth is still reconciled in full, then reported as not ready.
 	var groupsNotResolved *providers.GroupsNotResolvedError
@@ -192,7 +205,7 @@ func (r *AuthReconciler) ReconcileAuth(ctx context.Context, nebariApp *appsv1.Ne
 			err := fmt.Errorf("provider %s does not support automatic client provisioning", nebariApp.Spec.Auth.Provider)
 			conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionFalse,
 				"ProvisioningNotSupported", err.Error())
-			return err
+			return failClosed(err)
 		}
 
 		currentHash := computeAuthConfigHash(nebariApp)
@@ -211,14 +224,7 @@ func (r *AuthReconciler) ReconcileAuth(ctx context.Context, nebariApp *appsv1.Ne
 				if !errors.As(err, &groupsNotResolved) {
 					conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionFalse,
 						"ProvisioningFailed", fmt.Sprintf("Failed to provision OIDC client: %v", err))
-					if groups.enforcedAtGateway() {
-						// Write the enforced policy anyway: an older OIDC-only
-						// policy would keep admitting every authenticated user.
-						if spErr := r.reconcileSecurityPolicy(ctx, nebariApp, provider); spErr != nil {
-							return errors.Join(err, spErr)
-						}
-					}
-					return err
+					return failClosed(err)
 				}
 				// Everything except the missing groups is provisioned. Carry on so
 				// the SecurityPolicy is still applied; the condition is reported
@@ -239,7 +245,7 @@ func (r *AuthReconciler) ReconcileAuth(ctx context.Context, nebariApp *appsv1.Ne
 					delete(nebariApp.Annotations, constants.AnnotationForceReprovision)
 				}
 				if err := r.Client.Update(ctx, nebariApp); err != nil {
-					return fmt.Errorf("failed to clear force-reprovision annotation: %w", err)
+					return failClosed(fmt.Errorf("failed to clear force-reprovision annotation: %w", err))
 				}
 			}
 
@@ -257,7 +263,7 @@ func (r *AuthReconciler) ReconcileAuth(ctx context.Context, nebariApp *appsv1.Ne
 		if err := r.reconcileSecretRBAC(ctx, nebariApp); err != nil {
 			conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionFalse,
 				"RBACFailed", fmt.Sprintf("Failed to reconcile Secret RBAC: %v", err))
-			return err
+			return failClosed(err)
 		}
 	}
 
@@ -266,7 +272,7 @@ func (r *AuthReconciler) ReconcileAuth(ctx context.Context, nebariApp *appsv1.Ne
 		if err := r.reconcileTokenExchange(ctx, nebariApp, provider); err != nil {
 			conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionFalse,
 				"TokenExchangeFailed", fmt.Sprintf("Failed to configure token exchange: %v", err))
-			return err
+			return failClosed(err)
 		}
 		logger.Info("Token exchange configured")
 	}
@@ -275,7 +281,7 @@ func (r *AuthReconciler) ReconcileAuth(ctx context.Context, nebariApp *appsv1.Ne
 	if err := r.validateAuthConfig(ctx, nebariApp); err != nil {
 		conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionFalse,
 			"ValidationFailed", fmt.Sprintf("Auth configuration validation failed: %v", err))
-		return err
+		return failClosed(err)
 	}
 
 	// Reconcile SecurityPolicy (only if enforceAtGateway is enabled)
@@ -307,12 +313,12 @@ func (r *AuthReconciler) ReconcileAuth(ctx context.Context, nebariApp *appsv1.Ne
 		msg := fmt.Sprintf("spec.auth.groups requires provider %q for gateway enforcement; all requests are denied", constants.ProviderKeycloak)
 		conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionFalse, appsv1.ReasonGroupsRequireKeycloak, msg)
 		r.Recorder.Event(nebariApp, corev1.EventTypeWarning, appsv1.ReasonGroupsRequireKeycloak, msg)
-		return nil
+		return errors.New(msg)
 	case groupsModeClaimConflict:
 		msg := fmt.Sprintf("%v; all requests are denied", providers.CheckGroupsClaim(nebariApp.Spec.Auth.KeycloakConfig))
 		conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionFalse, appsv1.ReasonGroupsClaimConflict, msg)
 		r.Recorder.Event(nebariApp, corev1.EventTypeWarning, appsv1.ReasonGroupsClaimConflict, msg)
-		return nil
+		return errors.New(msg)
 	case groupsModeApplication:
 		msg := fmt.Sprintf("Authentication configured with provider %s; enforceAtGateway is false, so the application must check the groups claim", nebariApp.Spec.Auth.Provider)
 		conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionTrue, appsv1.ReasonGroupsEnforcedByApplication, msg)
