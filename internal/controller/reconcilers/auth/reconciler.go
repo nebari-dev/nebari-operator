@@ -528,6 +528,21 @@ func (r *AuthReconciler) buildSecurityPolicySpec(ctx context.Context, nebariApp 
 		OIDC: oidcConfig,
 	}
 
+	switch resolveGroupsMode(nebariApp.Spec.Auth) {
+	case groupsModeGateway:
+		groupsProvider, ok := provider.(providers.GroupsClaimProvider)
+		if !ok {
+			return egv1alpha1.SecurityPolicySpec{}, fmt.Errorf("provider %q cannot enforce spec.auth.groups at the gateway", nebariApp.Spec.Auth.Provider)
+		}
+		jwksURL, err := groupsProvider.GetJWKSURL(ctx, nebariApp)
+		if err != nil {
+			return egv1alpha1.SecurityPolicySpec{}, fmt.Errorf("failed to get JWKS URL: %w", err)
+		}
+		applyGroupsEnforcement(&spec, groupsAccessTokenCookieName(nebariApp), jwksURL, NormalizeGroupPaths(nebariApp.Spec.Auth.Groups))
+	case groupsModeRequireKeycloak, groupsModeClaimConflict:
+		spec.Authorization = denyAllAuthorization()
+	}
+
 	return spec, nil
 }
 

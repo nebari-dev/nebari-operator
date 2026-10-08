@@ -17,13 +17,17 @@ limitations under the License.
 package auth
 
 import (
+	"context"
 	"reflect"
 	"testing"
 
+	egv1alpha1 "github.com/envoyproxy/gateway/api/v1alpha1"
 	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/constants"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/ptr"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 func TestNormalizeGroupPaths(t *testing.T) {
@@ -113,5 +117,113 @@ func TestGroupsAccessTokenCookieName(t *testing.T) {
 		if got := groupsAccessTokenCookieName(app); got != tt.want {
 			t.Errorf("groupsAccessTokenCookieName() = %q, want %q", got, tt.want)
 		}
+	}
+}
+
+func TestBuildSecurityPolicySpec_Groups(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = appsv1.AddToScheme(scheme)
+	_ = egv1alpha1.AddToScheme(scheme)
+
+	const jwks = "http://kc.keycloak.svc.cluster.local/auth/realms/nebari/protocol/openid-connect/certs"
+	const cookie = "nebari-at-finance-finance-dash"
+	deny := egv1alpha1.AuthorizationActionDeny
+	stringArray := egv1alpha1.JWTClaimValueTypeStringArray
+
+	allowRule := func(values ...string) []egv1alpha1.AuthorizationRule {
+		return []egv1alpha1.AuthorizationRule{{
+			Name:   ptr.To("allow-groups"),
+			Action: egv1alpha1.AuthorizationActionAllow,
+			Principal: egv1alpha1.Principal{JWT: &egv1alpha1.JWTPrincipal{
+				Provider: "nebari-groups",
+				Claims: []egv1alpha1.JWTClaim{{
+					Name: "groups", ValueType: &stringArray, Values: values,
+				}},
+			}},
+		}}
+	}
+	conflicting := &appsv1.KeycloakClientConfig{ProtocolMappers: []appsv1.KeycloakProtocolMapperConfig{{
+		Name: "g", ProtocolMapper: "oidc-group-membership-mapper",
+		Config: map[string]string{"claim.name": "groups", "full.path": "false", "access.token.claim": "true"},
+	}}}
+
+	tests := []struct {
+		name       string
+		auth       *appsv1.AuthConfig
+		wantCookie *string
+		wantJWT    bool
+		wantAuthz  *egv1alpha1.Authorization
+	}{
+		{
+			name: "no groups: OIDC only",
+			auth: &appsv1.AuthConfig{Enabled: true, Provider: constants.ProviderKeycloak},
+		},
+		{
+			name:       "keycloak with groups: pinned cookie, jwt, allow rule",
+			auth:       &appsv1.AuthConfig{Enabled: true, Provider: constants.ProviderKeycloak, Groups: []string{"finance", "/ops/oncall", "/finance"}},
+			wantCookie: ptr.To(cookie),
+			wantJWT:    true,
+			wantAuthz:  &egv1alpha1.Authorization{DefaultAction: &deny, Rules: allowRule("/finance", "/ops/oncall")},
+		},
+		{
+			name:       "only empty entries: deny all, no allow rule",
+			auth:       &appsv1.AuthConfig{Enabled: true, Provider: constants.ProviderKeycloak, Groups: []string{"", "/"}},
+			wantCookie: ptr.To(cookie),
+			wantJWT:    true,
+			wantAuthz:  &egv1alpha1.Authorization{DefaultAction: &deny},
+		},
+		{
+			name:      "generic-oidc with groups: deny all",
+			auth:      &appsv1.AuthConfig{Enabled: true, Provider: constants.ProviderGenericOIDC, Groups: []string{"finance"}},
+			wantAuthz: &egv1alpha1.Authorization{DefaultAction: &deny},
+		},
+		{
+			name:      "conflicting custom mapper: deny all",
+			auth:      &appsv1.AuthConfig{Enabled: true, Provider: constants.ProviderKeycloak, Groups: []string{"finance"}, KeycloakConfig: conflicting},
+			wantAuthz: &egv1alpha1.Authorization{DefaultAction: &deny},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := &AuthReconciler{Client: fake.NewClientBuilder().WithScheme(scheme).Build(), Scheme: scheme}
+			app := &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{Name: "finance-dash", Namespace: "finance"},
+				Spec:       appsv1.NebariAppSpec{Hostname: "dash.example.com", Auth: tt.auth},
+			}
+			provider := &mockProvider{issuerURL: "https://kc.example.com/realms/nebari", clientID: "c", jwksURL: jwks}
+
+			spec, err := r.buildSecurityPolicySpec(context.Background(), app, provider)
+			if err != nil {
+				t.Fatalf("buildSecurityPolicySpec() error = %v", err)
+			}
+
+			var gotCookie *string
+			if spec.OIDC.CookieNames != nil {
+				gotCookie = spec.OIDC.CookieNames.AccessToken
+			}
+			if !reflect.DeepEqual(gotCookie, tt.wantCookie) {
+				t.Errorf("cookieNames.accessToken = %v, want %v", gotCookie, tt.wantCookie)
+			}
+			if spec.OIDC.CookieNames != nil && spec.OIDC.CookieNames.IDToken != nil {
+				t.Errorf("cookieNames.idToken should stay unset, got %q", *spec.OIDC.CookieNames.IDToken)
+			}
+
+			if tt.wantJWT {
+				want := &egv1alpha1.JWT{Providers: []egv1alpha1.JWTProvider{{
+					Name:        "nebari-groups",
+					RemoteJWKS:  &egv1alpha1.RemoteJWKS{URI: jwks},
+					ExtractFrom: &egv1alpha1.JWTExtractor{Cookies: []string{cookie}},
+				}}}
+				if !reflect.DeepEqual(spec.JWT, want) {
+					t.Errorf("jwt = %+v, want %+v", spec.JWT, want)
+				}
+			} else if spec.JWT != nil {
+				t.Errorf("jwt should be nil, got %+v", spec.JWT)
+			}
+
+			if !reflect.DeepEqual(spec.Authorization, tt.wantAuthz) {
+				t.Errorf("authorization = %+v, want %+v", spec.Authorization, tt.wantAuthz)
+			}
+		})
 	}
 }

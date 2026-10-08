@@ -70,6 +70,11 @@ type mockProvider struct {
 	deleteError            error
 	issuerError            error
 	provisionCount         int // tracks how many times ProvisionClient was called
+	jwksURL                string
+}
+
+func (m *mockProvider) GetJWKSURL(_ context.Context, _ *appsv1.NebariApp) (string, error) {
+	return m.jwksURL, nil
 }
 
 func (m *mockProvider) GetIssuerURL(ctx context.Context, nebariApp *appsv1.NebariApp) (string, error) {
