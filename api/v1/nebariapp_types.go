@@ -208,23 +208,23 @@ type AuthConfig struct {
 	// +optional
 	Scopes []string `json:"scopes,omitempty"`
 
-	// Groups specifies the list of groups that should have access to this application.
-	// When specified, only users belonging to these groups will be authorized.
-	// Group matching is case-sensitive and depends on the OIDC provider's group claim.
+	// Groups lists the Keycloak groups whose members may access this application.
+	// When enforceAtGateway is true and the provider is keycloak, the gateway
+	// denies every request whose access token has none of these groups in its
+	// "groups" claim (HTTP 403).
 	//
-	// Each entry may be given in one of two forms:
+	// Entries are matched as full group paths, exactly and case-sensitively:
+	// "finance" is treated as "/finance", and "/finance" does not admit members
+	// of "/finance/analysts" only. List each subgroup that needs access.
 	//
-	//   - Bare name (e.g. "team-example"): looked up as a top-level group by exact
-	//     name. Created in Keycloak if missing.
-	//   - Path form (e.g. "/team-example" or "/parent/child"): looked up by group
-	//     PATH via Keycloak's group-by-path API. Never auto-created; if the path
-	//     does not resolve, reconciliation fails with an explicit error so operators
-	//     can create the group hierarchy intentionally.
+	// Removing a user from a group takes effect when their access token expires
+	// (the realm's access token lifespan, 5 minutes by default).
 	//
-	// Use the path form when your Keycloak client's "groups" scope mapper has
-	// full.path=true (JWTs then carry group PATHS, and this field must match the
-	// JWT shape literally for landing-page visibility — see nebari-landing's
-	// canAccessPolicy, which does string equality).
+	// With provider generic-oidc and enforceAtGateway true, setting groups denies
+	// every request (AuthReady reason GroupsRequireKeycloak). With
+	// enforceAtGateway false, the claim is provisioned and the application must
+	// enforce it.
+	// +kubebuilder:validation:items:MinLength=1
 	// +optional
 	Groups []string `json:"groups,omitempty"`
 
@@ -716,6 +716,18 @@ const (
 	// UserProvidedSecretNotFound so operators can tell "the secret is missing" apart from "we could
 	// not tell whether the secret is missing".
 	ReasonUserProvidedSecretCheckFailed = "UserProvidedSecretCheckFailed"
+
+	// ReasonGroupsRequireKeycloak indicates spec.auth.groups is set with a provider
+	// that cannot enforce groups at the gateway. Every request is denied.
+	ReasonGroupsRequireKeycloak = "GroupsRequireKeycloak"
+
+	// ReasonGroupsClaimConflict indicates a custom protocol mapper emits the groups
+	// claim in a format the gateway rule cannot match. Every request is denied.
+	ReasonGroupsClaimConflict = "GroupsClaimConflict"
+
+	// ReasonGroupsEnforcedByApplication indicates spec.auth.groups is set with
+	// enforceAtGateway=false, so the application must check the groups claim.
+	ReasonGroupsEnforcedByApplication = "GroupsEnforcedByApplication"
 )
 
 // Event reasons for recording Kubernetes events
