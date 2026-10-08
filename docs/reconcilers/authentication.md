@@ -241,7 +241,7 @@ spec:
     providers:
       - name: nebari-groups
         remoteJWKS:
-          uri: http://{keycloak-service}.{namespace}.svc:{port}/realms/{realm}/protocol/openid-connect/certs
+          uri: http://<service>.<namespace>.svc.cluster.local:<port><context-path>/realms/<realm>/protocol/openid-connect/certs
         extractFrom:
           cookies:
             - nebari-at-finance-finance-dash
@@ -260,8 +260,8 @@ spec:
 ```
 
 The `oidc` section's access-token cookie is renamed to `nebari-at-<namespace>-<name>` so the `jwt` provider can read a
-known cookie and verify the token against the realm JWKS. Existing apps are logged out once on upgrade because the old
-cookie name is no longer read. A token with no `groups` claim matches no rule and receives 403. Envoy Gateway caps each
+known cookie and verify the token against the realm JWKS. Apps that enforce groups at the gateway get this pinned cookie, so their users are logged out once when the app
+starts enforcing (for example on upgrade); other apps keep the default cookie name. A token with no `groups` claim matches no rule and receives 403. Envoy Gateway caps each
 claim at 128 values, so with more than 128 groups the values are split across rules `allow-groups`, `allow-groups-2`,
 and so on.
 
@@ -284,7 +284,7 @@ rules) rather than deleting the policy or leaving it open:
 | Reason | When | Conditions |
 |--------|------|------------|
 | `GroupsRequireKeycloak` | `generic-oidc` with groups and `enforceAtGateway: true` | `AuthReady=False`, `Ready=False` |
-| `GroupsClaimConflict` | A custom mapper emits `groups` without `full.path: "true"` and `access.token.claim: "true"` | `AuthReady=False`, `Ready=False` |
+| `GroupsClaimConflict` | A custom mapper emits the `groups` claim and its type is not `oidc-group-membership-mapper`, or `full.path` is not `"true"`, or `access.token.claim` is not `"true"` | `AuthReady=False`, `Ready=False` |
 
 With `enforceAtGateway: false` the operator provisions the claim but writes no authorization rules, and `AuthReady` is
 `True` with reason `GroupsEnforcedByApplication`.
