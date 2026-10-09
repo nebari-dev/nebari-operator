@@ -104,7 +104,11 @@ make test
 - ✅ PR builds
 - ✅ Release workflow
 
-**Output**: Generates `cover.out` coverage profile.
+**Output**: Generates `cover.out` coverage profile. Exits non-zero when any test fails.
+
+Covers every package except `test/e2e`, including the envtest suite in `internal/controller`, which installs the Gateway API and Envoy Gateway CRDs from the Go module cache.
+
+If you see `compile: version "go1.X.Y" does not match go tool version ...`, the Go on your `PATH` is older than the one in `go.mod`, and the automatic toolchain switch breaks coverage builds for packages without tests. Install the `go.mod` version, or put it first on `PATH`: `PATH="$(go env GOROOT)/bin:$PATH" make test`.
 
 **When to use**: After making any code changes, before committing.
 
