@@ -212,19 +212,16 @@ type AuthConfig struct {
 	// When specified, only users belonging to these groups will be authorized.
 	// Group matching is case-sensitive and depends on the OIDC provider's group claim.
 	//
-	// Each entry may be given in one of two forms:
+	// Each entry is a Keycloak group path, such as "/team-example" or
+	// "/parent/child". A bare name such as "team-example" is shorthand for the
+	// top-level group "/team-example", and "team-example" and "/team-example"
+	// refer to the same group.
 	//
-	//   - Bare name (e.g. "team-example"): looked up as a top-level group by exact
-	//     name. Created in Keycloak if missing.
-	//   - Path form (e.g. "/team-example" or "/parent/child"): looked up by group
-	//     PATH via Keycloak's group-by-path API. Never auto-created; if the path
-	//     does not resolve, reconciliation fails with an explicit error so operators
-	//     can create the group hierarchy intentionally.
-	//
-	// Use the path form when your Keycloak client's "groups" scope mapper has
-	// full.path=true (JWTs then carry group PATHS, and this field must match the
-	// JWT shape literally for landing-page visibility — see nebari-landing's
-	// canAccessPolicy, which does string equality).
+	//   - Bare name: the top-level group is created in Keycloak if missing.
+	//   - Path: never created. If it does not exist, the rest of the auth
+	//     configuration, including the SecurityPolicy, is still applied, but
+	//     AuthReady and Ready are set to False with reason GroupsNotResolved
+	//     until the group exists. The lookup is retried every minute.
 	// +optional
 	Groups []string `json:"groups,omitempty"`
 
@@ -341,7 +338,9 @@ type KeycloakClientConfig struct {
 
 // KeycloakGroup defines a Keycloak group to create in the realm with optional member assignments.
 type KeycloakGroup struct {
-	// Name is the group name to create in Keycloak.
+	// Name is the group to sync in Keycloak, as a bare name or a path, with the
+	// same rules as spec.auth.groups. An entry that names the same group as
+	// spec.auth.groups takes precedence over it.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	Name string `json:"name"`
