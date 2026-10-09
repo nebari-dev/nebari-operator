@@ -22,9 +22,11 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -284,9 +286,13 @@ func (p *KeycloakProvider) ProvisionClient(ctx context.Context, nebariApp *appsv
 		return fmt.Errorf("failed to sync client protocol mappers: %w", err)
 	}
 
-	// Sync Keycloak groups and member assignments
-	if err := p.syncGroups(ctx, kcClient, token, nebariApp); err != nil {
-		return fmt.Errorf("failed to sync groups: %w", err)
+	// Sync Keycloak groups and member assignments. Group paths that do not
+	// exist don't stop provisioning; that error is returned once the client
+	// and its Secret are in place.
+	groupsErr := p.syncGroups(ctx, kcClient, token, nebariApp)
+	var notResolved *GroupsNotResolvedError
+	if groupsErr != nil && !errors.As(groupsErr, &notResolved) {
+		return fmt.Errorf("failed to sync groups: %w", groupsErr)
 	}
 
 	// Provision SPA client if requested
@@ -317,7 +323,10 @@ func (p *KeycloakProvider) ProvisionClient(ctx context.Context, nebariApp *appsv
 	}
 
 	// Store all credentials in Kubernetes Secret
-	return p.storeClientSecret(ctx, nebariApp, clientID, clientSecret, externalIssuerURL, spaClientID, deviceClientID)
+	if err := p.storeClientSecret(ctx, nebariApp, clientID, clientSecret, externalIssuerURL, spaClientID, deviceClientID); err != nil {
+		return err
+	}
+	return groupsErr
 }
 
 // ConfigureTokenExchange enables OAuth 2.0 Token Exchange (RFC 8693) on this client
@@ -953,119 +962,144 @@ func hasScope(nebariApp *appsv1.NebariApp, scope string) bool {
 // specified users are members of those groups.
 // Groups are collected from both spec.auth.groups (simple list) and
 // spec.auth.keycloakConfig.groups (detailed config with members).
+//
+// A path that does not exist and may not be created does not stop the sync:
+// the remaining groups are still synced, and the missing paths are returned
+// as a *GroupsNotResolvedError.
 func (p *KeycloakProvider) syncGroups(ctx context.Context, kcClient *gocloak.GoCloak, token *gocloak.JWT, nebariApp *appsv1.NebariApp) error {
 	if nebariApp.Spec.Auth == nil {
 		return nil
 	}
 
-	groupMembers := MergeGroupMembers(nebariApp.Spec.Auth.Groups, nebariApp.Spec.Auth.KeycloakConfig)
-	if len(groupMembers) == 0 {
+	groupSpecs := MergeGroupMembers(nebariApp.Spec.Auth.Groups, nebariApp.Spec.Auth.KeycloakConfig)
+	if len(groupSpecs) == 0 {
 		return nil
 	}
 
 	logger := log.FromContext(ctx)
 	realm := p.Config.Realm
 
-	for groupName, members := range groupMembers {
-		groupID, err := p.ensureGroup(ctx, kcClient, token, realm, groupName)
+	var notFound []string
+	for groupPath, spec := range groupSpecs {
+		groupID, err := p.ensureGroup(ctx, kcClient, token, realm, groupPath, spec.Create)
+		if errors.Is(err, errGroupNotFound) {
+			notFound = append(notFound, groupPath)
+			continue
+		}
 		if err != nil {
-			return fmt.Errorf("failed to ensure group %q: %w", groupName, err)
+			return fmt.Errorf("failed to ensure group %q: %w", groupPath, err)
 		}
 
-		if len(members) == 0 {
+		if len(spec.Members) == 0 {
 			continue
 		}
 
-		if err := p.syncGroupMembers(ctx, kcClient, token, realm, groupID, groupName, members); err != nil {
-			return fmt.Errorf("failed to sync members for group %q: %w", groupName, err)
+		if err := p.syncGroupMembers(ctx, kcClient, token, realm, groupID, groupPath, spec.Members); err != nil {
+			return fmt.Errorf("failed to sync members for group %q: %w", groupPath, err)
 		}
 
-		logger.Info("Synced group members", "group", groupName, "members", members)
+		logger.Info("Synced group members", "group", groupPath, "members", spec.Members)
 	}
 
+	if len(notFound) > 0 {
+		sort.Strings(notFound)
+		return &GroupsNotResolvedError{Realm: realm, Paths: notFound}
+	}
 	return nil
 }
 
-// MergeGroupMembers builds a deduplicated map of group name -> members from
-// spec.auth.groups and keycloakConfig.groups. When the same group name appears
-// in both, keycloakConfig.groups takes precedence.
-func MergeGroupMembers(groups []string, keycloakConfig *appsv1.KeycloakClientConfig) map[string][]string {
-	groupMembers := make(map[string][]string)
+// GroupSpec is a group to sync to Keycloak.
+type GroupSpec struct {
+	// Members are usernames to add to the group.
+	Members []string
+	// Create is true when the group may be created if it is missing. Only a
+	// top-level group listed by bare name opts in to creation.
+	Create bool
+}
+
+// NormalizeGroupPath converts a group entry to the full path Keycloak uses:
+// a leading slash and no trailing slash. A bare name such as "team-example"
+// becomes "/team-example". Returns "" for an empty entry.
+func NormalizeGroupPath(group string) string {
+	group = strings.Trim(strings.TrimSpace(group), "/")
+	if group == "" {
+		return ""
+	}
+	return "/" + group
+}
+
+// MergeGroupMembers builds a deduplicated map of full group path -> GroupSpec
+// from spec.auth.groups and keycloakConfig.groups. Entries are keyed on their
+// normalized path, so "team-example" and "/team-example" are the same group.
+// When the same group appears in both lists, the keycloakConfig.groups members
+// take precedence.
+func MergeGroupMembers(groups []string, keycloakConfig *appsv1.KeycloakClientConfig) map[string]GroupSpec {
+	groupSpecs := make(map[string]GroupSpec)
+
+	add := func(entry string, members []string, setMembers bool) {
+		groupPath := NormalizeGroupPath(entry)
+		if groupPath == "" {
+			return
+		}
+		spec := groupSpecs[groupPath]
+		// A bare, single-segment name allows creation, whichever list it came from.
+		if !strings.HasPrefix(strings.TrimSpace(entry), "/") && !strings.Contains(groupPath[1:], "/") {
+			spec.Create = true
+		}
+		if setMembers {
+			spec.Members = members
+		}
+		groupSpecs[groupPath] = spec
+	}
 
 	// Collect from spec.auth.groups (no members, just ensure groups exist)
 	for _, g := range groups {
-		if _, ok := groupMembers[g]; !ok {
-			groupMembers[g] = nil
-		}
+		add(g, nil, false)
 	}
 
 	// Collect from keycloakConfig.groups (with optional members).
-	// Note: keycloakConfig.groups takes precedence - if the same group name appears
-	// in both spec.auth.groups and keycloakConfig.groups, the keycloakConfig entry wins.
 	if keycloakConfig != nil {
 		for _, g := range keycloakConfig.Groups {
-			groupMembers[g.Name] = g.Members
+			add(g.Name, g.Members, true)
 		}
 	}
 
-	return groupMembers
+	return groupSpecs
 }
 
-// ensureGroup resolves a NebariApp auth-groups entry to a Keycloak group ID.
-// It accepts two input forms:
-//
-//   - Bare name (e.g. "team-example"): looked up as a top-level group by
-//     exact name. Created if missing. Backwards-compatible default.
-//   - Path form (e.g. "/team-example" or "/parent/child"): looked up by group
-//     PATH via Keycloak's GetGroupByPath API. If the path does not resolve,
-//     the call fails with an explicit error — the operator does not create
-//     path-form groups because the user supplied a path, which implies the
-//     group hierarchy is managed outside this controller.
-//
-// The path form exists because of the common deployment pattern where
-// Keycloak clients ship the "groups" client-scope with a group-membership
-// mapper set to full.path=true, so JWTs carry group PATHS ("/team-example")
-// rather than NAMES ("team-example"). nebari-landing's canAccessPolicy does
-// literal string equality between a service's requiredGroups and the user's
-// JWT groups claim, so operators must put the same path form in
-// spec.auth.groups for the match to work. Before this change the operator
-// would treat "/team-example" as a literal group name and create a brand-new
-// empty "ghost" group whose name included the slash. See upstream issue #191.
-func (p *KeycloakProvider) ensureGroup(ctx context.Context, kcClient *gocloak.GoCloak, token *gocloak.JWT, realm, groupName string) (string, error) {
+// errGroupNotFound is returned by ensureGroup when a group does not exist and
+// may not be created.
+var errGroupNotFound = errors.New("group not found")
+
+// ensureGroup resolves a full group path (see NormalizeGroupPath) to a
+// Keycloak group ID. If the group does not exist, it is created when create
+// is true, and errGroupNotFound is returned otherwise. Paths are never
+// created implicitly because that would mean guessing at a group hierarchy
+// that is managed outside this operator.
+func (p *KeycloakProvider) ensureGroup(ctx context.Context, kcClient *gocloak.GoCloak, token *gocloak.JWT, realm, groupPath string, create bool) (string, error) {
 	logger := log.FromContext(ctx)
 
-	// Path form: look up existing group by path. Never create.
-	if strings.HasPrefix(groupName, "/") {
-		group, err := kcClient.GetGroupByPath(ctx, token.AccessToken, realm, strings.TrimPrefix(groupName, "/"))
-		if err != nil {
-			return "", fmt.Errorf("group path %q not found in realm %q (path-form entries are never auto-created to avoid guessing at a nested hierarchy — create the group manually via Keycloak admin, or use the bare name form to opt into auto-creation): %w", groupName, realm, err)
-		}
+	// gocloak joins URL segments with "/", so the leading slash must go or
+	// Keycloak rejects the "//" with 400 missingNormalization.
+	group, err := kcClient.GetGroupByPath(ctx, token.AccessToken, realm, strings.TrimPrefix(groupPath, "/"))
+	if err == nil {
 		if group == nil || group.ID == nil {
-			return "", fmt.Errorf("GetGroupByPath returned nil group for path %q in realm %q", groupName, realm)
+			return "", fmt.Errorf("GetGroupByPath returned no group ID for path %q in realm %q", groupPath, realm)
 		}
 		return *group.ID, nil
 	}
-
-	// Bare-name form: search for existing group by exact name
-	groups, err := kcClient.GetGroups(ctx, token.AccessToken, realm, gocloak.GetGroupsParams{
-		Search: &groupName,
-		Exact:  gocloak.BoolP(true),
-	})
-	if err != nil {
-		return "", fmt.Errorf("failed to search for group %q: %w", groupName, err)
+	var apiErr *gocloak.APIError
+	if !errors.As(err, &apiErr) || apiErr.Code != http.StatusNotFound {
+		return "", fmt.Errorf("failed to look up group path %q: %w", groupPath, err)
+	}
+	if !create {
+		return "", fmt.Errorf("group path %q in realm %q: %w", groupPath, realm, errGroupNotFound)
 	}
 
-	for _, g := range groups {
-		if g.Name != nil && *g.Name == groupName {
-			return *g.ID, nil
-		}
-	}
-
-	// Group doesn't exist - create it
-	newGroup := gocloak.Group{
+	groupName := strings.TrimPrefix(groupPath, "/")
+	groupID, err := kcClient.CreateGroup(ctx, token.AccessToken, realm, gocloak.Group{
 		Name: gocloak.StringP(groupName),
-	}
-	groupID, err := kcClient.CreateGroup(ctx, token.AccessToken, realm, newGroup)
+	})
 	if err != nil {
 		return "", fmt.Errorf("failed to create group %q: %w", groupName, err)
 	}

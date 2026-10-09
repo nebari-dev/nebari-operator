@@ -18,6 +18,8 @@ package providers
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
 )
@@ -60,6 +62,8 @@ type OIDCProvider interface {
 	// ProvisionClient provisions an OIDC client in the provider if supported.
 	// Returns nil if provisioning is not supported or not needed.
 	// The client secret should be stored in a Kubernetes Secret.
+	// Returns a *GroupsNotResolvedError if the client was provisioned but some
+	// spec.auth.groups paths do not exist in the provider.
 	ProvisionClient(ctx context.Context, nebariApp *appsv1.NebariApp) error
 
 	// DeleteClient removes the OIDC client from the provider if it was provisioned.
@@ -79,4 +83,17 @@ type OIDCProvider interface {
 	// For Keycloak, this disables management permissions on the client, which
 	// causes Keycloak to automatically remove the auto-created permission.
 	CleanupTokenExchange(ctx context.Context, nebariApp *appsv1.NebariApp) error
+}
+
+// GroupsNotResolvedError reports group paths from spec.auth.groups that do not
+// exist in the provider and that the operator will not create. Everything
+// else was provisioned.
+type GroupsNotResolvedError struct {
+	Realm string
+	Paths []string
+}
+
+func (e *GroupsNotResolvedError) Error() string {
+	return fmt.Sprintf("group paths not found in realm %q: %s (paths are never created: create them in Keycloak, or list a top-level group by bare name to have it created)",
+		e.Realm, strings.Join(e.Paths, ", "))
 }

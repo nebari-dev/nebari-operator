@@ -18,8 +18,11 @@ package providers
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -873,52 +876,72 @@ func TestKeycloakProvider_SyncGroups_NoGroups(t *testing.T) {
 	}
 }
 
-func TestKeycloakProvider_SyncGroups_Deduplication(t *testing.T) {
-	// Verify that groups from auth.groups and keycloakConfig.groups are deduplicated
-	nebariApp := &appsv1.NebariApp{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-app",
-			Namespace: "default",
+func TestMergeGroupMembers(t *testing.T) {
+	tests := []struct {
+		name           string
+		groups         []string
+		keycloakConfig *appsv1.KeycloakClientConfig
+		want           map[string]GroupSpec
+	}{
+		{
+			name:   "keycloakConfig members take precedence",
+			groups: []string{"admin", "viewer"},
+			keycloakConfig: &appsv1.KeycloakClientConfig{Groups: []appsv1.KeycloakGroup{
+				{Name: "admin", Members: []string{"admin-user"}},
+				{Name: "editor"},
+			}},
+			want: map[string]GroupSpec{
+				"/admin":  {Members: []string{"admin-user"}, Create: true},
+				"/viewer": {Create: true},
+				"/editor": {Create: true},
+			},
 		},
-		Spec: appsv1.NebariAppSpec{
-			Hostname: "test.example.com",
-			Auth: &appsv1.AuthConfig{
-				Enabled: true,
-				Groups:  []string{"admin", "viewer"},
-				KeycloakConfig: &appsv1.KeycloakClientConfig{
-					Groups: []appsv1.KeycloakGroup{
-						{Name: "admin", Members: []string{"admin-user"}},
-						{Name: "editor"},
-					},
-				},
+		{
+			name:   "bare name and path are the same group",
+			groups: []string{"team-example"},
+			keycloakConfig: &appsv1.KeycloakClientConfig{Groups: []appsv1.KeycloakGroup{
+				{Name: "/team-example", Members: []string{"alice"}},
+			}},
+			want: map[string]GroupSpec{
+				"/team-example": {Members: []string{"alice"}, Create: true},
+			},
+		},
+		{
+			name:   "keycloakConfig wins over spec.auth.groups listed as a path",
+			groups: []string{"/team-example"},
+			keycloakConfig: &appsv1.KeycloakClientConfig{Groups: []appsv1.KeycloakGroup{
+				{Name: "team-example", Members: []string{"alice"}},
+			}},
+			want: map[string]GroupSpec{
+				"/team-example": {Members: []string{"alice"}, Create: true},
+			},
+		},
+		{
+			name:   "paths are never created",
+			groups: []string{"/team-example", "/parent/child", "parent/other"},
+			want: map[string]GroupSpec{
+				"/team-example": {},
+				"/parent/child": {},
+				"/parent/other": {},
+			},
+		},
+		{
+			name:   "trailing slash, whitespace and empty entries",
+			groups: []string{" finance ", "/ops/", "", "/"},
+			want: map[string]GroupSpec{
+				"/finance": {Create: true},
+				"/ops":     {},
 			},
 		},
 	}
 
-	// Use the exported MergeGroupMembers helper to test the deduplication logic
-	groupMembers := MergeGroupMembers(nebariApp.Spec.Auth.Groups, nebariApp.Spec.Auth.KeycloakConfig)
-
-	if len(groupMembers) != 3 {
-		t.Errorf("expected 3 deduplicated groups, got %d", len(groupMembers))
-	}
-
-	// "admin" from keycloakConfig should override auth.groups (has members)
-	if members, ok := groupMembers["admin"]; !ok {
-		t.Error("expected 'admin' group to exist")
-	} else if len(members) != 1 || members[0] != "admin-user" {
-		t.Errorf("expected 'admin' group members to be [admin-user], got %v", members)
-	}
-
-	// "viewer" from auth.groups only (no members)
-	if members, ok := groupMembers["viewer"]; !ok {
-		t.Error("expected 'viewer' group to exist")
-	} else if members != nil {
-		t.Errorf("expected 'viewer' group members to be nil, got %v", members)
-	}
-
-	// "editor" from keycloakConfig only
-	if _, ok := groupMembers["editor"]; !ok {
-		t.Error("expected 'editor' group to exist")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := MergeGroupMembers(tt.groups, tt.keycloakConfig)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("MergeGroupMembers() = %+v, want %+v", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -1579,145 +1602,109 @@ func TestKeycloakProvider_ConfigureTokenExchange(t *testing.T) {
 	_ = provider.ConfigureTokenExchange(context.Background(), nebariApp, []string{"peer-client-uuid"})
 }
 
-// TestEnsureGroup_PathVsName covers the two input forms accepted by ensureGroup:
-//   - Bare name: existing behavior (search by name, create if missing).
-//   - Path form "/...": look up via GetGroupByPath, never create.
-//
-// Regression coverage for upstream issue #191.
-func TestEnsureGroup_PathVsName(t *testing.T) {
-	// Fake access token the gocloak client holds; the handler ignores it.
+// fakeGroupsKeycloak serves group-by-path lookups for the given path -> ID map
+// and records the names of groups created through POST /groups. Any other
+// path gets a 404. It is a bare handler (no ServeMux) so a "//" in the URL
+// reaches it unchanged.
+type fakeGroupsKeycloak struct {
+	t        *testing.T
+	groups   map[string]string
+	status   int // when non-zero, every lookup fails with this status
+	created  []string
+	requests []string
+}
+
+func (f *fakeGroupsKeycloak) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	f.requests = append(f.requests, r.Method+" "+r.RequestURI)
+	const byPath = "/admin/realms/test/group-by-path/"
+	switch {
+	case r.Method == http.MethodGet && strings.HasPrefix(r.RequestURI, byPath):
+		if f.status != 0 {
+			w.WriteHeader(f.status)
+			return
+		}
+		groupPath := "/" + strings.TrimPrefix(r.RequestURI, byPath)
+		id, ok := f.groups[groupPath]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"` + id + `","path":"` + groupPath + `"}`))
+	case r.Method == http.MethodPost && r.RequestURI == "/admin/realms/test/groups":
+		var g gocloak.Group
+		if err := json.NewDecoder(r.Body).Decode(&g); err != nil || g.Name == nil {
+			f.t.Errorf("bad CreateGroup body: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		f.created = append(f.created, *g.Name)
+		w.Header().Set("Location", "/admin/realms/test/groups/created-"+*g.Name)
+		w.WriteHeader(http.StatusCreated)
+	default:
+		f.t.Errorf("unexpected request: %s %s", r.Method, r.RequestURI)
+		w.WriteHeader(http.StatusInternalServerError)
+	}
+}
+
+func newGroupsTestProvider(t *testing.T, kcServer *fakeGroupsKeycloak) (*KeycloakProvider, *gocloak.GoCloak) {
+	t.Helper()
+	kcServer.t = t
+	server := httptest.NewServer(kcServer)
+	t.Cleanup(server.Close)
+	provider := &KeycloakProvider{Config: config.KeycloakConfig{URL: server.URL, Realm: "test"}}
+	return provider, gocloak.NewClient(server.URL)
+}
+
+// TestEnsureGroup covers lookup by full path and when a missing group is
+// created. Regression coverage for upstream issue #191.
+func TestEnsureGroup(t *testing.T) {
 	token := &gocloak.JWT{AccessToken: "test-token"}
+	existing := map[string]string{
+		"/team-example":      "top-uuid",
+		"/parent/team-child": "nested-uuid",
+	}
 
 	tests := []struct {
-		name         string
-		groupName    string
-		handler      http.HandlerFunc
-		wantID       string
-		wantErr      bool
-		wantErrMatch string
+		name        string
+		groupPath   string
+		create      bool
+		status      int
+		wantID      string
+		wantCreated []string
+		wantErr     bool
+		wantMissing bool
 	}{
-		{
-			name:      "bare name, group exists → return existing id",
-			groupName: "team-example",
-			handler: func(w http.ResponseWriter, r *http.Request) {
-				switch {
-				case strings.HasPrefix(r.URL.Path, "/admin/realms/test/groups") && r.Method == http.MethodGet:
-					// GetGroups by exact name
-					w.Header().Set("Content-Type", "application/json")
-					_, _ = w.Write([]byte(`[{"id":"group-uuid-bare","name":"team-example"}]`))
-				default:
-					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
-					w.WriteHeader(http.StatusInternalServerError)
-				}
-			},
-			wantID: "group-uuid-bare",
-		},
-		{
-			name:      "bare name, group missing → create",
-			groupName: "team-fresh",
-			handler: func(w http.ResponseWriter, r *http.Request) {
-				switch {
-				case strings.HasPrefix(r.URL.Path, "/admin/realms/test/groups") && r.Method == http.MethodGet:
-					// GetGroups returns empty
-					w.Header().Set("Content-Type", "application/json")
-					_, _ = w.Write([]byte(`[]`))
-				case r.URL.Path == "/admin/realms/test/groups" && r.Method == http.MethodPost:
-					// CreateGroup returns 201 with Location header carrying the new id
-					w.Header().Set("Location", "/admin/realms/test/groups/created-uuid")
-					w.WriteHeader(http.StatusCreated)
-				default:
-					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
-					w.WriteHeader(http.StatusInternalServerError)
-				}
-			},
-			wantID: "created-uuid",
-		},
-		{
-			name:      "path form, group exists → return existing id (no create)",
-			groupName: "/team-example",
-			handler: func(w http.ResponseWriter, r *http.Request) {
-				switch {
-				case r.URL.Path == "/admin/realms/test/group-by-path/team-example" && r.Method == http.MethodGet:
-					// GetGroupByPath hit — strip leading "/" when building the URL,
-					// gocloak passes the raw path as a query/path segment.
-					w.Header().Set("Content-Type", "application/json")
-					_, _ = w.Write([]byte(`{"id":"group-uuid-by-path","name":"team-example","path":"/team-example"}`))
-				case r.Method == http.MethodPost:
-					t.Errorf("path form must NOT trigger CreateGroup: %s %s", r.Method, r.URL.Path)
-					w.WriteHeader(http.StatusInternalServerError)
-				default:
-					// gocloak may construct the path slightly differently; accept any GET on the
-					// group-by-path family and return the fixture to keep the test resilient.
-					if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "group-by-path") {
-						w.Header().Set("Content-Type", "application/json")
-						_, _ = w.Write([]byte(`{"id":"group-uuid-by-path","name":"team-example","path":"/team-example"}`))
-						return
-					}
-					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
-					w.WriteHeader(http.StatusInternalServerError)
-				}
-			},
-			wantID: "group-uuid-by-path",
-		},
-		{
-			name:      "path form, group missing → explicit error, never create",
-			groupName: "/team-missing",
-			handler: func(w http.ResponseWriter, r *http.Request) {
-				switch {
-				case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "group-by-path"):
-					w.WriteHeader(http.StatusNotFound)
-				case r.Method == http.MethodPost:
-					t.Errorf("path form must NOT trigger CreateGroup even when the group is missing: %s %s", r.Method, r.URL.Path)
-					w.WriteHeader(http.StatusInternalServerError)
-				default:
-					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
-					w.WriteHeader(http.StatusInternalServerError)
-				}
-			},
-			wantErr:      true,
-			wantErrMatch: `not found in realm "test"`,
-		},
-		{
-			name:      "path form nested, group exists",
-			groupName: "/parent/team-child",
-			handler: func(w http.ResponseWriter, r *http.Request) {
-				if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "group-by-path") {
-					w.Header().Set("Content-Type", "application/json")
-					_, _ = w.Write([]byte(`{"id":"nested-uuid","name":"team-child","path":"/parent/team-child"}`))
-					return
-				}
-				t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
-				w.WriteHeader(http.StatusInternalServerError)
-			},
-			wantID: "nested-uuid",
-		},
+		{name: "top-level group exists", groupPath: "/team-example", create: true, wantID: "top-uuid"},
+		{name: "top-level group exists, create not allowed", groupPath: "/team-example", wantID: "top-uuid"},
+		{name: "nested group exists", groupPath: "/parent/team-child", wantID: "nested-uuid"},
+		{name: "missing group is created when allowed", groupPath: "/team-fresh", create: true, wantID: "created-team-fresh", wantCreated: []string{"team-fresh"}},
+		{name: "missing group is not created when not allowed", groupPath: "/team-missing", wantErr: true, wantMissing: true},
+		{name: "missing nested group is not created", groupPath: "/parent/missing", wantErr: true, wantMissing: true},
+		{name: "lookup error is not treated as missing", groupPath: "/team-fresh", create: true, status: http.StatusInternalServerError, wantErr: true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			server := httptest.NewServer(tt.handler)
-			defer server.Close()
+			kcServer := &fakeGroupsKeycloak{groups: existing, status: tt.status}
+			provider, kc := newGroupsTestProvider(t, kcServer)
 
-			// ensureGroup doesn't touch provider.Client (the k8s client); the
-			// gocloak client (kc below) is what matters. Keep KeycloakProvider
-			// construction minimal.
-			provider := &KeycloakProvider{
-				Config: config.KeycloakConfig{
-					URL:           server.URL,
-					Realm:         "test",
-					AdminUsername: "admin",
-					AdminPassword: "admin",
-				},
+			gotID, err := provider.ensureGroup(context.Background(), kc, token, "test", tt.groupPath, tt.create)
+
+			for _, req := range kcServer.requests {
+				if strings.Contains(req, "//") {
+					t.Errorf("request URI contains \"//\": %q", req)
+				}
 			}
-			kc := gocloak.NewClient(server.URL)
-
-			gotID, err := provider.ensureGroup(context.Background(), kc, token, "test", tt.groupName)
+			if !reflect.DeepEqual(kcServer.created, tt.wantCreated) {
+				t.Errorf("created groups = %q, want %q", kcServer.created, tt.wantCreated)
+			}
 			if tt.wantErr {
 				if err == nil {
 					t.Fatalf("expected error, got id=%q", gotID)
 				}
-				if tt.wantErrMatch != "" && !strings.Contains(err.Error(), tt.wantErrMatch) {
-					t.Errorf("error %q did not contain %q", err.Error(), tt.wantErrMatch)
+				if got := errors.Is(err, errGroupNotFound); got != tt.wantMissing {
+					t.Errorf("errors.Is(err, errGroupNotFound) = %v, want %v (err: %v)", got, tt.wantMissing, err)
 				}
 				return
 			}
@@ -1728,6 +1715,35 @@ func TestEnsureGroup_PathVsName(t *testing.T) {
 				t.Errorf("got id=%q, want %q", gotID, tt.wantID)
 			}
 		})
+	}
+}
+
+// TestSyncGroups_UnresolvedPaths verifies that a missing path does not stop
+// the other groups from syncing and comes back as a GroupsNotResolvedError.
+func TestSyncGroups_UnresolvedPaths(t *testing.T) {
+	token := &gocloak.JWT{AccessToken: "test-token"}
+	kcServer := &fakeGroupsKeycloak{groups: map[string]string{"/exists": "exists-uuid"}}
+	provider, kc := newGroupsTestProvider(t, kcServer)
+
+	app := &appsv1.NebariApp{Spec: appsv1.NebariAppSpec{Auth: &appsv1.AuthConfig{
+		Enabled: true,
+		Groups:  []string{"/exists", "/does-not-exist", "/parent/missing", "fresh"},
+	}}}
+
+	err := provider.syncGroups(context.Background(), kc, token, app)
+
+	var notResolved *GroupsNotResolvedError
+	if !errors.As(err, &notResolved) {
+		t.Fatalf("expected *GroupsNotResolvedError, got %v", err)
+	}
+	if want := []string{"/does-not-exist", "/parent/missing"}; !reflect.DeepEqual(notResolved.Paths, want) {
+		t.Errorf("Paths = %q, want %q", notResolved.Paths, want)
+	}
+	if notResolved.Realm != "test" {
+		t.Errorf("Realm = %q, want %q", notResolved.Realm, "test")
+	}
+	if want := []string{"fresh"}; !reflect.DeepEqual(kcServer.created, want) {
+		t.Errorf("created groups = %q, want %q", kcServer.created, want)
 	}
 }
 
@@ -1778,7 +1794,7 @@ func TestEnsureGroup_PathLookupURL(t *testing.T) {
 			provider := &KeycloakProvider{Config: config.KeycloakConfig{URL: server.URL, Realm: "test"}}
 			kc := gocloak.NewClient(server.URL)
 
-			gotID, err := provider.ensureGroup(context.Background(), kc, token, "test", tt.groupName)
+			gotID, err := provider.ensureGroup(context.Background(), kc, token, "test", tt.groupName, false)
 
 			if strings.Contains(gotURI, "//") {
 				t.Errorf("group-by-path request URI contains \"//\": %q", gotURI)
