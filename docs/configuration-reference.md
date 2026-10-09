@@ -369,6 +369,14 @@ Defines the OIDC scopes to request during authentication.
 Specifies the list of groups that should have access to this application. When specified, only users belonging to these
 groups will be authorized. Group matching is case-sensitive and depends on the OIDC provider's group claim.
 
+Each entry is a Keycloak group path (`/admin`, `/parent/child`). A bare name (`admin`) is shorthand for the top-level
+group `/admin`, so `admin` and `/admin` are the same group.
+
+- A bare name is created in Keycloak if it is missing.
+- A path is never created. If it does not exist, the rest of the auth configuration, including the SecurityPolicy, is
+  still applied, but `AuthReady` and `Ready` are `False` with reason `GroupsNotResolved` until the group exists. The
+  lookup is retried every minute.
+
 **Example:**
 ```yaml
 groups:
@@ -476,7 +484,8 @@ Keycloak-specific configuration for fine-grained control over realm resources li
 Keycloak groups to ensure exist in the realm, with optional user membership assignments.
 
 Each entry has:
-- `name` (string, required): Group name to create in Keycloak
+- `name` (string, required): The group, as a bare name or a path, with the same rules as `auth.groups`. When the same
+  group is also listed in `auth.groups`, this entry takes precedence.
 - `members` (array of strings, optional): Keycloak usernames to add to the group. Membership sync is additive-only - users in this list are added, but existing members not in the list are NOT removed. Users that don't exist in Keycloak are logged as warnings but don't cause errors.
 
 ##### auth.keycloakConfig.protocolMappers

@@ -21,12 +21,14 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	egv1alpha1 "github.com/envoyproxy/gateway/api/v1alpha1"
 	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
 	"github.com/nebari-dev/nebari-operator/internal/config"
 	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/auth/providers"
+	"github.com/nebari-dev/nebari-operator/internal/controller/utils/conditions"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/constants"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/naming"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/ptr"
@@ -1650,5 +1652,141 @@ func TestReconcileAuth_SpecChangeCycle(t *testing.T) {
 				t.Errorf("reconcile 4: expected provisioning to be skipped again (count=2), got %d", provider.provisionCount)
 			}
 		})
+	}
+}
+
+// TestReconcileAuth_GroupsNotResolved covers a spec.auth.groups path that does
+// not exist in Keycloak. The SecurityPolicy must still be created (a new app
+// must never be served without OIDC), AuthReady must be False, and the next
+// reconcile must provision again so creating the group later clears it.
+func TestReconcileAuth_GroupsNotResolved(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = appsv1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+	_ = rbacv1.AddToScheme(scheme)
+	_ = egv1alpha1.AddToScheme(scheme)
+
+	app := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-app", Namespace: "default"},
+		Spec: appsv1.NebariAppSpec{
+			Hostname: "test.example.com",
+			Auth: &appsv1.AuthConfig{
+				Enabled:         true,
+				Provider:        constants.ProviderKeycloak,
+				ProvisionClient: ptr.To(true),
+				Groups:          []string{"/does-not-exist"},
+			},
+		},
+	}
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-app-oidc-client", Namespace: "default"},
+		Data:       map[string][]byte{constants.ClientSecretKey: []byte("test-secret")},
+	}
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(app, secret).Build()
+
+	provider := &mockProvider{
+		issuerURL:            "https://keycloak.example.com/realms/test",
+		clientID:             "test-client",
+		supportsProvisioning: true,
+		provisionError:       &providers.GroupsNotResolvedError{Realm: "test", Paths: []string{"/does-not-exist"}},
+	}
+	reconciler := &AuthReconciler{
+		Client:    k8sClient,
+		Scheme:    scheme,
+		Recorder:  record.NewFakeRecorder(10),
+		Providers: map[string]providers.OIDCProvider{constants.ProviderKeycloak: provider},
+	}
+
+	err := reconciler.ReconcileAuth(context.Background(), app)
+	if !IsGroupsNotResolved(err) {
+		t.Fatalf("expected a GroupsNotResolved error, got %v", err)
+	}
+
+	sp := &egv1alpha1.SecurityPolicy{}
+	if err := k8sClient.Get(context.Background(), types.NamespacedName{
+		Name: naming.SecurityPolicyName(app), Namespace: app.Namespace,
+	}, sp); err != nil {
+		t.Fatalf("expected SecurityPolicy to be created despite unresolved groups: %v", err)
+	}
+	if sp.Spec.OIDC == nil {
+		t.Error("expected SecurityPolicy to configure OIDC")
+	}
+
+	cond := conditions.GetCondition(app, appsv1.ConditionTypeAuthReady)
+	if cond == nil || cond.Status != metav1.ConditionFalse || cond.Reason != appsv1.ReasonGroupsNotResolved {
+		t.Fatalf("expected AuthReady=False/%s, got %+v", appsv1.ReasonGroupsNotResolved, cond)
+	}
+	if !strings.Contains(cond.Message, "/does-not-exist") {
+		t.Errorf("expected AuthReady message to name the missing path, got %q", cond.Message)
+	}
+	if app.Status.AuthConfigHash != "" {
+		t.Errorf("expected AuthConfigHash to stay unset while groups are unresolved, got %q", app.Status.AuthConfigHash)
+	}
+
+	// The group is still missing: the next reconcile provisions again.
+	if err := reconciler.ReconcileAuth(context.Background(), app); !IsGroupsNotResolved(err) {
+		t.Fatalf("expected a GroupsNotResolved error on retry, got %v", err)
+	}
+	if provider.provisionCount != 2 {
+		t.Fatalf("expected ProvisionClient to run on every reconcile while groups are unresolved, got %d calls", provider.provisionCount)
+	}
+
+	// The group now exists in Keycloak: AuthReady clears and the hash is stored.
+	provider.provisionError = nil
+	if err := reconciler.ReconcileAuth(context.Background(), app); err != nil {
+		t.Fatalf("expected no error once the group exists, got %v", err)
+	}
+	if !conditions.IsConditionTrue(app, appsv1.ConditionTypeAuthReady) {
+		t.Errorf("expected AuthReady=True once the group exists, got %+v", conditions.GetCondition(app, appsv1.ConditionTypeAuthReady))
+	}
+	if app.Status.AuthConfigHash != computeAuthConfigHash(app) {
+		t.Error("expected AuthConfigHash to be stored once the group exists")
+	}
+
+	// Nothing changed since: provisioning is skipped again.
+	if err := reconciler.ReconcileAuth(context.Background(), app); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if provider.provisionCount != 3 {
+		t.Errorf("expected provisioning to be skipped once groups resolve, got %d calls", provider.provisionCount)
+	}
+}
+
+// TestReconcileAuth_ProvisioningErrorStillFails makes sure only the
+// GroupsNotResolved error degrades; any other provisioning error still fails.
+func TestReconcileAuth_ProvisioningErrorStillFails(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = appsv1.AddToScheme(scheme)
+	_ = egv1alpha1.AddToScheme(scheme)
+
+	app := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-app", Namespace: "default"},
+		Spec: appsv1.NebariAppSpec{
+			Hostname: "test.example.com",
+			Auth: &appsv1.AuthConfig{
+				Enabled:         true,
+				Provider:        constants.ProviderKeycloak,
+				ProvisionClient: ptr.To(true),
+				Groups:          []string{"/team"},
+			},
+		},
+	}
+	reconciler := &AuthReconciler{
+		Client:   fake.NewClientBuilder().WithScheme(scheme).WithObjects(app).Build(),
+		Scheme:   scheme,
+		Recorder: record.NewFakeRecorder(10),
+		Providers: map[string]providers.OIDCProvider{constants.ProviderKeycloak: &mockProvider{
+			supportsProvisioning: true,
+			provisionError:       errors.New("keycloak unavailable"),
+		}},
+	}
+
+	err := reconciler.ReconcileAuth(context.Background(), app)
+	if err == nil || IsGroupsNotResolved(err) {
+		t.Fatalf("expected a plain provisioning error, got %v", err)
+	}
+	cond := conditions.GetCondition(app, appsv1.ConditionTypeAuthReady)
+	if cond == nil || cond.Reason != "ProvisioningFailed" {
+		t.Errorf("expected AuthReady reason ProvisioningFailed, got %+v", cond)
 	}
 }

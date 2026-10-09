@@ -217,13 +217,7 @@ func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	// Reconcile authentication (SecurityPolicy creation/update) if auth is configured
 	if err := r.AuthReconciler.ReconcileAuth(ctx, nebariApp); err != nil {
-		logger.Error(err, "Auth reconciliation failed")
-		conditions.SetCondition(nebariApp, appsv1.ConditionTypeReady, metav1.ConditionFalse,
-			appsv1.ReasonFailed, fmt.Sprintf("Auth reconciliation failed: %v", err))
-		if err := r.Status().Update(ctx, nebariApp); err != nil {
-			return ctrl.Result{}, err
-		}
-		return ctrl.Result{RequeueAfter: time.Minute}, nil
+		return r.handleAuthError(ctx, nebariApp, err)
 	}
 	logger.Info("Auth reconciled successfully", "nebariapp", nebariApp.Name)
 
@@ -247,6 +241,32 @@ func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	logger.Info("Successfully reconciled NebariApp")
 	// Requeue after 1 minute for now (until full implementation)
+	return ctrl.Result{RequeueAfter: time.Minute}, nil
+}
+
+// handleAuthError records a ReconcileAuth failure on the NebariApp status and
+// requeues.
+func (r *NebariAppReconciler) handleAuthError(ctx context.Context, nebariApp *appsv1.NebariApp, err error) (ctrl.Result, error) {
+	logger := logf.FromContext(ctx)
+
+	if auth.IsGroupsNotResolved(err) {
+		// Auth is otherwise in place (the SecurityPolicy exists), so publish the
+		// rest of the status, but keep Ready=False so a typo in a group path is
+		// visible to `kubectl get` and `kubectl wait`. The requeue retries the
+		// lookup.
+		logger.Info("Auth reconciled, but some group paths do not exist", "error", err.Error())
+		conditions.SetCondition(nebariApp, appsv1.ConditionTypeReady, metav1.ConditionFalse,
+			appsv1.ReasonGroupsNotResolved, err.Error())
+		nebariApp.Status.ObservedGeneration = nebariApp.Generation
+		nebariApp.Status.ServiceDiscovery = buildServiceDiscoveryStatus(nebariApp)
+	} else {
+		logger.Error(err, "Auth reconciliation failed")
+		conditions.SetCondition(nebariApp, appsv1.ConditionTypeReady, metav1.ConditionFalse,
+			appsv1.ReasonFailed, fmt.Sprintf("Auth reconciliation failed: %v", err))
+	}
+	if err := r.Status().Update(ctx, nebariApp); err != nil {
+		return ctrl.Result{}, err
+	}
 	return ctrl.Result{RequeueAfter: time.Minute}, nil
 }
 
