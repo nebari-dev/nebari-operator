@@ -77,6 +77,11 @@ jobs:
         uses: golangci/golangci-lint-action@v9
         with:
           version: v2.5.0
+          # Build golangci-lint from source with the workflow's Go toolchain.
+          # go.mod targets go 1.26.x and no released golangci-lint binary is yet
+          # built with go >= 1.26, so binary install-mode fails its built-with
+          # version guard. goinstall compiles it with the runner's Go.
+          install-mode: goinstall
 
       - name: Generate manifests
         run: make manifests

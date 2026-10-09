@@ -24,6 +24,7 @@ func ValidateResourceNames(nebariApp *appsv1.NebariApp) error {
 		{"Certificate", CertificateName(nebariApp)},
 		{"CertificateSecret", CertificateSecretName(nebariApp)},
 		{"GatewayListener", ListenerName(nebariApp)},
+		{"ListenerSet", ListenerSetName(nebariApp)},
 		{"OIDCClientSecret", ClientSecretName(nebariApp)},
 	}
 
@@ -101,6 +102,14 @@ func CertificateSecretName(nebariApp *appsv1.NebariApp) string {
 // Pattern: tls-<nebariapp-name>-<namespace>
 func ListenerName(nebariApp *appsv1.NebariApp) string {
 	return fmt.Sprintf("tls-%s-%s", nebariApp.Name, nebariApp.Namespace)
+}
+
+// ListenerSetName generates the name for the per-app ListenerSet created in the
+// NebariApp's own namespace (ADR-0011 Option 2). The ListenerSet attaches to the
+// shared Gateway via spec.parentRef and carries this app's HTTPS listener.
+// Pattern: <nebariapp-name>-listeners
+func ListenerSetName(nebariApp *appsv1.NebariApp) string {
+	return ResourceName(nebariApp, constants.ListenerSetSuffix)
 }
 
 // GatewayName returns the Gateway name for a NebariApp based on its gateway spec.
