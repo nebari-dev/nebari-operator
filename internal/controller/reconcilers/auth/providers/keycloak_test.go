@@ -20,10 +20,12 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Nerzal/gocloak/v13"
 	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
 	"github.com/nebari-dev/nebari-operator/internal/config"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/constants"
@@ -1576,4 +1578,315 @@ func TestKeycloakProvider_ConfigureTokenExchange(t *testing.T) {
 	// Will fail without a live Keycloak instance, but verifies the method
 	// has the correct signature and handles the call path
 	_ = provider.ConfigureTokenExchange(context.Background(), nebariApp, []string{"peer-client-uuid"})
+}
+
+// TestEnsureGroup_PathVsName covers the two input forms accepted by ensureGroup:
+//   - Bare name: existing behavior (search by name, create if missing).
+//   - Path form "/...": look up via GetGroupByPath, never create.
+//
+// Regression coverage for upstream issue #191.
+func TestEnsureGroup_PathVsName(t *testing.T) {
+	// Fake access token the gocloak client holds; the handler ignores it.
+	token := &gocloak.JWT{AccessToken: "test-token"}
+
+	tests := []struct {
+		name         string
+		groupName    string
+		handler      http.HandlerFunc
+		wantID       string
+		wantErr      bool
+		wantErrMatch string
+	}{
+		{
+			name:      "bare name, group exists → return existing id",
+			groupName: "team-example",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case strings.HasPrefix(r.URL.Path, "/admin/realms/test/groups") && r.Method == http.MethodGet:
+					// GetGroups by exact name
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`[{"id":"group-uuid-bare","name":"team-example"}]`))
+				default:
+					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+					w.WriteHeader(http.StatusInternalServerError)
+				}
+			},
+			wantID: "group-uuid-bare",
+		},
+		{
+			name:      "bare name, group missing → create",
+			groupName: "team-fresh",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case strings.HasPrefix(r.URL.Path, "/admin/realms/test/groups") && r.Method == http.MethodGet:
+					// GetGroups returns empty
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`[]`))
+				case r.URL.Path == "/admin/realms/test/groups" && r.Method == http.MethodPost:
+					// CreateGroup returns 201 with Location header carrying the new id
+					w.Header().Set("Location", "/admin/realms/test/groups/created-uuid")
+					w.WriteHeader(http.StatusCreated)
+				default:
+					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+					w.WriteHeader(http.StatusInternalServerError)
+				}
+			},
+			wantID: "created-uuid",
+		},
+		{
+			name:      "path form, group exists → return existing id (no create)",
+			groupName: "/team-example",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.URL.Path == "/admin/realms/test/group-by-path/team-example" && r.Method == http.MethodGet:
+					// GetGroupByPath hit — strip leading "/" when building the URL,
+					// gocloak passes the raw path as a query/path segment.
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"id":"group-uuid-by-path","name":"team-example","path":"/team-example"}`))
+				case r.Method == http.MethodPost:
+					t.Errorf("path form must NOT trigger CreateGroup: %s %s", r.Method, r.URL.Path)
+					w.WriteHeader(http.StatusInternalServerError)
+				default:
+					// gocloak may construct the path slightly differently; accept any GET on the
+					// group-by-path family and return the fixture to keep the test resilient.
+					if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "group-by-path") {
+						w.Header().Set("Content-Type", "application/json")
+						_, _ = w.Write([]byte(`{"id":"group-uuid-by-path","name":"team-example","path":"/team-example"}`))
+						return
+					}
+					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+					w.WriteHeader(http.StatusInternalServerError)
+				}
+			},
+			wantID: "group-uuid-by-path",
+		},
+		{
+			name:      "path form, group missing → explicit error, never create",
+			groupName: "/team-missing",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "group-by-path"):
+					w.WriteHeader(http.StatusNotFound)
+				case r.Method == http.MethodPost:
+					t.Errorf("path form must NOT trigger CreateGroup even when the group is missing: %s %s", r.Method, r.URL.Path)
+					w.WriteHeader(http.StatusInternalServerError)
+				default:
+					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+					w.WriteHeader(http.StatusInternalServerError)
+				}
+			},
+			wantErr:      true,
+			wantErrMatch: `not found in realm "test"`,
+		},
+		{
+			name:      "path form nested, group exists",
+			groupName: "/parent/team-child",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "group-by-path") {
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"id":"nested-uuid","name":"team-child","path":"/parent/team-child"}`))
+					return
+				}
+				t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+				w.WriteHeader(http.StatusInternalServerError)
+			},
+			wantID: "nested-uuid",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(tt.handler)
+			defer server.Close()
+
+			// ensureGroup doesn't touch provider.Client (the k8s client); the
+			// gocloak client (kc below) is what matters. Keep KeycloakProvider
+			// construction minimal.
+			provider := &KeycloakProvider{
+				Config: config.KeycloakConfig{
+					URL:           server.URL,
+					Realm:         "test",
+					AdminUsername: "admin",
+					AdminPassword: "admin",
+				},
+			}
+			kc := gocloak.NewClient(server.URL)
+
+			gotID, err := provider.ensureGroup(context.Background(), kc, token, "test", tt.groupName)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got id=%q", gotID)
+				}
+				if tt.wantErrMatch != "" && !strings.Contains(err.Error(), tt.wantErrMatch) {
+					t.Errorf("error %q did not contain %q", err.Error(), tt.wantErrMatch)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if gotID != tt.wantID {
+				t.Errorf("got id=%q, want %q", gotID, tt.wantID)
+			}
+		})
+	}
+}
+
+// TestEnsureGroup_PathLookupURL verifies the group-by-path request URL never
+// contains a double slash. gocloak joins path segments with "/", so passing the
+// leading "/" through yields ".../group-by-path//name", which Keycloak rejects
+// with HTTP 400 missingNormalization even when the group exists.
+func TestEnsureGroup_PathLookupURL(t *testing.T) {
+	token := &gocloak.JWT{AccessToken: "test-token"}
+
+	tests := []struct {
+		name      string
+		groupName string
+		wantPath  string
+		wantID    string
+	}{
+		{
+			name:      "top-level path",
+			groupName: "/team-example",
+			wantPath:  "/admin/realms/test/group-by-path/team-example",
+			wantID:    "top-uuid",
+		},
+		{
+			name:      "nested path",
+			groupName: "/parent/child",
+			wantPath:  "/admin/realms/test/group-by-path/parent/child",
+			wantID:    "nested-uuid",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotURI string
+			// A bare handler (no ServeMux) so "//" is not cleaned or redirected
+			// before we see it.
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotURI = r.RequestURI
+				if strings.Contains(r.RequestURI, "//") {
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = w.Write([]byte(`{"error":"missingNormalization"}`))
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"id":"` + tt.wantID + `","path":"` + tt.groupName + `"}`))
+			}))
+			defer server.Close()
+
+			provider := &KeycloakProvider{Config: config.KeycloakConfig{URL: server.URL, Realm: "test"}}
+			kc := gocloak.NewClient(server.URL)
+
+			gotID, err := provider.ensureGroup(context.Background(), kc, token, "test", tt.groupName)
+
+			if strings.Contains(gotURI, "//") {
+				t.Errorf("group-by-path request URI contains \"//\": %q", gotURI)
+			}
+			if gotURI != tt.wantPath {
+				t.Errorf("request URI = %q, want %q", gotURI, tt.wantPath)
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if gotID != tt.wantID {
+				t.Errorf("got id=%q, want %q", gotID, tt.wantID)
+			}
+		})
+	}
+}
+
+func TestKeycloakProvider_GetJWKSURL(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  config.KeycloakConfig
+		want string
+	}{
+		{
+			name: "in-cluster realm certs URL",
+			cfg: config.KeycloakConfig{
+				Realm: "nebari", IssuerServiceName: "keycloak-keycloakx-http", IssuerServiceNamespace: "keycloak",
+				IssuerServicePort: 80, IssuerContextPath: "/auth",
+			},
+			want: "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:80/auth/realms/nebari/protocol/openid-connect/certs",
+		},
+		{
+			name: "external URL does not change the JWKS URL",
+			cfg: config.KeycloakConfig{
+				Realm: "nebari", IssuerServiceName: "keycloak-keycloakx-http", IssuerServiceNamespace: "keycloak",
+				IssuerServicePort: 80, IssuerContextPath: "/auth", ExternalURL: "https://auth.example.com",
+			},
+			want: "http://keycloak-keycloakx-http.keycloak.svc.cluster.local:80/auth/realms/nebari/protocol/openid-connect/certs",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &KeycloakProvider{Config: tt.cfg}
+			got, err := p.GetJWKSURL(context.Background(), &appsv1.NebariApp{})
+			if err != nil {
+				t.Fatalf("GetJWKSURL() error = %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("GetJWKSURL() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestKeycloakProvider_SyncClientProtocolMappers_PrunesStaleGroupsMappers(t *testing.T) {
+	existing := `{"id":"cid","protocolMappers":[
+		{"id":"m-stale","name":"old-groups","protocol":"openid-connect","protocolMapper":"oidc-hardcoded-claim-mapper","config":{"claim.name":"groups"}},
+		{"id":"m-desired","name":"nebari-group-membership","protocol":"openid-connect","protocolMapper":"oidc-group-membership-mapper","config":{"claim.name":"groups"}},
+		{"id":"m-other","name":"dept","protocol":"openid-connect","protocolMapper":"oidc-hardcoded-claim-mapper","config":{"claim.name":"department"}}
+	]}`
+	customDept := []appsv1.KeycloakProtocolMapperConfig{{
+		Name: "dept", ProtocolMapper: "oidc-hardcoded-claim-mapper",
+		Config: map[string]string{"claim.name": "department"},
+	}}
+	tests := []struct {
+		name        string
+		groups      []string
+		mappers     []appsv1.KeycloakProtocolMapperConfig
+		wantDeleted []string
+	}{
+		{name: "stale groups mapper deleted, desired and other-claim kept", groups: []string{"/finance"}, mappers: customDept, wantDeleted: []string{"m-stale"}},
+		{name: "no groups: nothing deleted", mappers: customDept, wantDeleted: nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var deleted []string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/admin/realms/test/clients/cid":
+					_, _ = w.Write([]byte(existing))
+				case r.Method == http.MethodDelete && strings.Contains(r.URL.Path, "/protocol-mappers/models/"):
+					deleted = append(deleted, r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:])
+					w.WriteHeader(http.StatusNoContent)
+				case r.Method == http.MethodPut:
+					w.WriteHeader(http.StatusNoContent)
+				case r.Method == http.MethodPost:
+					w.Header().Set("Location", r.URL.Path+"/new")
+					w.WriteHeader(http.StatusCreated)
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer server.Close()
+
+			provider := &KeycloakProvider{Config: config.KeycloakConfig{URL: server.URL, Realm: "test"}}
+			app := &appsv1.NebariApp{Spec: appsv1.NebariAppSpec{Hostname: "t.example.com", Auth: &appsv1.AuthConfig{
+				Enabled: true, Groups: tt.groups,
+				KeycloakConfig: &appsv1.KeycloakClientConfig{ProtocolMappers: tt.mappers},
+			}}}
+			err := provider.syncClientProtocolMappers(context.Background(), gocloak.NewClient(server.URL), &gocloak.JWT{AccessToken: "t"}, "cid", app)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !reflect.DeepEqual(deleted, tt.wantDeleted) {
+				t.Errorf("deleted = %v, want %v", deleted, tt.wantDeleted)
+			}
+		})
+	}
 }
