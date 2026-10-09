@@ -716,6 +716,11 @@ const (
 	// UserProvidedSecretNotFound so operators can tell "the secret is missing" apart from "we could
 	// not tell whether the secret is missing".
 	ReasonUserProvidedSecretCheckFailed = "UserProvidedSecretCheckFailed"
+
+	// ReasonGroupsNotResolved indicates that one or more spec.auth.groups paths do
+	// not exist in the identity provider. The rest of the auth configuration,
+	// including the SecurityPolicy, is applied, and the lookup is retried.
+	ReasonGroupsNotResolved = "GroupsNotResolved"
 )
 
 // Event reasons for recording Kubernetes events

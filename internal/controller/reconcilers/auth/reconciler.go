@@ -21,6 +21,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 
@@ -131,9 +132,20 @@ func shouldEnforceAtGateway(auth *appsv1.AuthConfig) bool {
 	return *auth.EnforceAtGateway
 }
 
+// IsGroupsNotResolved reports whether err from ReconcileAuth means that auth is
+// fully configured except for spec.auth.groups paths that do not exist.
+func IsGroupsNotResolved(err error) bool {
+	var notResolved *providers.GroupsNotResolvedError
+	return errors.As(err, &notResolved)
+}
+
 // ReconcileAuth handles authentication configuration for a NebariApp.
 // It validates the auth configuration, provisions OIDC clients if needed,
 // and creates/updates Envoy SecurityPolicy resources.
+//
+// If some spec.auth.groups paths do not exist, everything else is still
+// reconciled, AuthReady is set to False with reason GroupsNotResolved, and the
+// *providers.GroupsNotResolvedError is returned (see IsGroupsNotResolved).
 func (r *AuthReconciler) ReconcileAuth(ctx context.Context, nebariApp *appsv1.NebariApp) error {
 	logger := log.FromContext(ctx)
 
@@ -163,6 +175,10 @@ func (r *AuthReconciler) ReconcileAuth(ctx context.Context, nebariApp *appsv1.Ne
 		return err
 	}
 
+	// Set when provisioning succeeded except for spec.auth.groups paths that do
+	// not exist. Auth is still reconciled in full, then reported as not ready.
+	var groupsNotResolved *providers.GroupsNotResolvedError
+
 	// Provision OIDC client if requested and supported
 	if shouldProvisionClient(nebariApp.Spec.Auth) {
 		if !provider.SupportsProvisioning() {
@@ -185,12 +201,19 @@ func (r *AuthReconciler) ReconcileAuth(ctx context.Context, nebariApp *appsv1.Ne
 
 			logger.Info("Provisioning OIDC client")
 			if err := provider.ProvisionClient(ctx, nebariApp); err != nil {
-				conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionFalse,
-					"ProvisioningFailed", fmt.Sprintf("Failed to provision OIDC client: %v", err))
-				return err
+				if !errors.As(err, &groupsNotResolved) {
+					conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionFalse,
+						"ProvisioningFailed", fmt.Sprintf("Failed to provision OIDC client: %v", err))
+					return err
+				}
+				// Everything except the missing groups is provisioned. Carry on so
+				// the SecurityPolicy is still applied; the condition is reported
+				// once the rest of auth has been reconciled.
+				logger.Info("OIDC client provisioned, but some group paths do not exist", "paths", groupsNotResolved.Paths)
+			} else {
+				logger.Info("OIDC client provisioned successfully")
+				r.Recorder.Event(nebariApp, corev1.EventTypeNormal, "Provisioned", "OIDC client provisioned successfully")
 			}
-			logger.Info("OIDC client provisioned successfully")
-			r.Recorder.Event(nebariApp, corev1.EventTypeNormal, "Provisioned", "OIDC client provisioned successfully")
 
 			// Clear the force-reprovision annotation only after provisioning succeeds.
 			// Clearing it before would silently lose the annotation if ProvisionClient
@@ -206,8 +229,12 @@ func (r *AuthReconciler) ReconcileAuth(ctx context.Context, nebariApp *appsv1.Ne
 				}
 			}
 
-			// Store hash so subsequent reconciles can skip provisioning when nothing has changed
-			nebariApp.Status.AuthConfigHash = currentHash
+			// Store hash so subsequent reconciles can skip provisioning when nothing has changed.
+			// Not while groups are unresolved: provisioning must run again so the
+			// lookup is retried, and AuthReady clears once the groups exist.
+			if groupsNotResolved == nil {
+				nebariApp.Status.AuthConfigHash = currentHash
+			}
 		}
 
 		// Reconcile RBAC for OIDC secret access (runs unconditionally so externally-deleted
@@ -252,6 +279,13 @@ func (r *AuthReconciler) ReconcileAuth(ctx context.Context, nebariApp *appsv1.Ne
 				"SecurityPolicyCleanupFailed", fmt.Sprintf("Failed to delete existing SecurityPolicy: %v", err))
 			return err
 		}
+	}
+
+	if groupsNotResolved != nil {
+		conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionFalse,
+			appsv1.ReasonGroupsNotResolved, groupsNotResolved.Error())
+		r.Recorder.Event(nebariApp, corev1.EventTypeWarning, appsv1.ReasonGroupsNotResolved, groupsNotResolved.Error())
+		return groupsNotResolved
 	}
 
 	// Auth configured successfully
