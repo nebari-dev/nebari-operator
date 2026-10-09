@@ -199,11 +199,14 @@ spec:
 		applyApp(name, host, "/e2e-allowed")
 
 		By("an unauthenticated request is redirected to Keycloak")
-		out, err := utils.Run(exec.Command("kubectl", "run", fmt.Sprintf("anon-%d", time.Now().UnixNano()%100000),
-			"--rm", "-i", "--restart=Never", "--image=curlimages/curl:8.10.1", "--command", "--",
-			"curl", "-sk", "-o", "/dev/null", "-w", "RESULT=%{http_code}\\n",
-			"--resolve", fmt.Sprintf("%s:443:%s", host, gatewayIP), "https://"+host+"/"))
-		Expect(err).NotTo(HaveOccurred())
+		// The command is fed on stdin, like loginScript, so the pod waits for
+		// kubectl to attach. A bare curl can exit first and its output is lost.
+		anon := exec.Command("kubectl", "run", fmt.Sprintf("anon-%d", time.Now().UnixNano()%100000),
+			"--rm", "-i", "--restart=Never", "--image=curlimages/curl:8.10.1", "--command", "--", "sh", "-s")
+		anon.Stdin = strings.NewReader(fmt.Sprintf(
+			"curl -sk -o /dev/null -w 'RESULT=%%{http_code}\\n' --resolve %s:443:%s https://%s/\n", host, gatewayIP, host))
+		out, err := utils.Run(anon)
+		Expect(err).NotTo(HaveOccurred(), out)
 		Expect(parseResult(out)).To(Equal("302"))
 
 		Expect(loginStatus(host, gatewayIP, "e2e-in")).To(Equal("200"), "member of /e2e-allowed")
@@ -216,7 +219,10 @@ spec:
 		Expect(memberToken).NotTo(BeEmpty())
 		forged := loginScript(host, gatewayIP, "e2e-out", "forge", cookie, memberToken)
 		_, _ = fmt.Fprintf(GinkgoWriter, "forged-cookie status: %s\n", forged)
-		Expect(forged).To(Equal("302"), "oauth2 HMAC rejects the forged cookie and redirects to login")
+		// The oauth2 HMAC check rejects the forged cookie either way. Envoy Gateway
+		// v1.2.4 then redirects to login (302). v1.9.1 refreshes the session with the
+		// caller's own refresh token, so the request runs as e2e-out and RBAC denies it (403).
+		Expect(forged).To(BeElementOf("302", "403"), "the forged cookie must never admit the request")
 	})
 
 	It("does not admit subgroup members through the parent", func() {
