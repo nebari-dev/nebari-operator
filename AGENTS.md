@@ -259,7 +259,7 @@ Never reconcile a resource in a namespace that lacks `nebari.dev/managed=true`. 
 
 Three layers, each with its own make target:
 
-- **Unit tests** — `make test` (alias `make test-unit`). Table-driven Go tests run against **envtest** (a real kube-apiserver + etcd, no kubelet), so reconcilers are exercised against a live API without a full cluster. Every sub-reconciler and utility is covered next to its code: `internal/controller/reconcilers/{core,tls,routing,auth}` (and `auth/providers`), `internal/config`, `internal/controller/utils/*`, and `api/v1`. This is the fast gate — run it before every push.
+- **Unit tests** — `make test`, the target CI runs. It covers every package except `test/e2e` and fails when any test fails. `make test-unit` is a narrower verbose run over `internal/controller/...` only. Table-driven Go tests run against **envtest** (a real kube-apiserver + etcd, no kubelet), so reconcilers are exercised against a live API without a full cluster. Every sub-reconciler and utility is covered next to its code: `internal/controller/reconcilers/{core,tls,routing,auth}` (and `auth/providers`), `internal/config`, `internal/controller/utils/*`, and `api/v1`, plus the Ginkgo suite in `internal/controller` that drives the full `NebariAppReconciler` against envtest with the Gateway API and Envoy Gateway CRDs installed. This is the fast gate — run it before every push.
 - **End-to-end tests** — `make test-e2e` (plus `make test-e2e-smoke` for a quick subset, `make test-e2e-parallel`). A **Ginkgo/Gomega** suite under `test/e2e/` (`-tags=e2e`) that deploys the operator to a **real cluster** and asserts end-to-end behavior: `auth_test.go`, `routing_test.go`, `tls_user_secret_test.go`, `gateway_test.go`, `validation_test.go`, `connectivity_test.go`, `conditions_test.go`, `manager_test.go`. Fixtures live in `test/e2e/testdata/`; shared helpers in `test/e2e/e2e_utils.go` and `test/utils/`. Bring up a local cluster with `make -C dev setup` first (see [Local development cluster](#local-development-cluster)).
 - **Helm chart golden tests** — `make helm-test` renders the `nebari-app` library chart for each case in `test/helm/nebari-app/templates/` and diffs it against the committed goldens in `test/helm/nebari-app/golden/`. When a template change is intentional, regenerate with `make helm-test-generate-golden`; `make helm-lint-library` lints the chart.
 
@@ -329,7 +329,7 @@ Run before every commit:
 1. **Format:** `make fmt`
 2. **Vet:** `make vet`
 3. **Lint:** `make lint`
-4. **Unit tests:** `make test` (or `make test-unit`)
+4. **Unit tests:** `make test`
 5. **Codegen in sync** (if `api/v1/` changed): `make generate-dev` **and** `make docs`, with generated files committed.
 6. **RBAC via markers:** permission changes come from `+kubebuilder:rbac` markers + `make manifests`, never hand-edits to `config/rbac/role.yaml`.
 7. **Conditions & events** use the constants in `api/v1/nebariapp_types.go`, not inline strings.
