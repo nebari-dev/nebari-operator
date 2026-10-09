@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 
 	egv1alpha1 "github.com/envoyproxy/gateway/api/v1alpha1"
 	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
@@ -401,11 +402,22 @@ func (r *AuthReconciler) reconcileSecurityPolicy(ctx context.Context, nebariApp 
 	})
 
 	if err != nil {
+		if isIssuerRejected(err) {
+			return fmt.Errorf("failed to create or update SecurityPolicy: %w (Envoy Gateway v1.9.1+ requires "+
+				"an https OIDC issuer: for the keycloak provider set KEYCLOAK_EXTERNAL_URL on the operator, "+
+				"for generic-oidc use an https spec.auth.issuerURL)", err)
+		}
 		return fmt.Errorf("failed to create or update SecurityPolicy: %w", err)
 	}
 
 	logger.Info("SecurityPolicy reconciled", "name", securityPolicyName, "operation", op)
 	return nil
+}
+
+// isIssuerRejected reports whether err is an API-server validation failure on
+// spec.oidc.provider.issuer, which Envoy Gateway v1.9.1+ constrains to https.
+func isIssuerRejected(err error) bool {
+	return apierrors.IsInvalid(err) && strings.Contains(err.Error(), "spec.oidc.provider.issuer")
 }
 
 // buildSecurityPolicySpec constructs the SecurityPolicy specification for OIDC.

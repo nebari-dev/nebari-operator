@@ -34,10 +34,14 @@ type OIDCEndpointOverrides struct {
 // OIDCProvider defines the interface for OIDC provider implementations.
 // Each provider (Keycloak, generic OIDC, etc.) must implement this interface.
 type OIDCProvider interface {
-	// GetIssuerURL returns the OIDC issuer URL for this provider.
-	// For Keycloak, this constructs the realm-specific URL.
+	// GetIssuerURL returns the issuer written to the SecurityPolicy.
+	// For Keycloak, this is the public realm URL when the endpoint overrides
+	// suppress discovery, and the in-cluster realm URL otherwise.
 	// For generic OIDC, this returns the configured issuer URL.
-	// The URL should be accessible from within the cluster (internal DNS).
+	// Envoy Gateway fetches discovery from it only when GetEndpointOverrides
+	// leaves the authorization or token endpoint unset, so in that case it
+	// must be reachable from the envoy-gateway controller. Envoy Gateway
+	// v1.9.1+ rejects non-https issuers.
 	GetIssuerURL(ctx context.Context, nebariApp *appsv1.NebariApp) (string, error)
 
 	// GetEndpointOverrides returns explicit OIDC endpoint URLs that should
