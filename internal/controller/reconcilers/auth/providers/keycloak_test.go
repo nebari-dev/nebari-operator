@@ -926,6 +926,14 @@ func TestMergeGroupMembers(t *testing.T) {
 			},
 		},
 		{
+			name:   "repeated slashes are collapsed",
+			groups: []string{"/parent//child", "//team"},
+			want: map[string]GroupSpec{
+				"/parent/child": {},
+				"/team":         {},
+			},
+		},
+		{
 			name:   "trailing slash, whitespace and empty entries",
 			groups: []string{" finance ", "/ops/", "", "/"},
 			want: map[string]GroupSpec{
@@ -1606,24 +1614,34 @@ func TestKeycloakProvider_ConfigureTokenExchange(t *testing.T) {
 // and records the names of groups created through POST /groups. Any other
 // path gets a 404. It is a bare handler (no ServeMux) so a "//" in the URL
 // reaches it unchanged.
+//
+// With withClient set, it also serves what ProvisionClient needs for an
+// existing client: the admin token, the client lookup, its secret and update.
 type fakeGroupsKeycloak struct {
-	t        *testing.T
-	groups   map[string]string
-	status   int // when non-zero, every lookup fails with this status
-	created  []string
-	requests []string
+	t          *testing.T
+	groups     map[string]string
+	status     int // when non-zero, every lookup fails with this status
+	withClient bool
+	created    []string
+	requests   []string
 }
 
 func (f *fakeGroupsKeycloak) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.requests = append(f.requests, r.Method+" "+r.RequestURI)
 	const byPath = "/admin/realms/test/group-by-path/"
+	if f.withClient && f.serveClient(w, r) {
+		return
+	}
 	switch {
 	case r.Method == http.MethodGet && strings.HasPrefix(r.RequestURI, byPath):
 		if f.status != 0 {
 			w.WriteHeader(f.status)
 			return
 		}
-		groupPath := "/" + strings.TrimPrefix(r.RequestURI, byPath)
+		if r.URL.RawQuery != "" {
+			f.t.Errorf("group-by-path request has a query string: %q", r.RequestURI)
+		}
+		groupPath := "/" + strings.TrimPrefix(r.URL.Path, byPath)
 		id, ok := f.groups[groupPath]
 		if !ok {
 			w.WriteHeader(http.StatusNotFound)
@@ -1647,6 +1665,27 @@ func (f *fakeGroupsKeycloak) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// serveClient handles the client endpoints used by ProvisionClient and
+// reports whether it handled the request.
+func (f *fakeGroupsKeycloak) serveClient(w http.ResponseWriter, r *http.Request) bool {
+	switch {
+	case r.Method == http.MethodPost && r.URL.Path == "/realms/master/protocol/openid-connect/token":
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"test-token","expires_in":300}`))
+	case r.Method == http.MethodGet && r.URL.Path == "/admin/realms/test/clients":
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"id":"client-uuid","clientId":"` + r.URL.Query().Get("clientId") + `"}]`))
+	case r.Method == http.MethodGet && r.URL.Path == "/admin/realms/test/clients/client-uuid/client-secret":
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"type":"secret","value":"client-secret-value"}`))
+	case r.Method == http.MethodPut && r.URL.Path == "/admin/realms/test/clients/client-uuid":
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		return false
+	}
+	return true
+}
+
 func newGroupsTestProvider(t *testing.T, kcServer *fakeGroupsKeycloak) (*KeycloakProvider, *gocloak.GoCloak) {
 	t.Helper()
 	kcServer.t = t
@@ -1663,6 +1702,11 @@ func TestEnsureGroup(t *testing.T) {
 	existing := map[string]string{
 		"/team-example":      "top-uuid",
 		"/parent/team-child": "nested-uuid",
+		"/team":              "team-uuid",
+		"/team#1":            "hash-uuid",
+		"/team?x":            "query-uuid",
+		"/50%off":            "percent-uuid",
+		"/data science/ml":   "space-uuid",
 	}
 
 	tests := []struct {
@@ -1681,6 +1725,11 @@ func TestEnsureGroup(t *testing.T) {
 		{name: "missing group is created when allowed", groupPath: "/team-fresh", create: true, wantID: "created-team-fresh", wantCreated: []string{"team-fresh"}},
 		{name: "missing group is not created when not allowed", groupPath: "/team-missing", wantErr: true, wantMissing: true},
 		{name: "missing nested group is not created", groupPath: "/parent/missing", wantErr: true, wantMissing: true},
+		{name: "\"#\" is escaped, not read as a fragment", groupPath: "/team#1", wantID: "hash-uuid"},
+		{name: "\"?\" is escaped, not read as a query", groupPath: "/team?x", wantID: "query-uuid"},
+		{name: "\"%\" is escaped", groupPath: "/50%off", wantID: "percent-uuid"},
+		{name: "spaces in nested segments", groupPath: "/data science/ml", wantID: "space-uuid"},
+		{name: "missing group with \"#\" is created under its own name", groupPath: "/new#1", create: true, wantID: "created-new#1", wantCreated: []string{"new#1"}},
 		{name: "lookup error is not treated as missing", groupPath: "/team-fresh", create: true, status: http.StatusInternalServerError, wantErr: true},
 	}
 
@@ -1809,5 +1858,60 @@ func TestEnsureGroup_PathLookupURL(t *testing.T) {
 				t.Errorf("got id=%q, want %q", gotID, tt.wantID)
 			}
 		})
+	}
+}
+
+// TestProvisionClient_GroupsNotResolved verifies that a missing group path does
+// not stop the real provider from provisioning: the client Secret is still
+// written, so the reconciler can create the SecurityPolicy, and the missing
+// path comes back as a *GroupsNotResolvedError.
+func TestProvisionClient_GroupsNotResolved(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = appsv1.AddToScheme(scheme)
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	kcServer := &fakeGroupsKeycloak{t: t, groups: map[string]string{"/exists": "exists-uuid"}, withClient: true}
+	server := httptest.NewServer(kcServer)
+	defer server.Close()
+
+	provider := &KeycloakProvider{
+		Client: k8sClient,
+		Config: config.KeycloakConfig{
+			URL:           server.URL,
+			Realm:         "test",
+			AdminUsername: "admin",
+			AdminPassword: "admin",
+		},
+	}
+	app := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-app", Namespace: "default"},
+		Spec: appsv1.NebariAppSpec{
+			Hostname: "test.example.com",
+			Auth: &appsv1.AuthConfig{
+				Enabled: true,
+				Groups:  []string{"/exists", "/does-not-exist"},
+			},
+		},
+	}
+
+	err := provider.ProvisionClient(context.Background(), app)
+
+	var notResolved *GroupsNotResolvedError
+	if !errors.As(err, &notResolved) {
+		t.Fatalf("expected *GroupsNotResolvedError, got %v", err)
+	}
+	if want := []string{"/does-not-exist"}; !reflect.DeepEqual(notResolved.Paths, want) {
+		t.Errorf("Paths = %q, want %q", notResolved.Paths, want)
+	}
+
+	secret := &corev1.Secret{}
+	if err := k8sClient.Get(context.Background(), types.NamespacedName{
+		Name: naming.ClientSecretName(app), Namespace: app.Namespace,
+	}, secret); err != nil {
+		t.Fatalf("expected the client Secret to be stored despite unresolved groups: %v", err)
+	}
+	if got := string(secret.Data[constants.ClientSecretKey]); got != "client-secret-value" {
+		t.Errorf("client secret = %q, want %q", got, "client-secret-value")
 	}
 }

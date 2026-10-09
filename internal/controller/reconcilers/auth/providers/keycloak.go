@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -1018,14 +1019,31 @@ type GroupSpec struct {
 }
 
 // NormalizeGroupPath converts a group entry to the full path Keycloak uses:
-// a leading slash and no trailing slash. A bare name such as "team-example"
-// becomes "/team-example". Returns "" for an empty entry.
+// a leading slash, no trailing slash, and no empty segments ("/a//b" becomes
+// "/a/b"). A bare name such as "team-example" becomes "/team-example".
+// Returns "" for an empty entry.
 func NormalizeGroupPath(group string) string {
-	group = strings.Trim(strings.TrimSpace(group), "/")
-	if group == "" {
+	var segments []string
+	for _, segment := range strings.Split(strings.TrimSpace(group), "/") {
+		if segment != "" {
+			segments = append(segments, segment)
+		}
+	}
+	if len(segments) == 0 {
 		return ""
 	}
-	return "/" + group
+	return "/" + strings.Join(segments, "/")
+}
+
+// escapeGroupPath escapes each segment of a full group path for use in a URL
+// path, without the leading slash. gocloak joins URL segments without escaping
+// them, so a "?", "#" or "%" in a group name would otherwise change the URL.
+func escapeGroupPath(groupPath string) string {
+	segments := strings.Split(strings.TrimPrefix(groupPath, "/"), "/")
+	for i, segment := range segments {
+		segments[i] = url.PathEscape(segment)
+	}
+	return strings.Join(segments, "/")
 }
 
 // MergeGroupMembers builds a deduplicated map of full group path -> GroupSpec
@@ -1081,7 +1099,7 @@ func (p *KeycloakProvider) ensureGroup(ctx context.Context, kcClient *gocloak.Go
 
 	// gocloak joins URL segments with "/", so the leading slash must go or
 	// Keycloak rejects the "//" with 400 missingNormalization.
-	group, err := kcClient.GetGroupByPath(ctx, token.AccessToken, realm, strings.TrimPrefix(groupPath, "/"))
+	group, err := kcClient.GetGroupByPath(ctx, token.AccessToken, realm, escapeGroupPath(groupPath))
 	if err == nil {
 		if group == nil || group.ID == nil {
 			return "", fmt.Errorf("GetGroupByPath returned no group ID for path %q in realm %q", groupPath, realm)
