@@ -35,6 +35,7 @@ import (
 	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
 	"github.com/nebari-dev/nebari-operator/internal/config"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/constants"
+	"github.com/nebari-dev/nebari-operator/internal/controller/utils/groups"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/naming"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/ptr"
 	corev1 "k8s.io/api/core/v1"
@@ -1032,23 +1033,6 @@ type GroupSpec struct {
 	Create bool
 }
 
-// NormalizeGroupPath converts a group entry to the full path Keycloak uses:
-// a leading slash, no trailing slash, and no empty segments ("/a//b" becomes
-// "/a/b"). A bare name such as "team-example" becomes "/team-example".
-// Returns "" for an empty entry.
-func NormalizeGroupPath(group string) string {
-	var segments []string
-	for _, segment := range strings.Split(strings.TrimSpace(group), "/") {
-		if segment != "" {
-			segments = append(segments, segment)
-		}
-	}
-	if len(segments) == 0 {
-		return ""
-	}
-	return "/" + strings.Join(segments, "/")
-}
-
 // escapeGroupPath escapes each segment of a full group path for use in a URL
 // path, without the leading slash. gocloak joins URL segments without escaping
 // them, so a "?", "#" or "%" in a group name would otherwise change the URL.
@@ -1065,11 +1049,11 @@ func escapeGroupPath(groupPath string) string {
 // normalized path, so "team-example" and "/team-example" are the same group.
 // When the same group appears in both lists, the keycloakConfig.groups members
 // take precedence.
-func MergeGroupMembers(groups []string, keycloakConfig *appsv1.KeycloakClientConfig) map[string]GroupSpec {
+func MergeGroupMembers(authGroups []string, keycloakConfig *appsv1.KeycloakClientConfig) map[string]GroupSpec {
 	groupSpecs := make(map[string]GroupSpec)
 
 	add := func(entry string, members []string, setMembers bool) {
-		groupPath := NormalizeGroupPath(entry)
+		groupPath := groups.NormalizePath(entry)
 		if groupPath == "" {
 			return
 		}
@@ -1085,7 +1069,7 @@ func MergeGroupMembers(groups []string, keycloakConfig *appsv1.KeycloakClientCon
 	}
 
 	// Collect from spec.auth.groups (no members, just ensure groups exist)
-	for _, g := range groups {
+	for _, g := range authGroups {
 		add(g, nil, false)
 	}
 
@@ -1103,7 +1087,7 @@ func MergeGroupMembers(groups []string, keycloakConfig *appsv1.KeycloakClientCon
 // may not be created.
 var errGroupNotFound = errors.New("group not found")
 
-// ensureGroup resolves a full group path (see NormalizeGroupPath) to a
+// ensureGroup resolves a full group path (see groups.NormalizePath) to a
 // Keycloak group ID. If the group does not exist, it is created when create
 // is true, and errGroupNotFound is returned otherwise. Paths are never
 // created implicitly because that would mean guessing at a group hierarchy
