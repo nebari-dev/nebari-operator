@@ -55,8 +55,13 @@ func TestReconcile_GroupsNotResolved(t *testing.T) {
 		}
 	}
 
+	// Generation=2, ObservedGeneration=1 so Reconcile's "init if 0" branch
+	// (nebariapp_controller.go:122) is skipped. The ObservedGeneration check
+	// below then actually measures whether the degrade path propagates the
+	// bump to 2, instead of being driven by the init branch.
 	app := &appsv1.NebariApp{
-		ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "team", Generation: 1},
+		ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "team", Generation: 2},
+		Status:     appsv1.NebariAppStatus{ObservedGeneration: 1},
 		Spec: appsv1.NebariAppSpec{
 			Hostname: "app.nebari.local",
 			Service:  appsv1.ServiceReference{Name: "app", Port: 8080},
