@@ -133,6 +133,23 @@ func (r *AuthReconciler) getProvider(nebariApp *appsv1.NebariApp) (OIDCProvider,
 - Condition: `AuthReady=False` with reason `ProvisioningFailed`
 - Error message includes provider error details
 
+**Partial Success — `GroupsNotResolved`:**
+
+When `spec.auth.groups` lists a path that does not exist in Keycloak (e.g. `/missing-team`),
+the client, its Secret and the SecurityPolicy are still reconciled, so a new app is never
+served without OIDC in front of it. The reconciler then:
+
+- Emits `Warning/GroupsNotResolved` naming the missing paths.
+- Sets `AuthReady=False` with reason `GroupsNotResolved` (the controller mirrors this onto
+  `Ready=False/GroupsNotResolved` on the NebariApp).
+- Leaves `status.AuthConfigHash` unset, so the one-minute requeue retries provisioning
+  until the group is created, at which point the condition clears and the hash is stored.
+- Still publishes `status.serviceDiscovery` so routing stays functional.
+
+Any other provisioning error still fails as `ProvisioningFailed`. Bare-name entries (a
+top-level group the operator creates on 404) never trigger `GroupsNotResolved`; only
+path-form entries that fail resolution do.
+
 ### 3. Configuration Validation
 
 **Purpose**: Ensures OIDC client credentials exist before creating SecurityPolicy.
@@ -281,7 +298,7 @@ conditions:
 conditions:
   - type: AuthReady
     status: "False"
-    reason: ProvisioningFailed | ValidationFailed | SecurityPolicyFailed
+    reason: ProvisioningFailed | ValidationFailed | SecurityPolicyFailed | GroupsNotResolved
     message: "<detailed error message>"
 ```
 
@@ -295,6 +312,9 @@ conditions:
 - `Warning/ProvisioningFailed`: "Failed to provision OIDC client: {error}"
 - `Warning/ValidationFailed`: "Auth configuration validation failed: {error}"
 - `Warning/SecurityPolicyFailed`: "Failed to reconcile SecurityPolicy: {error}"
+- `Warning/GroupsNotResolved`: "spec.auth.groups path(s) do not exist in Keycloak: {paths}"
+  — partial-success condition; the SecurityPolicy is still created and the reconciler
+  retries on the next requeue (see [Client Provisioning](#2-client-provisioning)).
 
 ## Cleanup Process
 
