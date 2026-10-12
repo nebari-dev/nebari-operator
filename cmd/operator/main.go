@@ -229,7 +229,10 @@ func main() {
 				"will fall back to OIDC discovery against the in-cluster issuer. " +
 				"Browser OAuth2 redirects will only work if Keycloak's frontendUrl " +
 				"is configured to a publicly routable URL. Set KEYCLOAK_EXTERNAL_URL " +
-				"on this deployment OR configure Keycloak frontendUrl explicitly.")
+				"on this deployment OR configure Keycloak frontendUrl explicitly. " +
+				"On Envoy Gateway v1.9.1+ KEYCLOAK_EXTERNAL_URL is required: the " +
+				"in-cluster http issuer fails its https validation and SecurityPolicies " +
+				"are rejected.")
 		}
 
 		setupLog.Info("Keycloak OIDC provider initialized successfully")
