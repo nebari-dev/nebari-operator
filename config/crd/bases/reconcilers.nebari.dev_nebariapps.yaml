@@ -150,10 +150,15 @@ spec:
                       When specified, only users belonging to these groups will be authorized.
                       Group matching is case-sensitive and depends on the OIDC provider's group claim.
 
-                      Each entry is a Keycloak group path, such as "/team-example" or
-                      "/parent/child". A bare name such as "team-example" is shorthand for the
-                      top-level group "/team-example", and "team-example" and "/team-example"
-                      refer to the same group.
+                      Path semantics and the "create if missing" behavior below apply only when
+                      provider="keycloak" with provisionClient=true. For provider="generic-oidc",
+                      entries are opaque strings forwarded to the provider's group claim; the
+                      operator does not create or resolve them, and GroupsNotResolved never fires.
+
+                      With provider="keycloak" and provisionClient=true, each entry is a Keycloak
+                      group path, such as "/team-example" or "/parent/child". A bare name such as
+                      "team-example" is shorthand for the top-level group "/team-example", and
+                      "team-example" and "/team-example" refer to the same group.
 
                         - Bare name: the top-level group is created in Keycloak if missing.
                         - Path: never created. If it does not exist, the rest of the auth
