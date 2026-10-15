@@ -36,7 +36,7 @@ import (
 // secret watch (see #115): a secret enqueues only the NebariApp(s) that
 // reference it via routing.tls.secretName, and unrelated secrets enqueue
 // nothing. Namespace filtering is handled by the watch predicate, not the map
-// function, so it is not exercised here.
+// function; TestInGatewayNamespace covers it.
 func TestSecretToNebariApp(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = appsv1.AddToScheme(scheme)
@@ -87,6 +87,31 @@ func TestSecretToNebariApp(t *testing.T) {
 			got := r.secretToNebariApp(context.Background(), secret)
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("secretToNebariApp(%q) = %v, want %v", tt.secretName, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestInGatewayNamespace covers the predicate on the user-provided TLS secret
+// watch (see #115): only secrets in the Gateway namespace reach the map function.
+func TestInGatewayNamespace(t *testing.T) {
+	tests := []struct {
+		name      string
+		namespace string
+		want      bool
+	}{
+		{name: "secret in the Gateway namespace passes", namespace: constants.GatewayNamespace, want: true},
+		{name: "secret in an app namespace is filtered out", namespace: "ns-a", want: false},
+		{name: "secret with no namespace is filtered out", namespace: "", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: "my-tls", Namespace: tt.namespace},
+			}
+			if got := inGatewayNamespace(secret); got != tt.want {
+				t.Errorf("inGatewayNamespace(%q) = %v, want %v", tt.namespace, got, tt.want)
 			}
 		})
 	}

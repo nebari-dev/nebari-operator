@@ -23,6 +23,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -506,6 +507,87 @@ func TestReconcileRouting(t *testing.T) {
 				if !foundCondition {
 					t.Error("expected RoutingReady condition to be set")
 				}
+			}
+		})
+	}
+}
+
+// TestReconcileRouting_ReadoptsStrippedOwnerReference asserts that both HTTPRoute
+// update paths restore the NebariApp controller reference on a route whose owner
+// reference was stripped, so the controller's Owns(&HTTPRoute{}) watch keeps
+// mapping its events back to the NebariApp.
+func TestReconcileRouting_ReadoptsStrippedOwnerReference(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = appsv1.AddToScheme(scheme)
+	_ = gatewayv1.Install(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	newApp := func() *appsv1.NebariApp {
+		return &appsv1.NebariApp{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-app", Namespace: "default", UID: "test-uid"},
+			Spec: appsv1.NebariAppSpec{
+				Hostname: "test.nebari.local",
+				Service:  appsv1.ServiceReference{Name: "test-service", Port: 8080},
+				Routing: &appsv1.RoutingConfig{
+					PublicRoutes: []appsv1.RouteMatch{{PathPrefix: "/health"}},
+				},
+				Auth: &appsv1.AuthConfig{Enabled: true},
+			},
+		}
+	}
+
+	tests := []struct {
+		name      string
+		routeName func(*appsv1.NebariApp) string
+		reconcile func(*RoutingReconciler, *appsv1.NebariApp) error
+	}{
+		{
+			name:      "main HTTPRoute",
+			routeName: naming.HTTPRouteName,
+			reconcile: func(r *RoutingReconciler, app *appsv1.NebariApp) error {
+				return r.ReconcileRouting(context.Background(), app, "")
+			},
+		},
+		{
+			name:      "public HTTPRoute",
+			routeName: naming.PublicHTTPRouteName,
+			reconcile: func(r *RoutingReconciler, app *appsv1.NebariApp) error {
+				return r.ReconcilePublicRoute(context.Background(), app, "")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nebariApp := newApp()
+			gateway := &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{Name: constants.PublicGatewayName, Namespace: constants.GatewayNamespace},
+			}
+			// An existing route at the derived name with its owner reference stripped
+			strippedRoute := &gatewayv1.HTTPRoute{
+				ObjectMeta: metav1.ObjectMeta{Name: tt.routeName(nebariApp), Namespace: nebariApp.Namespace},
+			}
+			k8sClient := fake.NewClientBuilder().WithScheme(scheme).
+				WithObjects(nebariApp, gateway, strippedRoute).Build()
+			reconciler := &RoutingReconciler{
+				Client:   k8sClient,
+				Scheme:   scheme,
+				Recorder: record.NewFakeRecorder(10),
+			}
+
+			if err := tt.reconcile(reconciler, nebariApp); err != nil {
+				t.Fatalf("reconcile returned error: %v", err)
+			}
+
+			route := &gatewayv1.HTTPRoute{}
+			if err := k8sClient.Get(context.Background(), types.NamespacedName{
+				Name: tt.routeName(nebariApp), Namespace: nebariApp.Namespace,
+			}, route); err != nil {
+				t.Fatalf("failed to get HTTPRoute: %v", err)
+			}
+			owner := metav1.GetControllerOf(route)
+			if owner == nil || owner.Kind != "NebariApp" || owner.UID != nebariApp.UID {
+				t.Errorf("expected controller owner NebariApp/%s, got %+v", nebariApp.Name, owner)
 			}
 		})
 	}

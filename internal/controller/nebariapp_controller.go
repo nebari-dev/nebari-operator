@@ -28,6 +28,7 @@ import (
 	"k8s.io/client-go/tools/record"
 
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -392,12 +393,15 @@ func (r *NebariAppReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// Watch the resources the operator owns so that external edits or
 		// deletions trigger prompt reconciliation (re-creation / drift repair)
 		// instead of waiting up to the periodic requeue interval. Owned objects
-		// are mapped back to their NebariApp via controller owner references:
-		// HTTPRoutes and SecurityPolicies set them at construction; the OIDC
-		// client Secret now sets one in storeClientSecret.
+		// are mapped back to their NebariApp via controller owner references,
+		// which every one of these types carries: HTTPRoutes, SecurityPolicies
+		// and the per-app Role/RoleBinding set them at construction, and the
+		// OIDC client Secret sets one in storeClientSecret.
 		Owns(&gatewayv1.HTTPRoute{}).
 		Owns(&egv1alpha1.SecurityPolicy{}).
-		Owns(&corev1.Secret{})
+		Owns(&corev1.Secret{}).
+		Owns(&rbacv1.Role{}).
+		Owns(&rbacv1.RoleBinding{})
 
 	// Watch cert-manager Certificates so that Certificate readiness transitions
 	// trigger NebariApp reconciliation without waiting for the periodic requeue.
@@ -420,12 +424,16 @@ func (r *NebariAppReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	b = b.Watches(
 		&corev1.Secret{},
 		handler.EnqueueRequestsFromMapFunc(r.secretToNebariApp),
-		builder.WithPredicates(predicate.NewPredicateFuncs(func(obj client.Object) bool {
-			return obj.GetNamespace() == constants.GatewayNamespace
-		})),
+		builder.WithPredicates(predicate.NewPredicateFuncs(inGatewayNamespace)),
 	)
 
 	return b.Complete(r)
+}
+
+// inGatewayNamespace reports whether obj lives in the Gateway namespace, the only
+// namespace a user-provided TLS secret (routing.tls.secretName) is read from.
+func inGatewayNamespace(obj client.Object) bool {
+	return obj.GetNamespace() == constants.GatewayNamespace
 }
 
 // secretToNebariApp maps a user-provided TLS Secret in the Gateway namespace to
@@ -434,6 +442,7 @@ func (r *NebariAppReconciler) SetupWithManager(mgr ctrl.Manager) error {
 func (r *NebariAppReconciler) secretToNebariApp(ctx context.Context, obj client.Object) []reconcile.Request {
 	var apps appsv1.NebariAppList
 	if err := r.List(ctx, &apps); err != nil {
+		logf.FromContext(ctx).Error(err, "Failed to list NebariApps for secret watch", "secret", obj.GetName())
 		return nil
 	}
 
