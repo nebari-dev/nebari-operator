@@ -127,6 +127,10 @@ func (r *AuthReconciler) getProvider(nebariApp *appsv1.NebariApp) (OIDCProvider,
 - Secret name: `{nebariapp-name}-oidc-client`
 - Secret key: `client-secret`
 - Labels: Standard app.kubernetes.io labels
+- Owner reference: NebariApp (for garbage collection). A Secret created before the operator set owner references is
+  adopted on its next sync, and other non-controller owner references on it are kept. If a different controller already
+  owns a Secret at that name, the operator does not take it over: provisioning fails with `AuthReady=False`
+  (`ProvisioningFailed`) and the Secret is left unchanged.
 
 **On Failure:**
 - Event: `Warning` with reason `ProvisioningFailed`
@@ -313,7 +317,7 @@ func (r *AuthReconciler) CleanupAuth(ctx, nebariApp) error
    - Call provider's `DeleteClient()` method
    - Keycloak: Deletes the OIDC client from Keycloak
    - Generic OIDC: No-op (clients managed externally)
-4. SecurityPolicy is automatically garbage collected via owner references
+4. SecurityPolicy and the OIDC client Secret are automatically garbage collected via owner references
 
 **On Failure:**
 - Logs error but continues cleanup

@@ -201,7 +201,11 @@ Cleanup (finalizer) runs the pipeline in reverse: **Auth -> Routing -> TLS**. Ow
 
 Each sub-reconciler is a struct embedding a controller-runtime `client.Client`, a `*runtime.Scheme`, and a `record.EventRecorder`, and exposes a `ReconcileX` and a `CleanupX` method. They do not import one another.
 
-`SetupWithManager` watches the primary `NebariApp` plus cert-manager `Certificate` objects, mapped back to their owning `NebariApp` via the `nebari.dev/nebariapp-name` / `nebari.dev/nebariapp-namespace` labels.
+`SetupWithManager` watches the primary `NebariApp` and maps every other watched object back to a `NebariApp` in one of three ways:
+
+- **Controller owner reference** (`Owns`): the `HTTPRoute`s, `SecurityPolicy`, OIDC client `Secret`, and per-app `Role` / `RoleBinding`, so external edits or deletions are repaired immediately instead of on the periodic requeue.
+- **Labels**: cert-manager `Certificate`s (only when the TLS reconciler is enabled), via `nebari.dev/nebariapp-name` / `nebari.dev/nebariapp-namespace`. They live in the Gateway namespace, so they cannot carry an owner reference to the app.
+- **`spec.routing.tls.secretName` lookup**: user-provided TLS `Secret`s in the Gateway namespace, mapped to every `NebariApp` that names them.
 
 ### Platform Assumptions
 

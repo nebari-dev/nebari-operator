@@ -32,7 +32,7 @@ These apply when a NebariApp sets `routing.tls.secretName` (see [Configuration R
 
 **Cause:** `routing.tls.secretName` references a secret that does not exist in `envoy-gateway-system`.
 
-**Fix:** Create the secret. The operator does not block reconciliation on the secret being present, so the per-app HTTPS listener is already attached and Envoy will pick the secret up as soon as it is created. Re-readiness today depends on the periodic requeue (~30 seconds).
+**Fix:** Create the secret. The operator does not block reconciliation on the secret being present, so the per-app HTTPS listener is already attached and Envoy will pick the secret up as soon as it is created. The operator watches Secrets in `envoy-gateway-system`, so creating or fixing the referenced secret re-reconciles every NebariApp that names it, and `TLSReady` flips within seconds instead of waiting for the periodic requeue.
 
 ```bash
 kubectl create secret tls <secret-name> \
