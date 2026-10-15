@@ -18,6 +18,7 @@ package providers
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -34,6 +35,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
 func TestKeycloakProvider_GetIssuerURL(t *testing.T) {
@@ -389,6 +391,9 @@ func TestKeycloakProvider_StoreClientSecret(t *testing.T) {
 		existingSecret    *corev1.Secret
 		expectError       bool
 		expectedSecretLen int // expected number of keys in the secret
+		// expectedOwnerRefs is the number of owner references expected on the
+		// secret afterwards; one of them must be the NebariApp as controller.
+		expectedOwnerRefs int
 	}{
 		{
 			name: "Create new secret with basic fields",
@@ -404,6 +409,7 @@ func TestKeycloakProvider_StoreClientSecret(t *testing.T) {
 			externalIssuer:    "https://keycloak.example.com/realms/nebari",
 			existingSecret:    nil,
 			expectError:       false,
+			expectedOwnerRefs: 1,
 			expectedSecretLen: 3, // client-id, client-secret, issuer-url
 		},
 		{
@@ -433,6 +439,7 @@ func TestKeycloakProvider_StoreClientSecret(t *testing.T) {
 				},
 			},
 			expectError:       false,
+			expectedOwnerRefs: 1,
 			expectedSecretLen: 3,
 		},
 		{
@@ -451,6 +458,7 @@ func TestKeycloakProvider_StoreClientSecret(t *testing.T) {
 			deviceClientID:    "default-test-app-device",
 			existingSecret:    nil,
 			expectError:       false,
+			expectedOwnerRefs: 1,
 			expectedSecretLen: 5, // client-id, client-secret, issuer-url, spa-client-id, device-client-id
 		},
 		{
@@ -467,10 +475,43 @@ func TestKeycloakProvider_StoreClientSecret(t *testing.T) {
 			externalIssuer:    "",
 			existingSecret:    nil,
 			expectError:       false,
+			expectedOwnerRefs: 1,
 			expectedSecretLen: 3, // client-id, client-secret, issuer-url (even when empty)
 		},
+		{
+			name: "Update keeps a non-controller owner reference alongside the NebariApp",
+			nebariApp: &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app",
+					Namespace: "default",
+					UID:       "test-uid",
+				},
+			},
+			clientID:       "default-test-app",
+			clientSecret:   "new-secret-value",
+			externalIssuer: "https://keycloak.example.com/realms/nebari",
+			existingSecret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: naming.ClientSecretName(&appsv1.NebariApp{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "test-app",
+							Namespace: "default",
+						},
+					}),
+					Namespace: "default",
+					OwnerReferences: []metav1.OwnerReference{
+						{APIVersion: "v1", Kind: "ConfigMap", Name: "extra-owner", UID: "extra-owner-uid"},
+					},
+				},
+				Data: map[string][]byte{
+					"client-secret": []byte("old-secret-value"),
+				},
+			},
+			expectError:       false,
+			expectedOwnerRefs: 2,
+			expectedSecretLen: 3,
+		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			builder := fake.NewClientBuilder().
@@ -513,6 +554,16 @@ func TestKeycloakProvider_StoreClientSecret(t *testing.T) {
 					t.Errorf("expected %d keys in secret, got %d", tt.expectedSecretLen, len(secret.Data))
 				}
 
+				// Verify the NebariApp is the controller owner and no other owner
+				// reference was dropped
+				owner := metav1.GetControllerOf(secret)
+				if owner == nil || owner.Kind != "NebariApp" || owner.Name != tt.nebariApp.Name || owner.UID != tt.nebariApp.UID {
+					t.Errorf("expected controller owner NebariApp/%s (uid %s), got %+v", tt.nebariApp.Name, tt.nebariApp.UID, owner)
+				}
+				if len(secret.OwnerReferences) != tt.expectedOwnerRefs {
+					t.Errorf("expected %d owner references, got %d: %+v", tt.expectedOwnerRefs, len(secret.OwnerReferences), secret.OwnerReferences)
+				}
+
 				// Verify required keys
 				if string(secret.Data[constants.ClientIDKey]) != tt.clientID {
 					t.Errorf("expected client-id %q, got %q", tt.clientID, string(secret.Data[constants.ClientIDKey]))
@@ -540,11 +591,11 @@ func TestKeycloakProvider_StoreClientSecret(t *testing.T) {
 	}
 }
 
-// TestKeycloakProvider_StoreClientSecret_SetsOwnerReference asserts the OIDC
-// client secret is created with a controller owner reference to the NebariApp,
-// so it is garbage-collected with the app and matched by the controller's
-// Owns(&corev1.Secret{}) watch (see #30).
-func TestKeycloakProvider_StoreClientSecret_SetsOwnerReference(t *testing.T) {
+// TestKeycloakProvider_StoreClientSecret_RefusesForeignController asserts that a
+// pre-existing secret at the derived name that another controller already owns
+// is left untouched: the NebariApp does not take it over (which would silently
+// drop the other owner and make the secret cascade-delete with the NebariApp).
+func TestKeycloakProvider_StoreClientSecret_RefusesForeignController(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
 	_ = appsv1.AddToScheme(scheme)
@@ -552,16 +603,33 @@ func TestKeycloakProvider_StoreClientSecret_SetsOwnerReference(t *testing.T) {
 	nebariApp := &appsv1.NebariApp{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-app", Namespace: "default", UID: "test-uid"},
 	}
-	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(nebariApp).Build()
+	controller := true
+	foreignOwner := metav1.OwnerReference{
+		APIVersion: "external-secrets.io/v1",
+		Kind:       "ExternalSecret",
+		Name:       "foreign",
+		UID:        "foreign-controller-uid",
+		Controller: &controller,
+	}
+	existing := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            naming.ClientSecretName(nebariApp),
+			Namespace:       nebariApp.Namespace,
+			OwnerReferences: []metav1.OwnerReference{foreignOwner},
+		},
+		Data: map[string][]byte{constants.ClientSecretKey: []byte("foreign-value")},
+	}
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(nebariApp, existing).Build()
 
 	provider := &KeycloakProvider{
 		Config: config.KeycloakConfig{},
 		Client: k8sClient,
-		Scheme: scheme,
 	}
 
-	if err := provider.storeClientSecret(context.Background(), nebariApp, "default-test-app", "secret-value", "", "", ""); err != nil {
-		t.Fatalf("storeClientSecret returned error: %v", err)
+	err := provider.storeClientSecret(context.Background(), nebariApp, "default-test-app", "new-value", "", "", "")
+	var alreadyOwned *controllerutil.AlreadyOwnedError
+	if !errors.As(err, &alreadyOwned) {
+		t.Fatalf("expected an AlreadyOwnedError, got: %v", err)
 	}
 
 	secret := &corev1.Secret{}
@@ -571,13 +639,11 @@ func TestKeycloakProvider_StoreClientSecret_SetsOwnerReference(t *testing.T) {
 	}, secret); err != nil {
 		t.Fatalf("failed to get secret: %v", err)
 	}
-
-	owner := metav1.GetControllerOf(secret)
-	if owner == nil {
-		t.Fatal("expected a controller owner reference on the OIDC client secret, got none")
+	if got := string(secret.Data[constants.ClientSecretKey]); got != "foreign-value" {
+		t.Errorf("expected the secret data to be left untouched, got client-secret %q", got)
 	}
-	if owner.Kind != "NebariApp" || owner.Name != nebariApp.Name {
-		t.Errorf("expected controller owner NebariApp/%s, got %s/%s", nebariApp.Name, owner.Kind, owner.Name)
+	if len(secret.OwnerReferences) != 1 || secret.OwnerReferences[0].UID != foreignOwner.UID {
+		t.Errorf("expected only the foreign controller owner reference, got %+v", secret.OwnerReferences)
 	}
 }
 
