@@ -161,7 +161,7 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `name` _string_ | Name of the protocol mapper. |  | MinLength: 1 <br />Required: \{\} <br /> |
 | `protocolMapper` _string_ | ProtocolMapper is the mapper type identifier.<br />Example: "oidc-group-membership-mapper", "oidc-usermodel-attribute-mapper" |  | MinLength: 1 <br />Required: \{\} <br /> |
-| `config` _object (keys:string, values:string)_ | Config is the mapper configuration as arbitrary key-value pairs.<br />Keys and values are specific to the mapper type.<br />Example for group-membership mapper: \{"claim.name": "groups", "full.path": "false"\} |  | Optional: \{\} <br /> |
+| `config` _object (keys:string, values:string)_ | Config is the mapper configuration as arbitrary key-value pairs.<br />Keys and values are specific to the mapper type.<br />Example for group-membership mapper: \{"claim.name": "groups", "full.path": "true", "access.token.claim": "true"\}<br />(with spec.auth.groups set, a groups mapper must emit full paths in the access token) |  | Optional: \{\} <br /> |
 
 
 ---

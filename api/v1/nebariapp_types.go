@@ -383,7 +383,8 @@ type KeycloakProtocolMapperConfig struct {
 
 	// Config is the mapper configuration as arbitrary key-value pairs.
 	// Keys and values are specific to the mapper type.
-	// Example for group-membership mapper: {"claim.name": "groups", "full.path": "false"}
+	// Example for group-membership mapper: {"claim.name": "groups", "full.path": "true", "access.token.claim": "true"}
+	// (with spec.auth.groups set, a groups mapper must emit full paths in the access token)
 	// +optional
 	Config map[string]string `json:"config,omitempty"`
 }

@@ -292,7 +292,13 @@ spec:
               - name: groups
                 valueType: StringArray
                 values: ["/finance", "/ops/oncall"]
+              - name: azp
+                valueType: String
+                values: ["finance-finance-dash"]
 ```
+
+Claims in one rule are ANDed. The `azp` claim must equal the app's own client ID, because every SecurityPolicy shares
+one oauth2 HMAC secret, so the cookie check alone does not tie a token to this app.
 
 The `oidc` section's access-token cookie is renamed to `nebari-at-<namespace>-<name>` so the `jwt` provider can read a
 known cookie and verify the token against the realm JWKS. Apps that enforce groups at the gateway get this pinned cookie, so their users are logged out once when the app
