@@ -22,9 +22,12 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -32,6 +35,7 @@ import (
 	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
 	"github.com/nebari-dev/nebari-operator/internal/config"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/constants"
+	"github.com/nebari-dev/nebari-operator/internal/controller/utils/groups"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/naming"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/ptr"
 	corev1 "k8s.io/api/core/v1"
@@ -164,6 +168,12 @@ func (p *KeycloakProvider) GetExternalIssuerURL(ctx context.Context, nebariApp *
 		return "", fmt.Errorf("KEYCLOAK_EXTERNAL_URL not configured; required for external issuer URL")
 	}
 	return external, nil
+}
+
+// GetJWKSURL returns the in-cluster realm certs URL. Envoy fetches it from the
+// proxy pods, the same path the token endpoint override already uses.
+func (p *KeycloakProvider) GetJWKSURL(_ context.Context, _ *appsv1.NebariApp) (string, error) {
+	return p.internalRealmURL() + "/protocol/openid-connect/certs", nil
 }
 
 // GetClientID returns the OIDC client ID for the NebariApp.
@@ -299,9 +309,13 @@ func (p *KeycloakProvider) ProvisionClient(ctx context.Context, nebariApp *appsv
 		return fmt.Errorf("failed to sync client protocol mappers: %w", err)
 	}
 
-	// Sync Keycloak groups and member assignments
-	if err := p.syncGroups(ctx, kcClient, token, nebariApp); err != nil {
-		return fmt.Errorf("failed to sync groups: %w", err)
+	// Sync Keycloak groups and member assignments. Group paths that do not
+	// exist don't stop provisioning; that error is returned once the client
+	// and its Secret are in place.
+	groupsErr := p.syncGroups(ctx, kcClient, token, nebariApp)
+	var notResolved *GroupsNotResolvedError
+	if groupsErr != nil && !errors.As(groupsErr, &notResolved) {
+		return fmt.Errorf("failed to sync groups: %w", groupsErr)
 	}
 
 	// Provision SPA client if requested
@@ -332,7 +346,10 @@ func (p *KeycloakProvider) ProvisionClient(ctx context.Context, nebariApp *appsv
 	}
 
 	// Store all credentials in Kubernetes Secret
-	return p.storeClientSecret(ctx, nebariApp, clientID, clientSecret, externalIssuerURL, spaClientID, deviceClientID)
+	if err := p.storeClientSecret(ctx, nebariApp, clientID, clientSecret, externalIssuerURL, spaClientID, deviceClientID); err != nil {
+		return err
+	}
+	return groupsErr
 }
 
 // ConfigureTokenExchange enables OAuth 2.0 Token Exchange (RFC 8693) on this client
@@ -881,9 +898,11 @@ func (p *KeycloakProvider) syncClientScopes(ctx context.Context, kcClient *goclo
 // OIDC client (not on shared client scopes). This gives each NebariApp isolated
 // mapper configuration.
 //
-// If keycloakConfig.protocolMappers is specified, those mappers are used.
-// Otherwise, if "groups" is in the requested scopes, a default group-membership
-// mapper is created with full.path=false.
+// If keycloakConfig.protocolMappers is specified, those mappers are used, and
+// the operator's group-membership mapper is appended when spec.auth.groups is
+// set and no custom mapper emits the groups claim. Otherwise, if spec.auth.groups
+// is set or "groups" is a requested scope, a default group-membership mapper is
+// created with full.path=true.
 func (p *KeycloakProvider) syncClientProtocolMappers(ctx context.Context, kcClient *gocloak.GoCloak, token *gocloak.JWT, clientInternalID string, nebariApp *appsv1.NebariApp) error {
 	if nebariApp.Spec.Auth == nil {
 		return nil
@@ -891,27 +910,7 @@ func (p *KeycloakProvider) syncClientProtocolMappers(ctx context.Context, kcClie
 
 	logger := log.FromContext(ctx)
 
-	// Determine desired mappers
-	var desiredMappers []appsv1.KeycloakProtocolMapperConfig
-
-	if nebariApp.Spec.Auth.KeycloakConfig != nil && len(nebariApp.Spec.Auth.KeycloakConfig.ProtocolMappers) > 0 {
-		desiredMappers = nebariApp.Spec.Auth.KeycloakConfig.ProtocolMappers
-	} else if hasScope(nebariApp, "groups") {
-		// Default: group-membership mapper with full.path=false
-		desiredMappers = []appsv1.KeycloakProtocolMapperConfig{
-			{
-				Name:           "group-membership",
-				ProtocolMapper: "oidc-group-membership-mapper",
-				Config: map[string]string{
-					"claim.name":           "groups",
-					"full.path":            "false",
-					"id.token.claim":       "true",
-					"access.token.claim":   "true",
-					"userinfo.token.claim": "true",
-				},
-			},
-		}
-	}
+	desiredMappers := desiredProtocolMappers(nebariApp)
 
 	if len(desiredMappers) == 0 {
 		return nil
@@ -960,6 +959,29 @@ func (p *KeycloakProvider) syncClientProtocolMappers(ctx context.Context, kcClie
 		}
 	}
 
+	// The gateway trusts the groups claim when auth.groups is set, so a stale
+	// mapper that still emits it (for example one the user removed from the
+	// spec, or one added by hand in Keycloak) is pruned on the next
+	// provisioning pass. Only mappers for the groups claim are pruned.
+	if len(nebariApp.Spec.Auth.Groups) > 0 {
+		desiredNames := make(map[string]struct{}, len(desiredMappers))
+		for _, d := range desiredMappers {
+			desiredNames[d.Name] = struct{}{}
+		}
+		for name, existing := range existingByName {
+			if _, keep := desiredNames[name]; keep {
+				continue
+			}
+			if existing.Config == nil || (*existing.Config)["claim.name"] != groupsClaim || existing.ID == nil {
+				continue
+			}
+			if err := kcClient.DeleteClientProtocolMapper(ctx, token.AccessToken, p.Config.Realm, clientInternalID, *existing.ID); err != nil {
+				return fmt.Errorf("failed to delete stale groups protocol mapper %q: %w", name, err)
+			}
+			logger.Info("Deleted stale groups client protocol mapper", "mapper", name)
+		}
+	}
+
 	return nil
 }
 
@@ -980,89 +1002,144 @@ func hasScope(nebariApp *appsv1.NebariApp, scope string) bool {
 // specified users are members of those groups.
 // Groups are collected from both spec.auth.groups (simple list) and
 // spec.auth.keycloakConfig.groups (detailed config with members).
+//
+// A path that does not exist and may not be created does not stop the sync:
+// the remaining groups are still synced, and the missing paths are returned
+// as a *GroupsNotResolvedError.
 func (p *KeycloakProvider) syncGroups(ctx context.Context, kcClient *gocloak.GoCloak, token *gocloak.JWT, nebariApp *appsv1.NebariApp) error {
 	if nebariApp.Spec.Auth == nil {
 		return nil
 	}
 
-	groupMembers := MergeGroupMembers(nebariApp.Spec.Auth.Groups, nebariApp.Spec.Auth.KeycloakConfig)
-	if len(groupMembers) == 0 {
+	groupSpecs := MergeGroupMembers(nebariApp.Spec.Auth.Groups, nebariApp.Spec.Auth.KeycloakConfig)
+	if len(groupSpecs) == 0 {
 		return nil
 	}
 
 	logger := log.FromContext(ctx)
 	realm := p.Config.Realm
 
-	for groupName, members := range groupMembers {
-		groupID, err := p.ensureGroup(ctx, kcClient, token, realm, groupName)
+	var notFound []string
+	for groupPath, spec := range groupSpecs {
+		groupID, err := p.ensureGroup(ctx, kcClient, token, realm, groupPath, spec.Create)
+		if errors.Is(err, errGroupNotFound) {
+			notFound = append(notFound, groupPath)
+			continue
+		}
 		if err != nil {
-			return fmt.Errorf("failed to ensure group %q: %w", groupName, err)
+			return fmt.Errorf("failed to ensure group %q: %w", groupPath, err)
 		}
 
-		if len(members) == 0 {
+		if len(spec.Members) == 0 {
 			continue
 		}
 
-		if err := p.syncGroupMembers(ctx, kcClient, token, realm, groupID, groupName, members); err != nil {
-			return fmt.Errorf("failed to sync members for group %q: %w", groupName, err)
+		if err := p.syncGroupMembers(ctx, kcClient, token, realm, groupID, groupPath, spec.Members); err != nil {
+			return fmt.Errorf("failed to sync members for group %q: %w", groupPath, err)
 		}
 
-		logger.Info("Synced group members", "group", groupName, "members", members)
+		logger.Info("Synced group members", "group", groupPath, "members", spec.Members)
 	}
 
+	if len(notFound) > 0 {
+		sort.Strings(notFound)
+		return &GroupsNotResolvedError{Realm: realm, Paths: notFound}
+	}
 	return nil
 }
 
-// MergeGroupMembers builds a deduplicated map of group name -> members from
-// spec.auth.groups and keycloakConfig.groups. When the same group name appears
-// in both, keycloakConfig.groups takes precedence.
-func MergeGroupMembers(groups []string, keycloakConfig *appsv1.KeycloakClientConfig) map[string][]string {
-	groupMembers := make(map[string][]string)
+// GroupSpec is a group to sync to Keycloak.
+type GroupSpec struct {
+	// Members are usernames to add to the group.
+	Members []string
+	// Create is true when the group may be created if it is missing. Only a
+	// top-level group listed by bare name opts in to creation.
+	Create bool
+}
+
+// escapeGroupPath escapes each segment of a full group path for use in a URL
+// path, without the leading slash. gocloak joins URL segments without escaping
+// them, so a "?", "#" or "%" in a group name would otherwise change the URL.
+func escapeGroupPath(groupPath string) string {
+	segments := strings.Split(strings.TrimPrefix(groupPath, "/"), "/")
+	for i, segment := range segments {
+		segments[i] = url.PathEscape(segment)
+	}
+	return strings.Join(segments, "/")
+}
+
+// MergeGroupMembers builds a deduplicated map of full group path -> GroupSpec
+// from spec.auth.groups and keycloakConfig.groups. Entries are keyed on their
+// normalized path, so "team-example" and "/team-example" are the same group.
+// When the same group appears in both lists, the keycloakConfig.groups members
+// take precedence.
+func MergeGroupMembers(authGroups []string, keycloakConfig *appsv1.KeycloakClientConfig) map[string]GroupSpec {
+	groupSpecs := make(map[string]GroupSpec)
+
+	add := func(entry string, members []string, setMembers bool) {
+		groupPath := groups.NormalizePath(entry)
+		if groupPath == "" {
+			return
+		}
+		spec := groupSpecs[groupPath]
+		// A bare, single-segment name allows creation, whichever list it came from.
+		if !strings.HasPrefix(strings.TrimSpace(entry), "/") && !strings.Contains(groupPath[1:], "/") {
+			spec.Create = true
+		}
+		if setMembers {
+			spec.Members = members
+		}
+		groupSpecs[groupPath] = spec
+	}
 
 	// Collect from spec.auth.groups (no members, just ensure groups exist)
-	for _, g := range groups {
-		if _, ok := groupMembers[g]; !ok {
-			groupMembers[g] = nil
-		}
+	for _, g := range authGroups {
+		add(g, nil, false)
 	}
 
 	// Collect from keycloakConfig.groups (with optional members).
-	// Note: keycloakConfig.groups takes precedence - if the same group name appears
-	// in both spec.auth.groups and keycloakConfig.groups, the keycloakConfig entry wins.
 	if keycloakConfig != nil {
 		for _, g := range keycloakConfig.Groups {
-			groupMembers[g.Name] = g.Members
+			add(g.Name, g.Members, true)
 		}
 	}
 
-	return groupMembers
+	return groupSpecs
 }
 
-// ensureGroup checks if a group exists in the realm and creates it if missing.
-// Returns the group's Keycloak ID.
-func (p *KeycloakProvider) ensureGroup(ctx context.Context, kcClient *gocloak.GoCloak, token *gocloak.JWT, realm, groupName string) (string, error) {
+// errGroupNotFound is returned by ensureGroup when a group does not exist and
+// may not be created.
+var errGroupNotFound = errors.New("group not found")
+
+// ensureGroup resolves a full group path (see groups.NormalizePath) to a
+// Keycloak group ID. If the group does not exist, it is created when create
+// is true, and errGroupNotFound is returned otherwise. Paths are never
+// created implicitly because that would mean guessing at a group hierarchy
+// that is managed outside this operator.
+func (p *KeycloakProvider) ensureGroup(ctx context.Context, kcClient *gocloak.GoCloak, token *gocloak.JWT, realm, groupPath string, create bool) (string, error) {
 	logger := log.FromContext(ctx)
 
-	// Search for existing group by exact name
-	groups, err := kcClient.GetGroups(ctx, token.AccessToken, realm, gocloak.GetGroupsParams{
-		Search: &groupName,
-		Exact:  gocloak.BoolP(true),
-	})
-	if err != nil {
-		return "", fmt.Errorf("failed to search for group %q: %w", groupName, err)
-	}
-
-	for _, g := range groups {
-		if g.Name != nil && *g.Name == groupName {
-			return *g.ID, nil
+	// gocloak joins URL segments with "/", so the leading slash must go or
+	// Keycloak rejects the "//" with 400 missingNormalization.
+	group, err := kcClient.GetGroupByPath(ctx, token.AccessToken, realm, escapeGroupPath(groupPath))
+	if err == nil {
+		if group == nil || group.ID == nil {
+			return "", fmt.Errorf("GetGroupByPath returned no group ID for path %q in realm %q", groupPath, realm)
 		}
+		return *group.ID, nil
+	}
+	var apiErr *gocloak.APIError
+	if !errors.As(err, &apiErr) || apiErr.Code != http.StatusNotFound {
+		return "", fmt.Errorf("failed to look up group path %q: %w", groupPath, err)
+	}
+	if !create {
+		return "", fmt.Errorf("group path %q in realm %q: %w", groupPath, realm, errGroupNotFound)
 	}
 
-	// Group doesn't exist - create it
-	newGroup := gocloak.Group{
+	groupName := strings.TrimPrefix(groupPath, "/")
+	groupID, err := kcClient.CreateGroup(ctx, token.AccessToken, realm, gocloak.Group{
 		Name: gocloak.StringP(groupName),
-	}
-	groupID, err := kcClient.CreateGroup(ctx, token.AccessToken, realm, newGroup)
+	})
 	if err != nil {
 		return "", fmt.Errorf("failed to create group %q: %w", groupName, err)
 	}

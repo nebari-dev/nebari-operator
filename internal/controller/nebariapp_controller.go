@@ -222,13 +222,7 @@ func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	// Reconcile authentication (SecurityPolicy creation/update) if auth is configured
 	if err := r.AuthReconciler.ReconcileAuth(ctx, nebariApp); err != nil {
-		logger.Error(err, "Auth reconciliation failed")
-		conditions.SetCondition(nebariApp, appsv1.ConditionTypeReady, metav1.ConditionFalse,
-			appsv1.ReasonFailed, fmt.Sprintf("Auth reconciliation failed: %v", err))
-		if err := r.Status().Update(ctx, nebariApp); err != nil {
-			return ctrl.Result{}, err
-		}
-		return ctrl.Result{RequeueAfter: time.Minute}, nil
+		return r.handleAuthError(ctx, nebariApp, err)
 	}
 	logger.Info("Auth reconciled successfully", "nebariapp", nebariApp.Name)
 
@@ -255,6 +249,31 @@ func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	return ctrl.Result{RequeueAfter: time.Minute}, nil
 }
 
+// handleAuthError records a ReconcileAuth failure on the NebariApp status and
+// requeues.
+func (r *NebariAppReconciler) handleAuthError(ctx context.Context, nebariApp *appsv1.NebariApp, err error) (ctrl.Result, error) {
+	logger := logf.FromContext(ctx)
+
+	if reason, ok := auth.GroupsNotReadyReason(err); ok {
+		// Auth is otherwise in place (the SecurityPolicy exists), so publish the
+		// rest of the status, but keep Ready=False with the specific reason so a
+		// typo in a group path, or a groups setting that denies everyone, is
+		// visible to `kubectl get` and `kubectl wait`. The requeue retries.
+		logger.Info("Auth reconciled, but spec.auth.groups admits no one yet", "reason", reason, "error", err.Error())
+		conditions.SetCondition(nebariApp, appsv1.ConditionTypeReady, metav1.ConditionFalse, reason, err.Error())
+		nebariApp.Status.ObservedGeneration = nebariApp.Generation
+		nebariApp.Status.ServiceDiscovery = buildServiceDiscoveryStatus(nebariApp)
+	} else {
+		logger.Error(err, "Auth reconciliation failed")
+		conditions.SetCondition(nebariApp, appsv1.ConditionTypeReady, metav1.ConditionFalse,
+			appsv1.ReasonFailed, fmt.Sprintf("Auth reconciliation failed: %v", err))
+	}
+	if err := r.Status().Update(ctx, nebariApp); err != nil {
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{RequeueAfter: time.Minute}, nil
+}
+
 // buildServiceDiscoveryStatus computes the service discovery descriptor from
 // the validated and reconciled NebariApp and writes it to status.serviceDiscovery.
 // The webapi watcher reads this field via status.serviceDiscovery.* (unstructured
@@ -263,7 +282,7 @@ func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 // Visibility and RequiredGroups are computed from spec.auth to ensure consistency:
 // - auth disabled → visibility="public", requiredGroups=[]
 // - auth enabled, no groups → visibility="private", requiredGroups=[]
-// - auth enabled, with groups → visibility="private", requiredGroups=auth.groups
+// - auth enabled, with groups → visibility="private", requiredGroups=normalized auth.groups (full paths)
 func buildServiceDiscoveryStatus(app *appsv1.NebariApp) *appsv1.ServiceDiscoveryStatus {
 	if app.Spec.LandingPage == nil || !app.Spec.LandingPage.Enabled {
 		return &appsv1.ServiceDiscoveryStatus{Enabled: false}
@@ -281,7 +300,7 @@ func buildServiceDiscoveryStatus(app *appsv1.NebariApp) *appsv1.ServiceDiscovery
 	var requiredGroups []string
 	if app.Spec.Auth != nil && app.Spec.Auth.Enabled {
 		visibility = "private"
-		requiredGroups = app.Spec.Auth.Groups
+		requiredGroups = auth.NormalizeGroupPaths(app.Spec.Auth.Groups)
 	}
 
 	scheme := "https"
