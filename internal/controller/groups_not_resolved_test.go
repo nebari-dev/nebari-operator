@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	egv1alpha1 "github.com/envoyproxy/gateway/api/v1alpha1"
@@ -41,10 +42,43 @@ import (
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/naming"
 )
 
-// TestReconcile_GroupsNotResolved checks that a spec.auth.groups path missing
-// from Keycloak leaves Ready=False with reason GroupsNotResolved, while the
-// SecurityPolicy and the rest of the status are still applied.
-func TestReconcile_GroupsNotResolved(t *testing.T) {
+// TestReconcile_GroupsNotReady checks that when spec.auth.groups admits no one
+// yet, Ready is False with the specific reason while the SecurityPolicy and
+// the rest of the status (observedGeneration, serviceDiscovery) are still
+// applied. That covers a path missing from Keycloak (GroupsNotResolved) and a
+// groups list that denies every request (here GroupsEmpty).
+func TestReconcile_GroupsNotReady(t *testing.T) {
+	tests := []struct {
+		name         string
+		groups       []string
+		provider     providers.OIDCProvider
+		wantReason   string
+		wantRequired []string
+	}{
+		{
+			name:         "path missing from Keycloak",
+			groups:       []string{"/does-not-exist"},
+			provider:     groupsNotResolvedProvider{},
+			wantReason:   appsv1.ReasonGroupsNotResolved,
+			wantRequired: []string{"/does-not-exist"},
+		},
+		{
+			name:         "every entry normalizes to nothing",
+			groups:       []string{"/"},
+			provider:     groupsProvisionedProvider{},
+			wantReason:   appsv1.ReasonGroupsEmpty,
+			wantRequired: []string{},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reconcileGroupsNotReady(t, tt.groups, tt.provider, tt.wantReason, tt.wantRequired)
+		})
+	}
+}
+
+func reconcileGroupsNotReady(t *testing.T, groups []string, provider providers.OIDCProvider, wantReason string, wantRequired []string) {
+	t.Helper()
 	ctx := context.Background()
 	scheme := runtime.NewScheme()
 	for _, add := range []func(*runtime.Scheme) error{
@@ -68,7 +102,7 @@ func TestReconcile_GroupsNotResolved(t *testing.T) {
 			Auth: &appsv1.AuthConfig{
 				Enabled:  true,
 				Provider: constants.ProviderKeycloak,
-				Groups:   []string{"/does-not-exist"},
+				Groups:   groups,
 			},
 			LandingPage: &appsv1.LandingPageConfig{Enabled: true},
 		},
@@ -98,12 +132,10 @@ func TestReconcile_GroupsNotResolved(t *testing.T) {
 		CoreReconciler:    &core.CoreReconciler{Client: c, Scheme: scheme, Recorder: recorder},
 		RoutingReconciler: &routing.RoutingReconciler{Client: c, Scheme: scheme, Recorder: recorder},
 		AuthReconciler: &auth.AuthReconciler{
-			Client:   c,
-			Scheme:   scheme,
-			Recorder: recorder,
-			Providers: map[string]providers.OIDCProvider{
-				constants.ProviderKeycloak: groupsNotResolvedProvider{},
-			},
+			Client:    c,
+			Scheme:    scheme,
+			Recorder:  recorder,
+			Providers: map[string]providers.OIDCProvider{constants.ProviderKeycloak: provider},
 		},
 	}
 
@@ -113,7 +145,7 @@ func TestReconcile_GroupsNotResolved(t *testing.T) {
 		t.Fatalf("Reconcile() error = %v", err)
 	}
 	if result.RequeueAfter == 0 {
-		t.Error("expected a requeue so the group lookup is retried")
+		t.Error("expected a requeue so the groups are checked again")
 	}
 
 	sp := &egv1alpha1.SecurityPolicy{}
@@ -130,17 +162,23 @@ func TestReconcile_GroupsNotResolved(t *testing.T) {
 	}
 	for _, condType := range []string{appsv1.ConditionTypeReady, appsv1.ConditionTypeAuthReady} {
 		cond := meta.FindStatusCondition(got.Status.Conditions, condType)
-		if cond == nil || cond.Status != metav1.ConditionFalse || cond.Reason != appsv1.ReasonGroupsNotResolved {
-			t.Errorf("expected %s=False/%s, got %+v", condType, appsv1.ReasonGroupsNotResolved, cond)
+		if cond == nil || cond.Status != metav1.ConditionFalse || cond.Reason != wantReason {
+			t.Errorf("expected %s=False/%s, got %+v", condType, wantReason, cond)
 		}
 	}
-	if got.Status.ServiceDiscovery == nil || len(got.Status.ServiceDiscovery.RequiredGroups) != 1 ||
-		got.Status.ServiceDiscovery.RequiredGroups[0] != "/does-not-exist" {
-		t.Errorf("expected serviceDiscovery to publish the unresolved path, got %+v", got.Status.ServiceDiscovery)
+	if got.Status.ServiceDiscovery == nil || !slices.Equal(got.Status.ServiceDiscovery.RequiredGroups, wantRequired) {
+		t.Errorf("expected serviceDiscovery to publish requiredGroups %v, got %+v", wantRequired, got.Status.ServiceDiscovery)
 	}
 	if got.Status.ObservedGeneration != got.Generation {
 		t.Errorf("ObservedGeneration = %d, want %d", got.Status.ObservedGeneration, got.Generation)
 	}
+}
+
+// groupsProvisionedProvider provisions everything, including the groups.
+type groupsProvisionedProvider struct{ groupsNotResolvedProvider }
+
+func (groupsProvisionedProvider) ProvisionClient(context.Context, *appsv1.NebariApp) error {
+	return nil
 }
 
 // groupsNotResolvedProvider provisions everything except a missing group path.

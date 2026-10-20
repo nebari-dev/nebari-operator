@@ -186,20 +186,31 @@ func TestBuildSecurityPolicySpec_Groups(t *testing.T) {
 			wantAuthz:  &egv1alpha1.Authorization{DefaultAction: &deny, Rules: allowRule("/finance", "/ops/oncall")},
 		},
 		{
-			name:       "exactly 128 groups: one rule",
-			auth:       &appsv1.AuthConfig{Enabled: true, Provider: constants.ProviderKeycloak, Groups: genGroups(128)},
+			name:       "exactly 16 groups: one rule",
+			auth:       &appsv1.AuthConfig{Enabled: true, Provider: constants.ProviderKeycloak, Groups: genGroups(16)},
 			wantCookie: ptr.To(cookie),
 			wantJWT:    true,
-			wantAuthz:  &egv1alpha1.Authorization{DefaultAction: &deny, Rules: allowRule(genGroups(128)...)},
+			wantAuthz:  &egv1alpha1.Authorization{DefaultAction: &deny, Rules: allowRule(genGroups(16)...)},
 		},
 		{
-			name:       "129 groups: split into two rules",
-			auth:       &appsv1.AuthConfig{Enabled: true, Provider: constants.ProviderKeycloak, Groups: genGroups(129)},
+			name:       "17 groups: split into two rules",
+			auth:       &appsv1.AuthConfig{Enabled: true, Provider: constants.ProviderKeycloak, Groups: genGroups(17)},
 			wantCookie: ptr.To(cookie),
 			wantJWT:    true,
 			wantAuthz: &egv1alpha1.Authorization{DefaultAction: &deny, Rules: []egv1alpha1.AuthorizationRule{
-				ruleNamed("allow-groups", genGroups(129)[:128]),
-				ruleNamed("allow-groups-2", genGroups(129)[128:]),
+				ruleNamed("allow-groups", genGroups(17)[:16]),
+				ruleNamed("allow-groups-2", genGroups(17)[16:]),
+			}},
+		},
+		{
+			name:       "33 groups: split into three rules",
+			auth:       &appsv1.AuthConfig{Enabled: true, Provider: constants.ProviderKeycloak, Groups: genGroups(33)},
+			wantCookie: ptr.To(cookie),
+			wantJWT:    true,
+			wantAuthz: &egv1alpha1.Authorization{DefaultAction: &deny, Rules: []egv1alpha1.AuthorizationRule{
+				ruleNamed("allow-groups", genGroups(33)[:16]),
+				ruleNamed("allow-groups-2", genGroups(33)[16:32]),
+				ruleNamed("allow-groups-3", genGroups(33)[32:]),
 			}},
 		},
 		{

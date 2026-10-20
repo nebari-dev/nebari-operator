@@ -249,14 +249,13 @@ func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 func (r *NebariAppReconciler) handleAuthError(ctx context.Context, nebariApp *appsv1.NebariApp, err error) (ctrl.Result, error) {
 	logger := logf.FromContext(ctx)
 
-	if auth.IsGroupsNotResolved(err) {
+	if reason, ok := auth.GroupsNotReadyReason(err); ok {
 		// Auth is otherwise in place (the SecurityPolicy exists), so publish the
-		// rest of the status, but keep Ready=False so a typo in a group path is
-		// visible to `kubectl get` and `kubectl wait`. The requeue retries the
-		// lookup.
-		logger.Info("Auth reconciled, but some group paths do not exist", "error", err.Error())
-		conditions.SetCondition(nebariApp, appsv1.ConditionTypeReady, metav1.ConditionFalse,
-			appsv1.ReasonGroupsNotResolved, err.Error())
+		// rest of the status, but keep Ready=False with the specific reason so a
+		// typo in a group path, or a groups setting that denies everyone, is
+		// visible to `kubectl get` and `kubectl wait`. The requeue retries.
+		logger.Info("Auth reconciled, but spec.auth.groups admits no one yet", "reason", reason, "error", err.Error())
+		conditions.SetCondition(nebariApp, appsv1.ConditionTypeReady, metav1.ConditionFalse, reason, err.Error())
 		nebariApp.Status.ObservedGeneration = nebariApp.Generation
 		nebariApp.Status.ServiceDiscovery = buildServiceDiscoveryStatus(nebariApp)
 	} else {

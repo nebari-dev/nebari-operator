@@ -144,13 +144,41 @@ func IsGroupsNotResolved(err error) bool {
 	return errors.As(err, &notResolved)
 }
 
+// GroupsDeniedError reports that spec.auth.groups cannot be enforced as
+// written, so the SecurityPolicy denies every request. The rest of auth is
+// reconciled. Reason is the AuthReady condition reason.
+type GroupsDeniedError struct {
+	Reason  string
+	Message string
+}
+
+func (e *GroupsDeniedError) Error() string { return e.Message }
+
+// GroupsNotReadyReason reports whether err from ReconcileAuth means that auth
+// is in place but spec.auth.groups does not admit anyone yet, either because
+// the policy denies every request or because group paths do not exist. It
+// returns the condition reason to report.
+func GroupsNotReadyReason(err error) (string, bool) {
+	var denied *GroupsDeniedError
+	if errors.As(err, &denied) {
+		return denied.Reason, true
+	}
+	if IsGroupsNotResolved(err) {
+		return appsv1.ReasonGroupsNotResolved, true
+	}
+	return "", false
+}
+
 // ReconcileAuth handles authentication configuration for a NebariApp.
 // It validates the auth configuration, provisions OIDC clients if needed,
 // and creates/updates Envoy SecurityPolicy resources.
 //
 // If some spec.auth.groups paths do not exist, everything else is still
 // reconciled, AuthReady is set to False with reason GroupsNotResolved, and the
-// *providers.GroupsNotResolvedError is returned (see IsGroupsNotResolved).
+// *providers.GroupsNotResolvedError is returned. If the groups cannot be
+// enforced as written, the policy denies every request and a
+// *GroupsDeniedError is returned instead, which takes precedence. See
+// GroupsNotReadyReason.
 func (r *AuthReconciler) ReconcileAuth(ctx context.Context, nebariApp *appsv1.NebariApp) error {
 	logger := log.FromContext(ctx)
 
@@ -308,17 +336,23 @@ func (r *AuthReconciler) ReconcileAuth(ctx context.Context, nebariApp *appsv1.Ne
 // has succeeded. The deny-all groups modes are reported before unresolved
 // group paths, because creating the missing groups would not admit anyone.
 func (r *AuthReconciler) setAuthReadyCondition(nebariApp *appsv1.NebariApp, groups groupsMode, groupsNotResolved *providers.GroupsNotResolvedError) error {
+	deniedAll := func(reason, msg string) error {
+		conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionFalse, reason, msg)
+		r.Recorder.Event(nebariApp, corev1.EventTypeWarning, reason, msg)
+		return &GroupsDeniedError{Reason: reason, Message: msg}
+	}
 	switch groups {
 	case groupsModeRequireKeycloak:
-		msg := fmt.Sprintf("spec.auth.groups requires provider %q for gateway enforcement; all requests are denied", constants.ProviderKeycloak)
-		conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionFalse, appsv1.ReasonGroupsRequireKeycloak, msg)
-		r.Recorder.Event(nebariApp, corev1.EventTypeWarning, appsv1.ReasonGroupsRequireKeycloak, msg)
-		return errors.New(msg)
+		return deniedAll(appsv1.ReasonGroupsRequireKeycloak,
+			fmt.Sprintf("spec.auth.groups requires provider %q for gateway enforcement; all requests are denied", constants.ProviderKeycloak))
 	case groupsModeClaimConflict:
-		msg := fmt.Sprintf("%v; all requests are denied", providers.CheckGroupsClaim(nebariApp.Spec.Auth.KeycloakConfig))
-		conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionFalse, appsv1.ReasonGroupsClaimConflict, msg)
-		r.Recorder.Event(nebariApp, corev1.EventTypeWarning, appsv1.ReasonGroupsClaimConflict, msg)
-		return errors.New(msg)
+		return deniedAll(appsv1.ReasonGroupsClaimConflict,
+			fmt.Sprintf("%v; all requests are denied", providers.CheckGroupsClaim(nebariApp.Spec.Auth.KeycloakConfig)))
+	case groupsModeGateway:
+		if len(NormalizeGroupPaths(nebariApp.Spec.Auth.Groups)) == 0 {
+			return deniedAll(appsv1.ReasonGroupsEmpty,
+				"every spec.auth.groups entry is empty after normalization, so no group is admitted; all requests are denied")
+		}
 	}
 
 	if groupsNotResolved != nil {

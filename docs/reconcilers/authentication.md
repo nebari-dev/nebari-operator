@@ -305,16 +305,17 @@ one oauth2 HMAC secret, so the cookie check alone does not tie a token to this a
 
 The `oidc` section's access-token cookie is renamed to `nebari-at-<namespace>-<name>` so the `jwt` provider can read a
 known cookie and verify the token against the realm JWKS. Apps that enforce groups at the gateway get this pinned cookie, so their users are logged out once when the app
-starts enforcing (for example on upgrade); other apps keep the default cookie name. A token with no `groups` claim matches no rule and receives 403. Envoy Gateway caps each
-claim at 128 values, so with more than 128 groups the values are split across rules `allow-groups`, `allow-groups-2`,
-and so on.
+starts enforcing (for example on upgrade); other apps keep the default cookie name. A token with no `groups` claim matches no rule and receives 403. The operator puts at
+most 16 values in one rule (Envoy Gateway's limit on a claim before v1.6.0), so with more than 16 groups the values are
+split across rules `allow-groups`, `allow-groups-2`, and so on.
 
 **Claim format.** The `groups` claim carries full group paths such as `/finance` or `/ops/oncall`. The default
 `group-membership` mapper is switched to `full.path=true` for every app, not only apps that set `auth.groups`. Entries
 in `auth.groups` are normalized to full paths (`finance` becomes `/finance`) and matched exactly and case-sensitively.
 A parent group does not admit members of its subgroups; list the subgroup itself. When the app defines custom
 `keycloakConfig.protocolMappers` and sets `auth.groups`, the operator appends a mapper named `nebari-group-membership`
-unless a custom mapper already emits `groups`.
+unless a custom mapper already emits `groups`. While `auth.groups` is set, any other mapper on the app's client that
+emits the `groups` claim, including one added by hand in Keycloak, is deleted on the next provisioning pass.
 
 **Removal delay.** Group membership is read from the access token, so removing a user from a group takes effect when
 their token expires: the realm's access token lifespan, 5 minutes by default.
@@ -329,13 +330,20 @@ rules) rather than deleting the policy or leaving it open:
 |--------|------|------------|
 | `GroupsRequireKeycloak` | `generic-oidc` with groups and `enforceAtGateway: true` | `AuthReady=False`, `Ready=False` |
 | `GroupsClaimConflict` | A custom mapper emits the `groups` claim and its type is not `oidc-group-membership-mapper`, or `full.path` is not `"true"`, or `access.token.claim` is not `"true"` | `AuthReady=False`, `Ready=False` |
+| `GroupsEmpty` | Every `groups` entry is empty after normalization, for example `"/"` or whitespace | `AuthReady=False`, `Ready=False` |
+
+In all three cases `Ready` carries the same reason, and `observedGeneration` and `status.serviceDiscovery` are still
+published.
 
 With `enforceAtGateway: false` the operator provisions the claim but writes no authorization rules, and `AuthReady` is
 `True` with reason `GroupsEnforcedByApplication`.
 
-**Fail closed.** If any auth step fails while groups are enforced (for example, Keycloak is unreachable during
-provisioning), the operator still writes the enforced policy, so the app denies users instead of opening up. A path
-that does not exist is not a failure: see `GroupsNotResolved` above.
+**Fail closed.** If provisioning, RBAC, token exchange or validation fails while groups are enforced (for example,
+Keycloak is unreachable during provisioning), the operator still tries to write the enforced policy, so the app denies
+users instead of opening up. This does not hold when the SecurityPolicy write itself is rejected, when the provider is
+not registered, or when reconcile stops before the auth step (missing Service, namespace opt-in removed, TLS
+certificate pending). The previous policy then stays in place, and while the certificate is pending `Ready` stays
+`True`. A path that does not exist is not a failure: see `GroupsNotResolved` above.
 
 ## Status Management
 
