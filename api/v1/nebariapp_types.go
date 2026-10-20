@@ -688,6 +688,14 @@ const (
 	// ReasonGatewayListenerConflict indicates the Gateway listener conflicts with another NebariApp
 	ReasonGatewayListenerConflict = "GatewayListenerConflict"
 
+	// ReasonHTTPRouteOwnershipConflict indicates an HTTPRoute at the derived name is already
+	// controlled by another owner, so the operator leaves it unchanged instead of taking it over.
+	ReasonHTTPRouteOwnershipConflict = "HTTPRouteOwnershipConflict"
+
+	// ReasonProvisioningFailed indicates the OIDC client could not be provisioned, or its client
+	// Secret could not be adopted (for example, because another controller already owns it).
+	ReasonProvisioningFailed = "ProvisioningFailed"
+
 	// ReasonUserProvidedSecretReady indicates a user-provided TLS secret exists and is valid.
 	ReasonUserProvidedSecretReady = "UserProvidedSecretReady"
 

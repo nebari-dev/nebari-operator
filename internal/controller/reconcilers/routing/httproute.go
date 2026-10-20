@@ -18,6 +18,7 @@ package routing
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
@@ -106,8 +107,13 @@ func (r *RoutingReconciler) ReconcileRouting(ctx context.Context, nebariApp *app
 	existingRoute.Spec = desiredRoute.Spec
 	if err := controllerutil.SetControllerReference(nebariApp, existingRoute, r.Scheme); err != nil {
 		logger.Error(err, "Failed to set controller reference on HTTPRoute")
+		reason := appsv1.ReasonFailed
+		var alreadyOwned *controllerutil.AlreadyOwnedError
+		if stderrors.As(err, &alreadyOwned) {
+			reason = appsv1.ReasonHTTPRouteOwnershipConflict
+		}
 		conditions.SetCondition(nebariApp, appsv1.ConditionTypeRoutingReady, metav1.ConditionFalse,
-			"UpdateFailed", fmt.Sprintf("Failed to set controller reference on HTTPRoute: %v", err))
+			reason, fmt.Sprintf("Failed to set controller reference on HTTPRoute: %v", err))
 		return err
 	}
 	if err := r.Client.Update(ctx, existingRoute); err != nil {

@@ -128,12 +128,13 @@ func (r *AuthReconciler) getProvider(nebariApp *appsv1.NebariApp) (OIDCProvider,
 - Secret key: `client-secret`
 - Labels: Standard app.kubernetes.io labels
 - Owner reference: NebariApp (for garbage collection). A Secret created before the operator set owner references is
-  adopted on its next sync, and other non-controller owner references on it are kept. If a different controller already
-  owns a Secret at that name, the operator does not take it over: provisioning fails with `AuthReady=False`
-  (`ProvisioningFailed`) and the Secret is left unchanged.
+  adopted on the next reconcile, including when the auth config is unchanged and provisioning is skipped, and other
+  non-controller owner references on it are kept. If a different controller already owns a Secret at that name, the
+  operator does not take it over: reconcile fails with `AuthReady=False` (`ProvisioningFailed`) and the Secret is left
+  unchanged.
 
 **On Failure:**
-- Event: `Warning` with reason `ProvisioningFailed`
+- Event: `Warning` with reason `ClientProvisionFailed`
 - Condition: `AuthReady=False` with reason `ProvisioningFailed`
 - Error message includes provider error details
 
@@ -296,7 +297,8 @@ conditions:
 - `Normal/Configured`: "Authentication configured successfully"
 
 **Warning Events:**
-- `Warning/ProvisioningFailed`: "Failed to provision OIDC client: {error}"
+- `Warning/ClientProvisionFailed`: "Failed to provision OIDC client: {error}" (or "Failed to adopt OIDC client
+  secret: {error}" when provisioning is skipped)
 - `Warning/ValidationFailed`: "Auth configuration validation failed: {error}"
 - `Warning/SecurityPolicyFailed`: "Failed to reconcile SecurityPolicy: {error}"
 

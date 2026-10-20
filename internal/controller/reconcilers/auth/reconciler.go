@@ -179,6 +179,16 @@ func (r *AuthReconciler) ReconcileAuth(ctx context.Context, nebariApp *appsv1.Ne
 
 		if authReady && nebariApp.Status.AuthConfigHash == currentHash && forceAnnotation == "" {
 			logger.Info("Auth config unchanged and AuthReady=True, skipping OIDC client provisioning")
+			// Provisioning is what sets the client Secret's controller reference, and an
+			// upgrade does not change the auth hash, so a Secret created before owner
+			// references were applied would never be adopted. Adopt it on this path too.
+			if err := r.adoptClientSecret(ctx, nebariApp); err != nil {
+				r.Recorder.Event(nebariApp, corev1.EventTypeWarning, appsv1.EventReasonClientProvisionFailed,
+					fmt.Sprintf("Failed to adopt OIDC client secret: %v", err))
+				conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionFalse,
+					appsv1.ReasonProvisioningFailed, fmt.Sprintf("Failed to adopt OIDC client secret: %v", err))
+				return err
+			}
 		} else {
 			if forceAnnotation != "" {
 				logger.Info("Force re-provision annotation present, re-provisioning")
@@ -186,8 +196,10 @@ func (r *AuthReconciler) ReconcileAuth(ctx context.Context, nebariApp *appsv1.Ne
 
 			logger.Info("Provisioning OIDC client")
 			if err := provider.ProvisionClient(ctx, nebariApp); err != nil {
+				r.Recorder.Event(nebariApp, corev1.EventTypeWarning, appsv1.EventReasonClientProvisionFailed,
+					fmt.Sprintf("Failed to provision OIDC client: %v", err))
 				conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionFalse,
-					"ProvisioningFailed", fmt.Sprintf("Failed to provision OIDC client: %v", err))
+					appsv1.ReasonProvisioningFailed, fmt.Sprintf("Failed to provision OIDC client: %v", err))
 				return err
 			}
 			logger.Info("OIDC client provisioned successfully")
@@ -313,6 +325,34 @@ func (r *AuthReconciler) getProvider(nebariApp *appsv1.NebariApp) (providers.OID
 	}
 
 	return provider, nil
+}
+
+// adoptClientSecret sets the NebariApp as the controller owner of its OIDC client
+// Secret when that reference is missing, keeping any other (non-controller) owner
+// references. It refuses with AlreadyOwnedError when a different controller owns
+// the Secret, and leaves a missing Secret for validateAuthConfig to report.
+func (r *AuthReconciler) adoptClientSecret(ctx context.Context, nebariApp *appsv1.NebariApp) error {
+	secret := &corev1.Secret{}
+	if err := r.Client.Get(ctx, types.NamespacedName{
+		Name:      naming.ClientSecretName(nebariApp),
+		Namespace: nebariApp.Namespace,
+	}, secret); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	if metav1.IsControlledBy(secret, nebariApp) {
+		return nil
+	}
+
+	patch := client.MergeFromWithOptions(secret.DeepCopy(), client.MergeFromWithOptimisticLock{})
+	if err := controllerutil.SetControllerReference(nebariApp, secret, r.Scheme); err != nil {
+		return fmt.Errorf("failed to set controller reference on OIDC client secret %s/%s: %w",
+			secret.Namespace, secret.Name, err)
+	}
+	if err := r.Client.Patch(ctx, secret, patch); err != nil {
+		return fmt.Errorf("failed to adopt OIDC client secret %s/%s: %w", secret.Namespace, secret.Name, err)
+	}
+	log.FromContext(ctx).Info("Adopted OIDC client secret", "secret", secret.Name)
+	return nil
 }
 
 // validateAuthConfig validates that the OIDC client secret exists and is valid.

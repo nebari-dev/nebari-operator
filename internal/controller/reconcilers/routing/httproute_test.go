@@ -18,19 +18,23 @@ package routing
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/constants"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/naming"
+	"github.com/nebari-dev/nebari-operator/internal/controller/utils/ptr"
 )
 
 func TestValidateGateway(t *testing.T) {
@@ -588,6 +592,108 @@ func TestReconcileRouting_ReadoptsStrippedOwnerReference(t *testing.T) {
 			owner := metav1.GetControllerOf(route)
 			if owner == nil || owner.Kind != "NebariApp" || owner.UID != nebariApp.UID {
 				t.Errorf("expected controller owner NebariApp/%s, got %+v", nebariApp.Name, owner)
+			}
+		})
+	}
+}
+
+// TestReconcileRouting_RefusesForeignOwnedRoute asserts that both HTTPRoute update
+// paths refuse a route at the derived name that another controller owns: the
+// reconcile returns AlreadyOwnedError, the route's spec is left unchanged, and the
+// main path reports RoutingReady=False with the ownership-conflict reason.
+func TestReconcileRouting_RefusesForeignOwnedRoute(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = appsv1.AddToScheme(scheme)
+	_ = gatewayv1.Install(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	newApp := func() *appsv1.NebariApp {
+		return &appsv1.NebariApp{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-app", Namespace: "default", UID: "test-uid"},
+			Spec: appsv1.NebariAppSpec{
+				Hostname: "test.nebari.local",
+				Service:  appsv1.ServiceReference{Name: "test-service", Port: 8080},
+				Routing: &appsv1.RoutingConfig{
+					PublicRoutes: []appsv1.RouteMatch{{PathPrefix: "/health"}},
+				},
+				Auth: &appsv1.AuthConfig{Enabled: true},
+			},
+		}
+	}
+
+	tests := []struct {
+		name            string
+		routeName       func(*appsv1.NebariApp) string
+		reconcile       func(*RoutingReconciler, *appsv1.NebariApp) error
+		expectCondition bool
+	}{
+		{
+			name:      "main HTTPRoute",
+			routeName: naming.HTTPRouteName,
+			reconcile: func(r *RoutingReconciler, app *appsv1.NebariApp) error {
+				return r.ReconcileRouting(context.Background(), app, "")
+			},
+			expectCondition: true,
+		},
+		{
+			name:      "public HTTPRoute",
+			routeName: naming.PublicHTTPRouteName,
+			reconcile: func(r *RoutingReconciler, app *appsv1.NebariApp) error {
+				return r.ReconcilePublicRoute(context.Background(), app, "")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nebariApp := newApp()
+			gateway := &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{Name: constants.PublicGatewayName, Namespace: constants.GatewayNamespace},
+			}
+			foreignHostname := gatewayv1.Hostname("foreign.example.com")
+			foreignRoute := &gatewayv1.HTTPRoute{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      tt.routeName(nebariApp),
+					Namespace: nebariApp.Namespace,
+					OwnerReferences: []metav1.OwnerReference{{
+						APIVersion: "apps/v1", Kind: "Deployment", Name: "foreign", UID: "foreign-uid",
+						Controller: ptr.To(true), BlockOwnerDeletion: ptr.To(true),
+					}},
+				},
+				Spec: gatewayv1.HTTPRouteSpec{Hostnames: []gatewayv1.Hostname{foreignHostname}},
+			}
+			k8sClient := fake.NewClientBuilder().WithScheme(scheme).
+				WithObjects(nebariApp, gateway, foreignRoute).Build()
+			reconciler := &RoutingReconciler{
+				Client:   k8sClient,
+				Scheme:   scheme,
+				Recorder: record.NewFakeRecorder(10),
+			}
+
+			err := tt.reconcile(reconciler, nebariApp)
+			var alreadyOwned *controllerutil.AlreadyOwnedError
+			if !errors.As(err, &alreadyOwned) {
+				t.Fatalf("expected an AlreadyOwnedError, got: %v", err)
+			}
+
+			route := &gatewayv1.HTTPRoute{}
+			if err := k8sClient.Get(context.Background(), types.NamespacedName{
+				Name: tt.routeName(nebariApp), Namespace: nebariApp.Namespace,
+			}, route); err != nil {
+				t.Fatalf("failed to get HTTPRoute: %v", err)
+			}
+			if len(route.Spec.Hostnames) != 1 || route.Spec.Hostnames[0] != foreignHostname {
+				t.Errorf("expected the foreign route's spec unchanged, got hostnames %v", route.Spec.Hostnames)
+			}
+			if owner := metav1.GetControllerOf(route); owner == nil || owner.UID != "foreign-uid" {
+				t.Errorf("expected the foreign controller to keep ownership, got %+v", owner)
+			}
+
+			if tt.expectCondition {
+				cond := meta.FindStatusCondition(nebariApp.Status.Conditions, appsv1.ConditionTypeRoutingReady)
+				if cond == nil || cond.Status != metav1.ConditionFalse || cond.Reason != appsv1.ReasonHTTPRouteOwnershipConflict {
+					t.Errorf("expected RoutingReady=False/%s, got %+v", appsv1.ReasonHTTPRouteOwnershipConflict, cond)
+				}
 			}
 		})
 	}

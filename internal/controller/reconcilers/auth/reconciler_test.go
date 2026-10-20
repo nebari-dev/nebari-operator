@@ -34,13 +34,16 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/client-go/tools/record"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
 // verifyEndpointOverrides checks that the SecurityPolicy's endpoint overrides match expectations.
@@ -1706,5 +1709,202 @@ func TestIsIssuerRejected(t *testing.T) {
 				t.Errorf("isIssuerRejected() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestReconcileAuth_SkipPathAdoptsClientSecret asserts that the steady-state skip
+// path (auth hash unchanged, AuthReady=True) still adopts the OIDC client Secret.
+// An upgrade does not change the auth hash, so without this a Secret created before
+// owner references were applied would never be adopted.
+func TestReconcileAuth_SkipPathAdoptsClientSecret(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = appsv1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+	_ = rbacv1.AddToScheme(scheme)
+	_ = egv1alpha1.AddToScheme(scheme)
+
+	newApp := func() *appsv1.NebariApp {
+		app := &appsv1.NebariApp{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-app", Namespace: "default", UID: "test-uid"},
+			Spec: appsv1.NebariAppSpec{
+				Hostname: "test.example.com",
+				Auth: &appsv1.AuthConfig{
+					Enabled:         true,
+					Provider:        constants.ProviderKeycloak,
+					ProvisionClient: ptr.To(true),
+				},
+			},
+		}
+		app.Status.AuthConfigHash = computeAuthConfigHash(app)
+		app.Status.Conditions = []metav1.Condition{{
+			Type:               appsv1.ConditionTypeAuthReady,
+			Status:             metav1.ConditionTrue,
+			Reason:             "AuthConfigured",
+			LastTransitionTime: metav1.Now(),
+		}}
+		return app
+	}
+	otherOwner := metav1.OwnerReference{
+		APIVersion: "v1", Kind: "ConfigMap", Name: "other", UID: "other-uid",
+	}
+	foreignController := metav1.OwnerReference{
+		APIVersion: "apps/v1", Kind: "Deployment", Name: "foreign", UID: "foreign-uid",
+		Controller: ptr.To(true), BlockOwnerDeletion: ptr.To(true),
+	}
+
+	tests := []struct {
+		name        string
+		ownerRefs   func(*appsv1.NebariApp) []metav1.OwnerReference
+		expectError bool
+	}{
+		{
+			name:      "adopts a Secret without a controller and keeps other owners",
+			ownerRefs: func(*appsv1.NebariApp) []metav1.OwnerReference { return []metav1.OwnerReference{otherOwner} },
+		},
+		{
+			name: "leaves an already-adopted Secret untouched",
+			ownerRefs: func(app *appsv1.NebariApp) []metav1.OwnerReference {
+				return []metav1.OwnerReference{*metav1.NewControllerRef(app, appsv1.GroupVersion.WithKind("NebariApp"))}
+			},
+		},
+		{
+			name:        "refuses a Secret owned by another controller",
+			ownerRefs:   func(*appsv1.NebariApp) []metav1.OwnerReference { return []metav1.OwnerReference{foreignController} },
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nebariApp := newApp()
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:            naming.ClientSecretName(nebariApp),
+					Namespace:       nebariApp.Namespace,
+					OwnerReferences: tt.ownerRefs(nebariApp),
+				},
+				Data: map[string][]byte{constants.ClientSecretKey: []byte("test-secret")},
+			}
+			k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(nebariApp, secret).Build()
+			before := &corev1.Secret{}
+			if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(secret), before); err != nil {
+				t.Fatalf("failed to get seeded Secret: %v", err)
+			}
+
+			provider := &mockProvider{
+				issuerURL:            "https://keycloak.example.com/realms/test",
+				clientID:             "test-client",
+				supportsProvisioning: true,
+			}
+			recorder := record.NewFakeRecorder(10)
+			reconciler := &AuthReconciler{
+				Client:    k8sClient,
+				Scheme:    scheme,
+				Recorder:  recorder,
+				Providers: map[string]providers.OIDCProvider{constants.ProviderKeycloak: provider},
+			}
+
+			err := reconciler.ReconcileAuth(context.Background(), nebariApp)
+			if provider.provisionCount != 0 {
+				t.Errorf("expected ProvisionClient to be skipped, called %d time(s)", provider.provisionCount)
+			}
+
+			after := &corev1.Secret{}
+			if getErr := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(secret), after); getErr != nil {
+				t.Fatalf("failed to get Secret: %v", getErr)
+			}
+
+			if tt.expectError {
+				var alreadyOwned *controllerutil.AlreadyOwnedError
+				if !errors.As(err, &alreadyOwned) {
+					t.Fatalf("expected an AlreadyOwnedError, got: %v", err)
+				}
+				if !reflect.DeepEqual(after.OwnerReferences, before.OwnerReferences) {
+					t.Errorf("expected owner references unchanged, got %+v", after.OwnerReferences)
+				}
+				cond := meta.FindStatusCondition(nebariApp.Status.Conditions, appsv1.ConditionTypeAuthReady)
+				if cond == nil || cond.Status != metav1.ConditionFalse || cond.Reason != appsv1.ReasonProvisioningFailed {
+					t.Errorf("expected AuthReady=False/%s, got %+v", appsv1.ReasonProvisioningFailed, cond)
+				}
+				select {
+				case event := <-recorder.Events:
+					if !strings.HasPrefix(event, corev1.EventTypeWarning+" "+appsv1.EventReasonClientProvisionFailed) {
+						t.Errorf("expected a %s Warning event, got %q", appsv1.EventReasonClientProvisionFailed, event)
+					}
+				default:
+					t.Error("expected a Warning event, got none")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("expected no error, got: %v", err)
+			}
+			if !metav1.IsControlledBy(after, nebariApp) {
+				t.Errorf("expected Secret controlled by NebariApp/%s, got %+v", nebariApp.Name, after.OwnerReferences)
+			}
+			for _, ref := range before.OwnerReferences {
+				if ref.Controller == nil || !*ref.Controller {
+					if !containsOwnerRef(after.OwnerReferences, ref.UID) {
+						t.Errorf("expected non-controller owner %s to be kept, got %+v", ref.Name, after.OwnerReferences)
+					}
+				}
+			}
+			if metav1.IsControlledBy(before, nebariApp) && after.ResourceVersion != before.ResourceVersion {
+				t.Errorf("expected no write to an already-adopted Secret, resourceVersion %s -> %s",
+					before.ResourceVersion, after.ResourceVersion)
+			}
+		})
+	}
+}
+
+func containsOwnerRef(refs []metav1.OwnerReference, uid types.UID) bool {
+	for _, ref := range refs {
+		if ref.UID == uid {
+			return true
+		}
+	}
+	return false
+}
+
+// TestReconcileAuth_ProvisioningFailureEmitsWarning asserts that a ProvisionClient
+// failure records a Warning event alongside AuthReady=False, as the auth docs state.
+func TestReconcileAuth_ProvisioningFailureEmitsWarning(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = appsv1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	nebariApp := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-app", Namespace: "default"},
+		Spec: appsv1.NebariAppSpec{
+			Hostname: "test.example.com",
+			Auth:     &appsv1.AuthConfig{Enabled: true, Provider: constants.ProviderKeycloak},
+		},
+	}
+	recorder := record.NewFakeRecorder(10)
+	reconciler := &AuthReconciler{
+		Client:   fake.NewClientBuilder().WithScheme(scheme).WithObjects(nebariApp).Build(),
+		Scheme:   scheme,
+		Recorder: recorder,
+		Providers: map[string]providers.OIDCProvider{constants.ProviderKeycloak: &mockProvider{
+			supportsProvisioning: true,
+			provisionError:       errors.New("keycloak unavailable"),
+		}},
+	}
+
+	if err := reconciler.ReconcileAuth(context.Background(), nebariApp); err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+	cond := meta.FindStatusCondition(nebariApp.Status.Conditions, appsv1.ConditionTypeAuthReady)
+	if cond == nil || cond.Status != metav1.ConditionFalse || cond.Reason != appsv1.ReasonProvisioningFailed {
+		t.Errorf("expected AuthReady=False/%s, got %+v", appsv1.ReasonProvisioningFailed, cond)
+	}
+	select {
+	case event := <-recorder.Events:
+		if !strings.HasPrefix(event, corev1.EventTypeWarning+" "+appsv1.EventReasonClientProvisionFailed) {
+			t.Errorf("expected a %s Warning event, got %q", appsv1.EventReasonClientProvisionFailed, event)
+		}
+	default:
+		t.Error("expected a Warning event, got none")
 	}
 }
