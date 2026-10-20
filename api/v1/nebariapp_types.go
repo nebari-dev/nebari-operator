@@ -233,9 +233,15 @@ type AuthConfig struct {
 	//
 	// For provider="generic-oidc", the operator does not create or resolve
 	// entries, and GroupsNotResolved never fires. With enforceAtGateway true,
-	// setting groups denies every request (AuthReady reason
-	// GroupsRequireKeycloak). With enforceAtGateway false, the claim is
-	// provisioned and the application must enforce it.
+	// setting groups denies every request (AuthReady reason GroupsRequireKeycloak
+	// with provisionClient false, ProvisioningNotSupported otherwise). With
+	// enforceAtGateway false, the application must enforce the claim its
+	// provider emits.
+	//
+	// With provider="keycloak" and provisionClient=false the operator does not
+	// manage the client's mappers, so the client must emit full group paths in
+	// an access-token "groups" claim. Otherwise every request is denied while
+	// AuthReady stays True.
 	// +kubebuilder:validation:items:MinLength=1
 	// +optional
 	Groups []string `json:"groups,omitempty"`

@@ -948,7 +948,8 @@ func (p *KeycloakProvider) syncClientProtocolMappers(ctx context.Context, kcClie
 
 	// The gateway trusts the groups claim when auth.groups is set, so a stale
 	// mapper that still emits it (for example one the user removed from the
-	// spec) must not survive. Only mappers for the groups claim are pruned.
+	// spec, or one added by hand in Keycloak) is pruned on the next
+	// provisioning pass. Only mappers for the groups claim are pruned.
 	if len(nebariApp.Spec.Auth.Groups) > 0 {
 		desiredNames := make(map[string]struct{}, len(desiredMappers))
 		for _, d := range desiredMappers {

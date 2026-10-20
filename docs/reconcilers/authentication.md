@@ -314,7 +314,8 @@ split across rules `allow-groups`, `allow-groups-2`, and so on.
 in `auth.groups` are normalized to full paths (`finance` becomes `/finance`) and matched exactly and case-sensitively.
 A parent group does not admit members of its subgroups; list the subgroup itself. When the app defines custom
 `keycloakConfig.protocolMappers` and sets `auth.groups`, the operator appends a mapper named `nebari-group-membership`
-unless a custom mapper already emits `groups`.
+unless a custom mapper already emits `groups`. While `auth.groups` is set, any other mapper on the app's client that
+emits the `groups` claim, including one added by hand in Keycloak, is deleted on the next provisioning pass.
 
 **Removal delay.** Group membership is read from the access token, so removing a user from a group takes effect when
 their token expires: the realm's access token lifespan, 5 minutes by default.
@@ -337,9 +338,12 @@ published.
 With `enforceAtGateway: false` the operator provisions the claim but writes no authorization rules, and `AuthReady` is
 `True` with reason `GroupsEnforcedByApplication`.
 
-**Fail closed.** If any auth step fails while groups are enforced (for example, Keycloak is unreachable during
-provisioning), the operator still writes the enforced policy, so the app denies users instead of opening up. A path
-that does not exist is not a failure: see `GroupsNotResolved` above.
+**Fail closed.** If provisioning, RBAC, token exchange or validation fails while groups are enforced (for example,
+Keycloak is unreachable during provisioning), the operator still tries to write the enforced policy, so the app denies
+users instead of opening up. This does not hold when the SecurityPolicy write itself is rejected, when the provider is
+not registered, or when reconcile stops before the auth step (missing Service, namespace opt-in removed, TLS
+certificate pending). The previous policy then stays in place, and while the certificate is pending `Ready` stays
+`True`. A path that does not exist is not a failure: see `GroupsNotResolved` above.
 
 ## Status Management
 
