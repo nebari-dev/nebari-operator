@@ -2226,4 +2226,12 @@ func TestReconcileAuth_DenyAllReasonOutranksGroupsNotResolved(t *testing.T) {
 	if app.Status.AuthConfigHash != "" {
 		t.Errorf("expected AuthConfigHash to stay unset while groups are unresolved, got %q", app.Status.AuthConfigHash)
 	}
+	sp := &egv1alpha1.SecurityPolicy{}
+	if err := c.Get(context.Background(), types.NamespacedName{Name: naming.SecurityPolicyName(app), Namespace: "finance"}, sp); err != nil {
+		t.Fatalf("expected a SecurityPolicy: %v", err)
+	}
+	if sp.Spec.Authorization == nil || sp.Spec.Authorization.DefaultAction == nil ||
+		*sp.Spec.Authorization.DefaultAction != egv1alpha1.AuthorizationActionDeny || len(sp.Spec.Authorization.Rules) != 0 {
+		t.Errorf("authorization = %+v, want deny-all with no allow rules", sp.Spec.Authorization)
+	}
 }
