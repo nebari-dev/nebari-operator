@@ -329,6 +329,10 @@ rules) rather than deleting the policy or leaving it open:
 |--------|------|------------|
 | `GroupsRequireKeycloak` | `generic-oidc` with groups and `enforceAtGateway: true` | `AuthReady=False`, `Ready=False` |
 | `GroupsClaimConflict` | A custom mapper emits the `groups` claim and its type is not `oidc-group-membership-mapper`, or `full.path` is not `"true"`, or `access.token.claim` is not `"true"` | `AuthReady=False`, `Ready=False` |
+| `GroupsEmpty` | Every `groups` entry is empty after normalization, for example `"/"` or whitespace | `AuthReady=False`, `Ready=False` |
+
+In all three cases `Ready` carries the same reason, and `observedGeneration` and `status.serviceDiscovery` are still
+published.
 
 With `enforceAtGateway: false` the operator provisions the claim but writes no authorization rules, and `AuthReady` is
 `True` with reason `GroupsEnforcedByApplication`.

@@ -748,6 +748,11 @@ const (
 	// ReasonGroupsEnforcedByApplication indicates spec.auth.groups is set with
 	// enforceAtGateway=false, so the application must check the groups claim.
 	ReasonGroupsEnforcedByApplication = "GroupsEnforcedByApplication"
+
+	// ReasonGroupsEmpty indicates every spec.auth.groups entry is empty after
+	// normalization (for example "/" or whitespace), so no group is admitted.
+	// Every request is denied.
+	ReasonGroupsEmpty = "GroupsEmpty"
 )
 
 // Event reasons for recording Kubernetes events

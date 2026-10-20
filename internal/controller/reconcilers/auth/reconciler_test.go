@@ -2002,6 +2002,9 @@ func TestReconcileAuth_Groups(t *testing.T) {
 		rbacWriteErr   error
 		listErr        error
 		forceReprov    bool
+		// wantNotReady is the reason GroupsNotReadyReason must report for the
+		// returned error; empty means it must report none.
+		wantNotReady string
 	}{
 		{
 			name:        "gateway mode: allow rule and AuthConfigured",
@@ -2024,12 +2027,30 @@ func TestReconcileAuth_Groups(t *testing.T) {
 			auth:        &appsv1.AuthConfig{Enabled: true, Provider: constants.ProviderGenericOIDC, ProvisionClient: ptr.To(false), Groups: []string{"finance"}},
 			providerKey: constants.ProviderGenericOIDC,
 			wantStatus:  metav1.ConditionFalse, wantReason: appsv1.ReasonGroupsRequireKeycloak, wantPolicy: true, wantErr: true,
+			wantNotReady: appsv1.ReasonGroupsRequireKeycloak,
 		},
 		{
 			name:        "conflicting mapper: deny all and GroupsClaimConflict",
 			auth:        &appsv1.AuthConfig{Enabled: true, Provider: constants.ProviderKeycloak, ProvisionClient: ptr.To(true), Groups: []string{"finance"}, KeycloakConfig: conflicting},
 			providerKey: constants.ProviderKeycloak,
 			wantStatus:  metav1.ConditionFalse, wantReason: appsv1.ReasonGroupsClaimConflict, wantPolicy: true, wantErr: true,
+			wantNotReady: appsv1.ReasonGroupsClaimConflict,
+		},
+		{
+			name:        "groups that normalize to nothing: deny all and GroupsEmpty",
+			auth:        &appsv1.AuthConfig{Enabled: true, Provider: constants.ProviderKeycloak, ProvisionClient: ptr.To(true), Groups: []string{"/", "  "}},
+			providerKey: constants.ProviderKeycloak,
+			wantStatus:  metav1.ConditionFalse, wantReason: appsv1.ReasonGroupsEmpty, wantPolicy: true, wantErr: true,
+			wantNotReady: appsv1.ReasonGroupsEmpty,
+		},
+		{
+			name:           "enforced by the application with missing paths: GroupsNotResolved",
+			auth:           &appsv1.AuthConfig{Enabled: true, Provider: constants.ProviderKeycloak, ProvisionClient: ptr.To(true), Groups: []string{"/missing"}, EnforceAtGateway: ptr.To(false)},
+			providerKey:    constants.ProviderKeycloak,
+			provisionError: &providers.GroupsNotResolvedError{Realm: "nebari", Paths: []string{"/missing"}},
+			wantErr:        true,
+			wantStatus:     metav1.ConditionFalse, wantReason: appsv1.ReasonGroupsNotResolved, wantPolicy: false,
+			wantNotReady: appsv1.ReasonGroupsNotResolved,
 		},
 		{
 			name:           "validation fails: enforced policy still written over the old one",
@@ -2143,6 +2164,9 @@ func TestReconcileAuth_Groups(t *testing.T) {
 				t.Fatalf("ReconcileAuth() error = %v, wantErr %v", err, tt.wantErr)
 			}
 			assertWraps(t, err, tt.provisionError, tt.policyWriteErr, tt.rbacWriteErr, tt.listErr)
+			if got, _ := GroupsNotReadyReason(err); got != tt.wantNotReady {
+				t.Errorf("GroupsNotReadyReason() = %q, want %q", got, tt.wantNotReady)
+			}
 
 			cond := conditions.GetCondition(app, appsv1.ConditionTypeAuthReady)
 			if tt.wantReason == "" {
@@ -2233,5 +2257,65 @@ func TestReconcileAuth_DenyAllReasonOutranksGroupsNotResolved(t *testing.T) {
 	if sp.Spec.Authorization == nil || sp.Spec.Authorization.DefaultAction == nil ||
 		*sp.Spec.Authorization.DefaultAction != egv1alpha1.AuthorizationActionDeny || len(sp.Spec.Authorization.Rules) != 0 {
 		t.Errorf("authorization = %+v, want deny-all with no allow rules", sp.Spec.Authorization)
+	}
+}
+
+// TestReconcileAuth_GroupsRemovedClearsEnforcement checks that removing
+// spec.auth.groups from an app that enforced them at the gateway drops the
+// jwt provider, the authorization block and the pinned cookie name. Keeping
+// any of them would leave every user of the app locked out.
+func TestReconcileAuth_GroupsRemovedClearsEnforcement(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = appsv1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+	_ = rbacv1.AddToScheme(scheme)
+	_ = egv1alpha1.AddToScheme(scheme)
+
+	app := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{Name: "finance-dash", Namespace: "finance"},
+		Spec: appsv1.NebariAppSpec{Hostname: "dash.example.com", Auth: &appsv1.AuthConfig{
+			Enabled: true, Provider: constants.ProviderKeycloak, ProvisionClient: ptr.To(true), Groups: []string{"finance"},
+		}},
+	}
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: naming.ClientSecretName(app), Namespace: "finance"},
+		Data:       map[string][]byte{constants.ClientSecretKey: []byte("s")},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(secret).Build()
+	r := &AuthReconciler{
+		Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(20),
+		Providers: map[string]providers.OIDCProvider{constants.ProviderKeycloak: &mockProvider{
+			issuerURL: "https://kc.example.com/realms/nebari", clientID: "c", jwksURL: "http://kc/certs", supportsProvisioning: true,
+		}},
+	}
+	getPolicy := func() *egv1alpha1.SecurityPolicy {
+		t.Helper()
+		sp := &egv1alpha1.SecurityPolicy{}
+		if err := c.Get(context.Background(), types.NamespacedName{Name: naming.SecurityPolicyName(app), Namespace: "finance"}, sp); err != nil {
+			t.Fatalf("failed to get SecurityPolicy: %v", err)
+		}
+		return sp
+	}
+
+	if err := r.ReconcileAuth(context.Background(), app); err != nil {
+		t.Fatalf("first reconcile: %v", err)
+	}
+	if sp := getPolicy(); sp.Spec.Authorization == nil || sp.Spec.JWT == nil || sp.Spec.OIDC.CookieNames == nil {
+		t.Fatalf("with groups set, expected authorization, jwt and cookieNames, got %+v", sp.Spec)
+	}
+
+	app.Spec.Auth.Groups = nil
+	if err := r.ReconcileAuth(context.Background(), app); err != nil {
+		t.Fatalf("second reconcile: %v", err)
+	}
+	sp := getPolicy()
+	if sp.Spec.Authorization != nil {
+		t.Errorf("authorization = %+v, want nil after groups are removed", sp.Spec.Authorization)
+	}
+	if sp.Spec.JWT != nil {
+		t.Errorf("jwt = %+v, want nil after groups are removed", sp.Spec.JWT)
+	}
+	if sp.Spec.OIDC == nil || sp.Spec.OIDC.CookieNames != nil {
+		t.Errorf("oidc.cookieNames = %+v, want nil after groups are removed", sp.Spec.OIDC)
 	}
 }
