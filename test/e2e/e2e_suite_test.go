@@ -152,6 +152,20 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 		_, err = utils.Run(cmd)
 		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to deploy the operator")
 
+		// The dev Keycloak serves on port 80 under /auth, matching KEYCLOAK_URL in
+		// config/manager/manager.yaml. The issuer URL defaults (port 8080, no
+		// context path) match NIC, so set them here instead of in the shared manifest.
+		By("pointing the in-cluster issuer URL at the dev Keycloak service")
+		cmd = exec.Command("kubectl", "set", "env", "deployment/nebari-operator-controller-manager",
+			"-n", "nebari-operator-system",
+			"KEYCLOAK_ISSUER_SERVICE_PORT=80", "KEYCLOAK_ISSUER_CONTEXT_PATH=/auth")
+		_, err = utils.Run(cmd)
+		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to set issuer env on the operator")
+		cmd = exec.Command("kubectl", "rollout", "status", "deployment/nebari-operator-controller-manager",
+			"-n", "nebari-operator-system", "--timeout=2m")
+		_, err = utils.Run(cmd)
+		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Operator did not roll out with the issuer env")
+
 		By("waiting for controller-manager deployment to be available")
 		Eventually(func(g Gomega) {
 			cmd := exec.Command("kubectl", "get", "deployment", "nebari-operator-controller-manager",

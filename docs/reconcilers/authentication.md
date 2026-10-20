@@ -133,6 +133,26 @@ func (r *AuthReconciler) getProvider(nebariApp *appsv1.NebariApp) (OIDCProvider,
 - Condition: `AuthReady=False` with reason `ProvisioningFailed`
 - Error message includes provider error details
 
+**Partial Success — `GroupsNotResolved`:**
+
+When `spec.auth.groups` lists a path that does not exist in Keycloak (e.g. `/missing-team`),
+the client, its Secret and the SecurityPolicy are still reconciled, so a new app is never
+served without OIDC in front of it. The reconciler then:
+
+- Emits `Warning/GroupsNotResolved` naming the missing paths.
+- Sets `AuthReady=False` with reason `GroupsNotResolved` (the controller mirrors this onto
+  `Ready=False/GroupsNotResolved` on the NebariApp).
+- Leaves `status.AuthConfigHash` unset, so the one-minute requeue retries provisioning
+  until the group is created, at which point the condition clears and the hash is stored.
+- Still publishes `status.serviceDiscovery` so routing stays functional.
+
+Any other provisioning error still fails as `ProvisioningFailed`. Bare-name entries (a
+top-level group the operator creates on 404) never trigger `GroupsNotResolved`; only
+path-form entries that fail resolution do.
+
+If a custom mapper conflict makes the policy deny-all, `GroupsClaimConflict` is reported instead of `GroupsNotResolved`,
+since creating the missing group would not admit anyone.
+
 ### 3. Configuration Validation
 
 **Purpose**: Ensures OIDC client credentials exist before creating SecurityPolicy.
@@ -243,6 +263,80 @@ configured by a downstream pack — read the public issuer from the client Secre
 - Condition: `AuthReady=False` with reason `SecurityPolicyFailed`
 - Error message includes underlying error
 
+## Group-based access control
+
+When `spec.auth.groups` is non-empty, the provider is `keycloak`, and `enforceAtGateway` is `true`, the operator adds
+three sections to the SecurityPolicy so that the gateway itself rejects users outside the listed groups. For app
+`finance-dash` in namespace `finance` with `groups: [finance, /ops/oncall]`:
+
+```yaml
+spec:
+  oidc:
+    # ...as above, plus:
+    cookieNames:
+      accessToken: nebari-at-finance-finance-dash
+  jwt:
+    providers:
+      - name: nebari-groups
+        remoteJWKS:
+          uri: http://<service>.<namespace>.svc.cluster.local:<port><context-path>/realms/<realm>/protocol/openid-connect/certs
+        extractFrom:
+          cookies:
+            - nebari-at-finance-finance-dash
+  authorization:
+    defaultAction: Deny
+    rules:
+      - name: allow-groups
+        action: Allow
+        principal:
+          jwt:
+            provider: nebari-groups
+            claims:
+              - name: groups
+                valueType: StringArray
+                values: ["/finance", "/ops/oncall"]
+              - name: azp
+                valueType: String
+                values: ["finance-finance-dash"]
+```
+
+Claims in one rule are ANDed. The `azp` claim must equal the app's own client ID, because every SecurityPolicy shares
+one oauth2 HMAC secret, so the cookie check alone does not tie a token to this app.
+
+The `oidc` section's access-token cookie is renamed to `nebari-at-<namespace>-<name>` so the `jwt` provider can read a
+known cookie and verify the token against the realm JWKS. Apps that enforce groups at the gateway get this pinned cookie, so their users are logged out once when the app
+starts enforcing (for example on upgrade); other apps keep the default cookie name. A token with no `groups` claim matches no rule and receives 403. Envoy Gateway caps each
+claim at 128 values, so with more than 128 groups the values are split across rules `allow-groups`, `allow-groups-2`,
+and so on.
+
+**Claim format.** The `groups` claim carries full group paths such as `/finance` or `/ops/oncall`. The default
+`group-membership` mapper is switched to `full.path=true` for every app, not only apps that set `auth.groups`. Entries
+in `auth.groups` are normalized to full paths (`finance` becomes `/finance`) and matched exactly and case-sensitively.
+A parent group does not admit members of its subgroups; list the subgroup itself. When the app defines custom
+`keycloakConfig.protocolMappers` and sets `auth.groups`, the operator appends a mapper named `nebari-group-membership`
+unless a custom mapper already emits `groups`.
+
+**Removal delay.** Group membership is read from the access token, so removing a user from a group takes effect when
+their token expires: the realm's access token lifespan, 5 minutes by default.
+
+**Token size.** A user in many groups produces a large access token, and browsers cap a cookie near 4 KB. Users with
+very many group memberships may fail to sign in.
+
+**Unsupported configurations.** The operator writes a deny-all policy (`authorization.defaultAction: Deny` with no
+rules) rather than deleting the policy or leaving it open:
+
+| Reason | When | Conditions |
+|--------|------|------------|
+| `GroupsRequireKeycloak` | `generic-oidc` with groups and `enforceAtGateway: true` | `AuthReady=False`, `Ready=False` |
+| `GroupsClaimConflict` | A custom mapper emits the `groups` claim and its type is not `oidc-group-membership-mapper`, or `full.path` is not `"true"`, or `access.token.claim` is not `"true"` | `AuthReady=False`, `Ready=False` |
+
+With `enforceAtGateway: false` the operator provisions the claim but writes no authorization rules, and `AuthReady` is
+`True` with reason `GroupsEnforcedByApplication`.
+
+**Fail closed.** If any auth step fails while groups are enforced (for example, Keycloak is unreachable during
+provisioning), the operator still writes the enforced policy, so the app denies users instead of opening up. A path
+that does not exist is not a failure: see `GroupsNotResolved` above.
+
 ## Status Management
 
 ### Conditions
@@ -276,12 +370,22 @@ conditions:
     message: "Authentication configured with provider keycloak"
 ```
 
+With `auth.groups` set and `enforceAtGateway: false`, the reason is `GroupsEnforcedByApplication` instead:
+
+```yaml
+conditions:
+  - type: AuthReady
+    status: "True"
+    reason: GroupsEnforcedByApplication
+    message: "Authentication configured with provider keycloak; enforceAtGateway is false, so the application must check the groups claim"
+```
+
 **On Failure:**
 ```yaml
 conditions:
   - type: AuthReady
     status: "False"
-    reason: ProvisioningFailed | ValidationFailed | SecurityPolicyFailed
+    reason: ProvisioningFailed | ValidationFailed | SecurityPolicyFailed | GroupsNotResolved | GroupsRequireKeycloak | GroupsClaimConflict
     message: "<detailed error message>"
 ```
 
@@ -295,6 +399,11 @@ conditions:
 - `Warning/ProvisioningFailed`: "Failed to provision OIDC client: {error}"
 - `Warning/ValidationFailed`: "Auth configuration validation failed: {error}"
 - `Warning/SecurityPolicyFailed`: "Failed to reconcile SecurityPolicy: {error}"
+- `Warning/GroupsRequireKeycloak`: "spec.auth.groups requires provider \"keycloak\" for gateway enforcement; all requests are denied"
+- `Warning/GroupsClaimConflict`: "{mapper conflict}; all requests are denied"
+- `Warning/GroupsNotResolved`: "spec.auth.groups path(s) do not exist in Keycloak: {paths}"
+  — partial-success condition; the SecurityPolicy is still created and the reconciler
+  retries on the next requeue (see [Client Provisioning](#2-client-provisioning)).
 
 ## Cleanup Process
 

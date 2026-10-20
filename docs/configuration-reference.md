@@ -366,15 +366,42 @@ Defines the OIDC scopes to request during authentication.
 
 **Type:** `array of strings` (optional)
 
-Specifies the list of groups that should have access to this application. When specified, only users belonging to these
-groups will be authorized. Group matching is case-sensitive and depends on the OIDC provider's group claim.
+Lists the Keycloak groups whose members may access this application. When `enforceAtGateway` is `true` (the default)
+and the provider is `keycloak`, the gateway returns 403 to any signed-in user whose access token has none of these
+groups in its `groups` claim.
+
+- Entries are matched as full group paths, exactly and case-sensitively. `finance` is treated as `/finance`.
+- A parent group does not admit members of its subgroups. To admit `/finance/analysts`, list `/finance/analysts`.
+- Removing a user from a group takes effect when their access token expires: the realm's access token lifespan,
+  5 minutes by default.
+- With `provider: generic-oidc` and `enforceAtGateway: true`, setting `groups` denies every request and sets
+  `AuthReady=False` with reason `GroupsRequireKeycloak`. The app's `Ready` condition is also `False`.
+- With `enforceAtGateway: false`, the operator still provisions the `groups` claim, and the application must
+  enforce it. `AuthReady` reports reason `GroupsEnforcedByApplication`.
+- If `keycloakConfig.protocolMappers` defines a mapper for the `groups` claim, it must be an
+  `oidc-group-membership-mapper` with `full.path: "true"` and `access.token.claim: "true"`. Otherwise every request is
+  denied and `AuthReady` reports reason `GroupsClaimConflict`. The app's `Ready` condition is also `False`.
+- When `keycloakConfig.protocolMappers` is set and no custom mapper emits `groups`, the operator appends its own
+  mapper named `nebari-group-membership`.
+- The operator syncs the listed groups in Keycloak, as described below. If any auth step fails, the enforced policy is
+  still written, so the app stays closed.
+
+See [Group-based access control](reconcilers/authentication.md#group-based-access-control) for the SecurityPolicy the
+operator writes.
+
+Each entry is a Keycloak group path (`/admin`, `/parent/child`). A bare name (`admin`) is shorthand for the top-level
+group `/admin`, so `admin` and `/admin` are the same group.
+
+- A bare name is created in Keycloak if it is missing.
+- A path is never created. If it does not exist, the rest of the auth configuration, including the SecurityPolicy, is
+  still applied, but `AuthReady` and `Ready` are `False` with reason `GroupsNotResolved` until the group exists. The
+  lookup is retried every minute.
 
 **Example:**
 ```yaml
 groups:
-  - admin
-  - developers
-  - data-scientists
+  - /admin
+  - /data-science-team
 ```
 
 #### auth.provisionClient
@@ -476,7 +503,8 @@ Keycloak-specific configuration for fine-grained control over realm resources li
 Keycloak groups to ensure exist in the realm, with optional user membership assignments.
 
 Each entry has:
-- `name` (string, required): Group name to create in Keycloak
+- `name` (string, required): The group, as a bare name or a path, with the same rules as `auth.groups`. When the same
+  group is also listed in `auth.groups`, this entry takes precedence.
 - `members` (array of strings, optional): Keycloak usernames to add to the group. Membership sync is additive-only - users in this list are added, but existing members not in the list are NOT removed. Users that don't exist in Keycloak are logged as warnings but don't cause errors.
 
 ##### auth.keycloakConfig.protocolMappers
@@ -485,7 +513,7 @@ Each entry has:
 
 Client-level protocol mappers to configure on the OIDC client. These are applied directly to the client (not to shared client scopes), so each NebariApp gets isolated mapper configuration.
 
-When specified, the operator's default mappers (e.g., group-membership) are not auto-created - this configuration takes full control.
+When specified, the operator's default mappers (e.g., group-membership) are not auto-created - this configuration takes full control. The one exception: when `auth.groups` is set and no mapper emits the `groups` claim, the operator appends a mapper named `nebari-group-membership`. The default `group-membership` mapper emits full group paths (`full.path=true`) for every app.
 
 Each entry has:
 - `name` (string, required): Name of the protocol mapper
@@ -509,7 +537,7 @@ spec:
           protocolMapper: oidc-group-membership-mapper
           config:
             claim.name: groups
-            full.path: "false"
+            full.path: "true"
             id.token.claim: "true"
             access.token.claim: "true"
 ```
@@ -982,7 +1010,7 @@ spec:
           protocolMapper: oidc-group-membership-mapper
           config:
             claim.name: groups
-            full.path: "false"
+            full.path: "true"
             id.token.claim: "true"
             access.token.claim: "true"
   gateway: public
