@@ -129,9 +129,13 @@ func denyAllAuthorization() *egv1alpha1.Authorization {
 // admit only members of groupPaths. The oauth2 filter runs before jwt_authn
 // and validates its session cookies with an HMAC, so a modified token cookie
 // fails the oauth2 check and the request is sent back to login; the jwt
-// provider therefore reads the access token from the oauth2 cookie. Group
-// paths are split into one allow rule per maxClaimValuesPerRule values. With
-// no groupPaths the policy denies every request.
+// provider therefore reads the access token from the oauth2 cookie. When token
+// encryption is on (the Envoy Gateway default), the oauth2 filter decrypts the
+// token cookies and rewrites the Cookie header before jwt_authn runs (Envoy
+// v1.36 OAuth2Filter::decryptAndUpdateOAuthTokenCookies), so the jwt provider
+// sees a plain JWT. Group paths are split into one allow rule per
+// maxClaimValuesPerRule values. With no groupPaths the policy denies every
+// request.
 //
 // Every allow rule also requires the azp claim to equal clientID. The oauth2
 // HMAC secret is shared across all SecurityPolicies, so the cookie check alone
