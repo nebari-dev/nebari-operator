@@ -43,7 +43,13 @@ if [ "$MODE" = "print-cookie" ]; then
   exit 0
 fi
 if [ "$MODE" = "forge" ]; then
-  awk -F'\t' -v OFS='\t' -v n="$CNAME" -v v="$CVALUE" '$6 == n { $7 = v } { print }' "$JAR" > "$JAR.new"
+  # Fail if the cookie is not in the jar: replacing nothing would send the
+  # caller's own session, and its denial would look like a rejected forgery.
+  awk -F'\t' -v OFS='\t' -v n="$CNAME" -v v="$CVALUE" \
+    '$6 == n { $7 = v; found = 1 } { print } END { exit !found }' "$JAR" > "$JAR.new" || {
+    echo "forge: cookie ${CNAME} not found after login" >&2
+    exit 1
+  }
   mv "$JAR.new" "$JAR"
 fi
 
