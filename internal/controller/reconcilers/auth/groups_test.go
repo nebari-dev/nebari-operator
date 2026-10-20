@@ -47,6 +47,7 @@ func TestNormalizeGroupPaths(t *testing.T) {
 		{name: "trailing slash trimmed", groups: []string{"/finance/"}, want: []string{"/finance"}},
 		{name: "whitespace trimmed", groups: []string{"  finance "}, want: []string{"/finance"}},
 		{name: "empty and slash-only dropped", groups: []string{"", "/", "  "}, want: []string{}},
+		{name: "repeated slashes collapsed to match group sync", groups: []string{"/parent//child", "//finance"}, want: []string{"/finance", "/parent/child"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

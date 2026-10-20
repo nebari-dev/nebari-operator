@@ -19,12 +19,12 @@ package auth
 import (
 	"fmt"
 	"sort"
-	"strings"
 
 	egv1alpha1 "github.com/envoyproxy/gateway/api/v1alpha1"
 	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
 	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/auth/providers"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/constants"
+	"github.com/nebari-dev/nebari-operator/internal/controller/utils/groups"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/ptr"
 )
 
@@ -90,17 +90,17 @@ func resolveGroupsMode(auth *appsv1.AuthConfig) groupsMode {
 }
 
 // NormalizeGroupPaths converts spec.auth.groups entries to the full-path form
-// Keycloak puts in the groups claim: a leading slash, no trailing slash.
-// Empty entries are dropped, and the result is deduplicated and sorted.
-func NormalizeGroupPaths(groups []string) []string {
-	seen := make(map[string]struct{}, len(groups))
-	out := make([]string, 0, len(groups))
-	for _, g := range groups {
-		g = strings.Trim(strings.TrimSpace(g), "/")
+// Keycloak puts in the groups claim, using the same rules as group sync
+// (groups.NormalizePath). Empty entries are dropped, and the result is
+// deduplicated and sorted.
+func NormalizeGroupPaths(authGroups []string) []string {
+	seen := make(map[string]struct{}, len(authGroups))
+	out := make([]string, 0, len(authGroups))
+	for _, g := range authGroups {
+		g = groups.NormalizePath(g)
 		if g == "" {
 			continue
 		}
-		g = "/" + g
 		if _, ok := seen[g]; ok {
 			continue
 		}
