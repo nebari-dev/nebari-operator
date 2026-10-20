@@ -166,6 +166,12 @@ func (groupsNotResolvedProvider) ProvisionClient(context.Context, *appsv1.Nebari
 	return &providers.GroupsNotResolvedError{Realm: "test", Paths: []string{"/does-not-exist"}}
 }
 
+// GetJWKSURL implements providers.GroupsClaimProvider, which the SecurityPolicy
+// needs to enforce spec.auth.groups at the gateway.
+func (groupsNotResolvedProvider) GetJWKSURL(context.Context, *appsv1.NebariApp) (string, error) {
+	return "https://keycloak.example.com/realms/test/protocol/openid-connect/certs", nil
+}
+
 func (groupsNotResolvedProvider) DeleteClient(context.Context, *appsv1.NebariApp) error { return nil }
 
 func (groupsNotResolvedProvider) SupportsProvisioning() bool { return true }

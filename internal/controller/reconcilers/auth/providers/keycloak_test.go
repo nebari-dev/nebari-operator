@@ -1692,6 +1692,13 @@ func (f *fakeGroupsKeycloak) serveClient(w http.ResponseWriter, r *http.Request)
 		_, _ = w.Write([]byte(`{"type":"secret","value":"client-secret-value"}`))
 	case r.Method == http.MethodPut && r.URL.Path == "/admin/realms/test/clients/client-uuid":
 		w.WriteHeader(http.StatusNoContent)
+	case r.Method == http.MethodGet && r.URL.Path == "/admin/realms/test/clients/client-uuid":
+		// Read by protocol mapper sync, which runs whenever auth.groups is set.
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"client-uuid","protocolMappers":[]}`))
+	case r.Method == http.MethodPost && r.URL.Path == "/admin/realms/test/clients/client-uuid/protocol-mappers/models":
+		w.Header().Set("Location", "/admin/realms/test/clients/client-uuid/protocol-mappers/models/mapper-uuid")
+		w.WriteHeader(http.StatusCreated)
 	default:
 		return false
 	}
