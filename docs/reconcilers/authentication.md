@@ -366,7 +366,7 @@ conditions:
 conditions:
   - type: AuthReady
     status: "True"
-    reason: AuthConfigured
+    reason: AuthConfigured | GroupsEnforcedByApplication
     message: "Authentication configured with provider keycloak"
 ```
 
@@ -375,7 +375,7 @@ conditions:
 conditions:
   - type: AuthReady
     status: "False"
-    reason: ProvisioningFailed | ValidationFailed | SecurityPolicyFailed | GroupsNotResolved
+    reason: ProvisioningFailed | ValidationFailed | SecurityPolicyFailed | GroupsNotResolved | GroupsRequireKeycloak | GroupsClaimConflict
     message: "<detailed error message>"
 ```
 
@@ -389,6 +389,8 @@ conditions:
 - `Warning/ProvisioningFailed`: "Failed to provision OIDC client: {error}"
 - `Warning/ValidationFailed`: "Auth configuration validation failed: {error}"
 - `Warning/SecurityPolicyFailed`: "Failed to reconcile SecurityPolicy: {error}"
+- `Warning/GroupsRequireKeycloak`: "spec.auth.groups requires provider \"keycloak\" for gateway enforcement; all requests are denied"
+- `Warning/GroupsClaimConflict`: "{mapper conflict}; all requests are denied"
 - `Warning/GroupsNotResolved`: "spec.auth.groups path(s) do not exist in Keycloak: {paths}"
   — partial-success condition; the SecurityPolicy is still created and the reconciler
   retries on the next requeue (see [Client Provisioning](#2-client-provisioning)).
