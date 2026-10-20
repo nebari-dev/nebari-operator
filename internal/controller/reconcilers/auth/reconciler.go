@@ -329,14 +329,14 @@ func (r *AuthReconciler) setAuthReadyCondition(nebariApp *appsv1.NebariApp, grou
 	case groupsModeApplication:
 		msg := fmt.Sprintf("Authentication configured with provider %s; enforceAtGateway is false, so the application must check the groups claim", nebariApp.Spec.Auth.Provider)
 		conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionTrue, appsv1.ReasonGroupsEnforcedByApplication, msg)
-		r.Recorder.Event(nebariApp, corev1.EventTypeNormal, "Configured", msg)
+		r.Recorder.Event(nebariApp, corev1.EventTypeNormal, appsv1.EventReasonConfigured, msg)
 		return nil
 	}
 
 	// Auth configured successfully
 	conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionTrue,
 		"AuthConfigured", fmt.Sprintf("Authentication configured with provider %s", nebariApp.Spec.Auth.Provider))
-	r.Recorder.Event(nebariApp, corev1.EventTypeNormal, "Configured", "Authentication configured successfully")
+	r.Recorder.Event(nebariApp, corev1.EventTypeNormal, appsv1.EventReasonConfigured, "Authentication configured successfully")
 
 	return nil
 }

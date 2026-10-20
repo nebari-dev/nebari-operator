@@ -784,6 +784,10 @@ const (
 	// EventReasonAuthConfigured is used when auth is successfully configured
 	EventReasonAuthConfigured = "AuthConfigured"
 
+	// EventReasonConfigured is used when the auth reconciler finishes configuring
+	// authentication, including when the application enforces spec.auth.groups
+	EventReasonConfigured = "Configured"
+
 	// EventReasonAuthFailed is used when auth configuration fails
 	EventReasonAuthFailed = "AuthFailed"
 
