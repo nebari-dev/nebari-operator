@@ -1934,6 +1934,45 @@ func TestComputeAuthConfigHash_Groups(t *testing.T) {
 	}
 }
 
+// failingWrites returns interceptors that fail SecurityPolicy writes, Role
+// creation and NebariApp listing with the given errors. A nil error leaves
+// that call alone.
+func failingWrites(policyErr, rbacErr, listErr error) interceptor.Funcs {
+	return interceptor.Funcs{
+		Create: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+			if _, ok := obj.(*egv1alpha1.SecurityPolicy); ok && policyErr != nil {
+				return policyErr
+			}
+			if _, ok := obj.(*rbacv1.Role); ok && rbacErr != nil {
+				return rbacErr
+			}
+			return cl.Create(ctx, obj, opts...)
+		},
+		List: func(ctx context.Context, cl client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+			if _, ok := list.(*appsv1.NebariAppList); ok && listErr != nil {
+				return listErr
+			}
+			return cl.List(ctx, list, opts...)
+		},
+		Update: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
+			if _, ok := obj.(*egv1alpha1.SecurityPolicy); ok && policyErr != nil {
+				return policyErr
+			}
+			return cl.Update(ctx, obj, opts...)
+		},
+	}
+}
+
+// assertWraps fails the test if err does not wrap every non-nil cause.
+func assertWraps(t *testing.T, err error, causes ...error) {
+	t.Helper()
+	for _, cause := range causes {
+		if cause != nil && !errors.Is(err, cause) {
+			t.Errorf("error %v does not wrap %v", err, cause)
+		}
+	}
+}
+
 func TestReconcileAuth_Groups(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = appsv1.AddToScheme(scheme)
@@ -1960,6 +1999,9 @@ func TestReconcileAuth_Groups(t *testing.T) {
 		wantValues     []string
 		noSecret       bool
 		policyWriteErr error
+		rbacWriteErr   error
+		listErr        error
+		forceReprov    bool
 	}{
 		{
 			name:        "gateway mode: allow rule and AuthConfigured",
@@ -2024,6 +2066,36 @@ func TestReconcileAuth_Groups(t *testing.T) {
 			wantStatus:     metav1.ConditionFalse, wantReason: "ProvisioningFailed", wantPolicy: false,
 		},
 		{
+			name:           "RBAC write fails: enforced policy still written over the old one",
+			auth:           &appsv1.AuthConfig{Enabled: true, Provider: constants.ProviderKeycloak, ProvisionClient: ptr.To(true), Groups: []string{"finance"}},
+			providerKey:    constants.ProviderKeycloak,
+			rbacWriteErr:   errors.New("apiserver rejected role"),
+			existingPolicy: true,
+			wantErr:        true,
+			wantStatus:     metav1.ConditionFalse, wantReason: "RBACFailed", wantPolicy: true, wantAllowRule: true,
+		},
+		{
+			name: "token exchange fails: enforced policy still written over the old one",
+			auth: &appsv1.AuthConfig{Enabled: true, Provider: constants.ProviderKeycloak, ProvisionClient: ptr.To(true), Groups: []string{"finance"},
+				TokenExchange: &appsv1.TokenExchangeConfig{Enabled: true}},
+			providerKey:    constants.ProviderKeycloak,
+			listErr:        errors.New("apiserver list failed"),
+			existingPolicy: true,
+			wantErr:        true,
+			wantStatus:     metav1.ConditionFalse, wantReason: "TokenExchangeFailed", wantPolicy: true, wantAllowRule: true,
+		},
+		{
+			// The app is not stored in the fake client, so clearing the annotation fails.
+			// That path sets no condition, so wantReason is empty.
+			name:           "clearing force-reprovision annotation fails: enforced policy still written",
+			auth:           &appsv1.AuthConfig{Enabled: true, Provider: constants.ProviderKeycloak, ProvisionClient: ptr.To(true), Groups: []string{"finance"}},
+			providerKey:    constants.ProviderKeycloak,
+			forceReprov:    true,
+			existingPolicy: true,
+			wantErr:        true,
+			wantPolicy:     true, wantAllowRule: true,
+		},
+		{
 			name:        "enforceAtGateway false: no policy and GroupsEnforcedByApplication",
 			auth:        &appsv1.AuthConfig{Enabled: true, Provider: constants.ProviderKeycloak, ProvisionClient: ptr.To(true), Groups: []string{"finance"}, EnforceAtGateway: ptr.To(false)},
 			providerKey: constants.ProviderKeycloak,
@@ -2036,6 +2108,9 @@ func TestReconcileAuth_Groups(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{Name: "finance-dash", Namespace: "finance"},
 				Spec:       appsv1.NebariAppSpec{Hostname: "dash.example.com", Auth: tt.auth},
 			}
+			if tt.forceReprov {
+				app.Annotations = map[string]string{constants.AnnotationForceReprovision: "true"}
+			}
 			secret := &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{Name: naming.ClientSecretName(app), Namespace: "finance"},
 				Data:       map[string][]byte{constants.ClientSecretKey: []byte("s")},
@@ -2044,21 +2119,8 @@ func TestReconcileAuth_Groups(t *testing.T) {
 			if !tt.noSecret {
 				builder = builder.WithObjects(secret)
 			}
-			if tt.policyWriteErr != nil {
-				builder = builder.WithInterceptorFuncs(interceptor.Funcs{
-					Create: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
-						if _, ok := obj.(*egv1alpha1.SecurityPolicy); ok {
-							return tt.policyWriteErr
-						}
-						return cl.Create(ctx, obj, opts...)
-					},
-					Update: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
-						if _, ok := obj.(*egv1alpha1.SecurityPolicy); ok {
-							return tt.policyWriteErr
-						}
-						return cl.Update(ctx, obj, opts...)
-					},
-				})
+			if tt.policyWriteErr != nil || tt.rbacWriteErr != nil || tt.listErr != nil {
+				builder = builder.WithInterceptorFuncs(failingWrites(tt.policyWriteErr, tt.rbacWriteErr, tt.listErr))
 			}
 			if tt.existingPolicy {
 				builder = builder.WithObjects(&egv1alpha1.SecurityPolicy{
@@ -2080,15 +2142,14 @@ func TestReconcileAuth_Groups(t *testing.T) {
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("ReconcileAuth() error = %v, wantErr %v", err, tt.wantErr)
 			}
-			if tt.provisionError != nil && !errors.Is(err, tt.provisionError) {
-				t.Errorf("error %v does not wrap provisioning error %v", err, tt.provisionError)
-			}
-			if tt.policyWriteErr != nil && !errors.Is(err, tt.policyWriteErr) {
-				t.Errorf("error %v does not wrap policy write error %v", err, tt.policyWriteErr)
-			}
+			assertWraps(t, err, tt.provisionError, tt.policyWriteErr, tt.rbacWriteErr, tt.listErr)
 
 			cond := conditions.GetCondition(app, appsv1.ConditionTypeAuthReady)
-			if cond == nil || cond.Status != tt.wantStatus || cond.Reason != tt.wantReason {
+			if tt.wantReason == "" {
+				if cond != nil {
+					t.Errorf("AuthReady = %+v, want no condition", cond)
+				}
+			} else if cond == nil || cond.Status != tt.wantStatus || cond.Reason != tt.wantReason {
 				t.Errorf("AuthReady = %+v, want status %s reason %s", cond, tt.wantStatus, tt.wantReason)
 			}
 
