@@ -308,6 +308,13 @@ func (r *AuthReconciler) ReconcileAuth(ctx context.Context, nebariApp *appsv1.Ne
 		return groupsNotResolved
 	}
 
+	return r.setAuthReadyCondition(nebariApp, groups)
+}
+
+// setAuthReadyCondition sets the final AuthReady condition once every auth step
+// has succeeded. The groups mode decides the reason, and the deny-all modes
+// return an error.
+func (r *AuthReconciler) setAuthReadyCondition(nebariApp *appsv1.NebariApp, groups groupsMode) error {
 	switch groups {
 	case groupsModeRequireKeycloak:
 		msg := fmt.Sprintf("spec.auth.groups requires provider %q for gateway enforcement; all requests are denied", constants.ProviderKeycloak)
