@@ -38,10 +38,11 @@ const (
 	// authorizedPartyClaimName is the azp claim Keycloak sets to the client that requested the token.
 	authorizedPartyClaimName = "azp"
 
-	// maxClaimValuesPerRule is Envoy Gateway's cap on JWTClaim.Values
-	// (+kubebuilder:validation:MaxItems=128 at v1.6.3). Longer group lists are
-	// split across several allow rules.
-	maxClaimValuesPerRule = 128
+	// maxClaimValuesPerRule stays under Envoy Gateway's cap on JWTClaim.Values
+	// (MaxItems=16 before v1.6.0, 128 from v1.6.0); 16 is valid on every version.
+	// Authorization.Rules has no MaxItems, so longer group lists are split
+	// across several allow rules.
+	maxClaimValuesPerRule = 16
 
 	// groupsClaimFormatVersion is hashed into AuthConfigHash so that every app
 	// reprovisions once when the groups claim format changes.

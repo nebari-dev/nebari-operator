@@ -305,9 +305,9 @@ one oauth2 HMAC secret, so the cookie check alone does not tie a token to this a
 
 The `oidc` section's access-token cookie is renamed to `nebari-at-<namespace>-<name>` so the `jwt` provider can read a
 known cookie and verify the token against the realm JWKS. Apps that enforce groups at the gateway get this pinned cookie, so their users are logged out once when the app
-starts enforcing (for example on upgrade); other apps keep the default cookie name. A token with no `groups` claim matches no rule and receives 403. Envoy Gateway caps each
-claim at 128 values, so with more than 128 groups the values are split across rules `allow-groups`, `allow-groups-2`,
-and so on.
+starts enforcing (for example on upgrade); other apps keep the default cookie name. A token with no `groups` claim matches no rule and receives 403. The operator puts at
+most 16 values in one rule (Envoy Gateway's limit on a claim before v1.6.0), so with more than 16 groups the values are
+split across rules `allow-groups`, `allow-groups-2`, and so on.
 
 **Claim format.** The `groups` claim carries full group paths such as `/finance` or `/ops/oncall`. The default
 `group-membership` mapper is switched to `full.path=true` for every app, not only apps that set `auth.groups`. Entries
