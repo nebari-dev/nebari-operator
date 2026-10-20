@@ -557,6 +557,13 @@ func (r *RoutingReconciler) ReconcileRouting(ctx context.Context, nebariApp *Neb
 }
 ```
 
+**Ownership:** both the main HTTPRoute (`{nebariapp-name}-route`) and the public HTTPRoute
+(`{nebariapp-name}-public-route`) carry the NebariApp as their controller owner (for garbage collection and the
+controller's `Owns(&HTTPRoute{})` watch). On every update the operator re-asserts that reference, so a route whose
+owner reference was stripped is re-adopted. If a different controller already owns a route at that name, the
+operator does not take it over: the update fails with `AlreadyOwnedError`, the route is left unchanged, and the main
+route reports `RoutingReady=False` (`HTTPRouteOwnershipConflict`).
+
 ### 3. Status Updates
 
 The operator maintains the `RoutingReady` condition:

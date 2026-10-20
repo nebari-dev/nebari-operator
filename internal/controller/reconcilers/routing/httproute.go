@@ -18,6 +18,7 @@ package routing
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
@@ -100,8 +101,21 @@ func (r *RoutingReconciler) ReconcileRouting(ctx context.Context, nebariApp *app
 		return err
 	}
 
-	// Update existing HTTPRoute
+	// Update existing HTTPRoute. Re-assert the controller reference on the fetched
+	// route so one whose owner reference was stripped is re-adopted: the
+	// controller's Owns(&HTTPRoute{}) watch maps events back by that reference.
 	existingRoute.Spec = desiredRoute.Spec
+	if err := controllerutil.SetControllerReference(nebariApp, existingRoute, r.Scheme); err != nil {
+		logger.Error(err, "Failed to set controller reference on HTTPRoute")
+		reason := appsv1.ReasonFailed
+		var alreadyOwned *controllerutil.AlreadyOwnedError
+		if stderrors.As(err, &alreadyOwned) {
+			reason = appsv1.ReasonHTTPRouteOwnershipConflict
+		}
+		conditions.SetCondition(nebariApp, appsv1.ConditionTypeRoutingReady, metav1.ConditionFalse,
+			reason, fmt.Sprintf("Failed to set controller reference on HTTPRoute: %v", err))
+		return err
+	}
 	if err := r.Client.Update(ctx, existingRoute); err != nil {
 		// Conflict errors are expected when multiple reconciliations happen concurrently
 		// Return nil to avoid error logging - the controller will naturally retry
@@ -339,8 +353,13 @@ func (r *RoutingReconciler) ReconcilePublicRoute(ctx context.Context, nebariApp 
 		return err
 	}
 
-	// Update existing public HTTPRoute
+	// Update existing public HTTPRoute, re-adopting it if its owner reference was
+	// stripped (see the main HTTPRoute update path above).
 	existingRoute.Spec = desiredRoute.Spec
+	if err := controllerutil.SetControllerReference(nebariApp, existingRoute, r.Scheme); err != nil {
+		logger.Error(err, "Failed to set controller reference on public HTTPRoute")
+		return err
+	}
 	if err := r.Client.Update(ctx, existingRoute); err != nil {
 		if errors.IsConflict(err) {
 			logger.V(1).Info("Public HTTPRoute update conflict, will retry", "name", existingRoute.Name)

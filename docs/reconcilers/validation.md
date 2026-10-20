@@ -194,7 +194,7 @@ func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 Currently, all validation failures are treated as temporary:
 - Namespace label can be added
 - Service can be created
-- Both trigger reconciliation via watches
+- Neither is watched, so the fix is picked up on the next retry (the 5-minute requeue above)
 
 Future enhancements may distinguish:
 - **Temporary**: Service not ready yet, certificate pending

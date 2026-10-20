@@ -43,6 +43,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -791,13 +792,25 @@ func (p *KeycloakProvider) storeClientSecret(ctx context.Context, nebariApp *app
 	err := p.Client.Get(ctx, types.NamespacedName{Name: secretName, Namespace: nebariApp.Namespace}, existingSecret)
 
 	if apierrors.IsNotFound(err) {
-		// Create new secret
+		// Create the secret with the NebariApp as its controller owner, so it is
+		// garbage-collected with the NebariApp and the controller's
+		// Owns(&corev1.Secret{}) watch maps its events back to this NebariApp.
+		if err := controllerutil.SetControllerReference(nebariApp, secret, p.Client.Scheme()); err != nil {
+			return fmt.Errorf("failed to set controller reference on OIDC client secret: %w", err)
+		}
 		return p.Client.Create(ctx, secret)
 	} else if err != nil {
 		return fmt.Errorf("failed to check for existing secret: %w", err)
 	}
 
-	// Update existing secret
+	// Set the controller reference on the fetched secret, not the fresh literal:
+	// that adopts a secret created before owner references were applied, keeps any
+	// other (non-controller) owner references, and refuses with AlreadyOwnedError
+	// when a different controller already owns a secret at this name.
+	if err := controllerutil.SetControllerReference(nebariApp, existingSecret, p.Client.Scheme()); err != nil {
+		return fmt.Errorf("failed to set controller reference on OIDC client secret %s/%s: %w",
+			existingSecret.Namespace, existingSecret.Name, err)
+	}
 	existingSecret.Data = secret.Data
 	return p.Client.Update(ctx, existingSecret)
 }
