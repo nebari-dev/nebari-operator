@@ -1976,8 +1976,12 @@ func TestKeycloakProvider_SyncClientProtocolMappers_PrunesStaleGroupsMappers(t *
 	existing := `{"id":"cid","protocolMappers":[
 		{"id":"m-stale","name":"old-groups","protocol":"openid-connect","protocolMapper":"oidc-hardcoded-claim-mapper","config":{"claim.name":"groups"}},
 		{"id":"m-desired","name":"nebari-group-membership","protocol":"openid-connect","protocolMapper":"oidc-group-membership-mapper","config":{"claim.name":"groups"}},
-		{"id":"m-other","name":"dept","protocol":"openid-connect","protocolMapper":"oidc-hardcoded-claim-mapper","config":{"claim.name":"department"}}
+		{"id":"m-other","name":"dept","protocol":"openid-connect","protocolMapper":"oidc-hardcoded-claim-mapper","config":{"claim.name":"department"}},
+		{"id":"m-unrelated","name":"hand-made-email","protocol":"openid-connect","protocolMapper":"oidc-usermodel-property-mapper","config":{"claim.name":"email"}},
+		{"name":"no-id-groups","protocol":"openid-connect","protocolMapper":"oidc-hardcoded-claim-mapper","config":{"claim.name":"groups"}}
 	]}`
+	// hand-made-email is not desired but does not emit groups, so it is kept.
+	// no-id-groups emits groups but has no ID to delete by, so it is skipped.
 	customDept := []appsv1.KeycloakProtocolMapperConfig{{
 		Name: "dept", ProtocolMapper: "oidc-hardcoded-claim-mapper",
 		Config: map[string]string{"claim.name": "department"},

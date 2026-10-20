@@ -51,6 +51,12 @@ func TestCheckGroupsClaim(t *testing.T) {
 		Name: "my-groups", ProtocolMapper: "oidc-hardcoded-claim-mapper",
 		Config: map[string]string{"claim.name": "groups", "access.token.claim": "true"},
 	}
+	// Passes every config check, so only the mapper type rejects it. A user
+	// attribute mapper could let users write their own groups claim.
+	attributeMapper := appsv1.KeycloakProtocolMapperConfig{
+		Name: "my-groups", ProtocolMapper: "oidc-usermodel-attribute-mapper",
+		Config: map[string]string{"claim.name": "groups", "full.path": "true", "access.token.claim": "true"},
+	}
 
 	tests := []struct {
 		name     string
@@ -64,6 +70,7 @@ func TestCheckGroupsClaim(t *testing.T) {
 		{name: "bare names", kc: &appsv1.KeycloakClientConfig{ProtocolMappers: []appsv1.KeycloakProtocolMapperConfig{bareNames}}, conflict: true},
 		{name: "not in access token", kc: &appsv1.KeycloakClientConfig{ProtocolMappers: []appsv1.KeycloakProtocolMapperConfig{idTokenOnly}}, conflict: true},
 		{name: "other mapper type emitting groups", kc: &appsv1.KeycloakClientConfig{ProtocolMappers: []appsv1.KeycloakProtocolMapperConfig{scriptMapper}}, conflict: true},
+		{name: "other mapper type with full paths in the access token", kc: &appsv1.KeycloakClientConfig{ProtocolMappers: []appsv1.KeycloakProtocolMapperConfig{attributeMapper}}, conflict: true},
 		{name: "one compatible and one conflicting", kc: &appsv1.KeycloakClientConfig{ProtocolMappers: []appsv1.KeycloakProtocolMapperConfig{fullPathMapper("a"), bareNames}}, conflict: true},
 	}
 	for _, tt := range tests {
