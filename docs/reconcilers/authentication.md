@@ -324,8 +324,9 @@ rules) rather than deleting the policy or leaving it open:
 With `enforceAtGateway: false` the operator provisions the claim but writes no authorization rules, and `AuthReady` is
 `True` with reason `GroupsEnforcedByApplication`.
 
-**Fail closed.** If any auth step fails while groups are enforced (for example, a path listed in `auth.groups` does not
-exist in Keycloak), the operator still writes the enforced policy, so the app denies users instead of opening up.
+**Fail closed.** If any auth step fails while groups are enforced (for example, Keycloak is unreachable during
+provisioning), the operator still writes the enforced policy, so the app denies users instead of opening up. A path
+that does not exist is not a failure: see `GroupsNotResolved` above.
 
 ## Status Management
 

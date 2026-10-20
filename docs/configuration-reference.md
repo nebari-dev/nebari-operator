@@ -383,9 +383,8 @@ groups in its `groups` claim.
   denied and `AuthReady` reports reason `GroupsClaimConflict`. The app's `Ready` condition is also `False`.
 - When `keycloakConfig.protocolMappers` is set and no custom mapper emits `groups`, the operator appends its own
   mapper named `nebari-group-membership`.
-- The operator syncs the listed groups in Keycloak. A bare name (`finance`) is looked up by name and created if it is
-  missing. A path entry (`/ops/oncall`) is looked up by path and is never created automatically; reconcile fails if
-  the path does not resolve. A failed reconcile still leaves the enforced policy in place, so the app stays closed.
+- The operator syncs the listed groups in Keycloak, as described below. If any auth step fails, the enforced policy is
+  still written, so the app stays closed.
 
 See [Group-based access control](reconcilers/authentication.md#group-based-access-control) for the SecurityPolicy the
 operator writes.
