@@ -2117,3 +2117,52 @@ func TestReconcileAuth_Groups(t *testing.T) {
 		})
 	}
 }
+
+// TestReconcileAuth_DenyAllReasonOutranksGroupsNotResolved checks that a
+// deny-all groups mode is reported ahead of GroupsNotResolved. Creating the
+// missing group would not let anyone in, so the condition must not suggest it.
+func TestReconcileAuth_DenyAllReasonOutranksGroupsNotResolved(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = appsv1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+	_ = rbacv1.AddToScheme(scheme)
+	_ = egv1alpha1.AddToScheme(scheme)
+
+	app := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{Name: "finance-dash", Namespace: "finance"},
+		Spec: appsv1.NebariAppSpec{Hostname: "dash.example.com", Auth: &appsv1.AuthConfig{
+			Enabled: true, Provider: constants.ProviderKeycloak, ProvisionClient: ptr.To(true),
+			Groups: []string{"/missing"},
+			KeycloakConfig: &appsv1.KeycloakClientConfig{ProtocolMappers: []appsv1.KeycloakProtocolMapperConfig{{
+				Name: "g", ProtocolMapper: "oidc-group-membership-mapper",
+				Config: map[string]string{"claim.name": "groups", "full.path": "false", "access.token.claim": "true"},
+			}}},
+		}},
+	}
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: naming.ClientSecretName(app), Namespace: "finance"},
+		Data:       map[string][]byte{constants.ClientSecretKey: []byte("s")},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(secret).Build()
+	provider := &mockProvider{
+		issuerURL: "https://kc.example.com/realms/nebari", clientID: "c", jwksURL: "http://kc/certs",
+		supportsProvisioning: true,
+		provisionError:       &providers.GroupsNotResolvedError{Realm: "nebari", Paths: []string{"/missing"}},
+	}
+	r := &AuthReconciler{
+		Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(20),
+		Providers: map[string]providers.OIDCProvider{constants.ProviderKeycloak: provider},
+	}
+
+	err := r.ReconcileAuth(context.Background(), app)
+	if err == nil || IsGroupsNotResolved(err) {
+		t.Fatalf("expected a deny-all error that is not GroupsNotResolved, got %v", err)
+	}
+	cond := conditions.GetCondition(app, appsv1.ConditionTypeAuthReady)
+	if cond == nil || cond.Status != metav1.ConditionFalse || cond.Reason != appsv1.ReasonGroupsClaimConflict {
+		t.Fatalf("AuthReady = %+v, want False/%s", cond, appsv1.ReasonGroupsClaimConflict)
+	}
+	if app.Status.AuthConfigHash != "" {
+		t.Errorf("expected AuthConfigHash to stay unset while groups are unresolved, got %q", app.Status.AuthConfigHash)
+	}
+}

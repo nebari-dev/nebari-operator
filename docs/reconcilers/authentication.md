@@ -150,6 +150,9 @@ Any other provisioning error still fails as `ProvisioningFailed`. Bare-name entr
 top-level group the operator creates on 404) never trigger `GroupsNotResolved`; only
 path-form entries that fail resolution do.
 
+If the policy is deny-all because of `GroupsRequireKeycloak` or `GroupsClaimConflict`, that reason is reported instead
+of `GroupsNotResolved`, since creating the missing group would not admit anyone.
+
 ### 3. Configuration Validation
 
 **Purpose**: Ensures OIDC client credentials exist before creating SecurityPolicy.
