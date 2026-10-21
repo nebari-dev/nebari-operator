@@ -161,10 +161,24 @@ var _ = Describe("Auth groups gateway enforcement", Ordered, func() {
 
 	// reprovision asks the operator to provision the client again, which is
 	// when it checks the mappers on the client.
+	// It returns once the operator has provisioned again, which it signals by
+	// clearing the annotation.
 	reprovision := func(name string) {
 		_, err := utils.Run(exec.Command("kubectl", "annotate", "nebariapp", name, "-n", ns,
 			"nebari.dev/force-reprovision=true", "--overwrite"))
 		Expect(err).NotTo(HaveOccurred())
+		Eventually(func(g Gomega) {
+			out, err := utils.Run(exec.Command("kubectl", "get", "nebariapp", name, "-n", ns, "-o",
+				`jsonpath={.metadata.annotations.nebari\.dev/force-reprovision}`))
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(out).To(BeEmpty())
+		}, 3*time.Minute, 5*time.Second).Should(Succeed())
+	}
+
+	// eventuallyLogin waits for Envoy to pick up the policy the operator wrote.
+	eventuallyLogin := func(host, username, want, why string) {
+		Eventually(func() string { return loginStatus(host, gatewayIP, username) },
+			2*time.Minute, 10*time.Second).Should(Equal(want), why)
 	}
 
 	waitAuthReady := func(name, status, reason string) {
@@ -255,14 +269,33 @@ spec:
 		applyApp(name, host, "/e2e-allowed")
 		clientID := clientInternalID(ns + "-" + name)
 
-		By("a hand-added group-membership mapper without full paths is kept and still admits members")
+		By("a hand-added full-path group-membership mapper is kept and still admits members")
+		fullID := createClientMapper(clientID, "hand-full-path", "oidc-group-membership-mapper",
+			`config."claim.name"=groups`, `config."full.path"=true`, `config."access.token.claim"=true`)
+		reprovision(name)
+		waitAuthReady(name, "True", "AuthConfigured")
+		Expect(clientMapperNames(clientID)).To(ContainElement("hand-full-path"))
+		eventuallyLogin(host, "e2e-in", "200", "member of /e2e-allowed")
+		Expect(loginStatus(host, gatewayIP, "e2e-out")).To(Equal("403"), "user with no groups claim")
+		deleteClientMapper(clientID, fullID)
+
+		By("a hand-added mapper emitting group names is kept, and denies everyone")
+		// A group can be named "/e2e-allowed". With a bare-name mapper on the
+		// client, its members would carry the rule value without being in
+		// /e2e-allowed, so the gateway must not trust the claim.
+		forged, err := kcadm("create", "groups", "-r", kcRealm, "-i", "-s", "name=/e2e-allowed")
+		Expect(err).NotTo(HaveOccurred(), forged)
+		forgedID := strings.TrimSpace(forged)
+		groupIDs = append(groupIDs, forgedID)
+		addToGroup(userIDs[1], forgedID) // e2e-out
 		bareID := createClientMapper(clientID, "hand-bare-names", "oidc-group-membership-mapper",
 			`config."claim.name"=groups`, `config."full.path"=false`, `config."access.token.claim"=true`)
 		reprovision(name)
-		waitAuthReady(name, "True", "AuthConfigured")
+		waitAuthReady(name, "False", "GroupsClaimConflict")
 		Expect(clientMapperNames(clientID)).To(ContainElement("hand-bare-names"))
-		Expect(loginStatus(host, gatewayIP, "e2e-in")).To(Equal("200"), "member of /e2e-allowed")
-		Expect(loginStatus(host, gatewayIP, "e2e-out")).To(Equal("403"), "user with no groups claim")
+		eventuallyLogin(host, "e2e-in", "403", "the policy denies everyone during the conflict")
+		Expect(loginStatus(host, gatewayIP, "e2e-out")).To(Equal("403"),
+			"a member of a group named /e2e-allowed must not pass for /e2e-allowed")
 		deleteClientMapper(clientID, bareID)
 
 		By("a hand-added mapper that hardcodes the groups claim is kept, and denies everyone")
@@ -275,16 +308,15 @@ spec:
 		reprovision(name)
 		waitAuthReady(name, "False", "GroupsClaimConflict")
 		Expect(clientMapperNames(clientID)).To(ContainElement("hand-hardcoded-groups"))
-		time.Sleep(10 * time.Second) // let Envoy receive the deny-all policy
+		eventuallyLogin(host, "e2e-in", "403", "the policy denies everyone during the conflict")
 		Expect(loginStatus(host, gatewayIP, "e2e-out")).To(Equal("403"), "the hardcoded claim must not admit anyone")
-		Expect(loginStatus(host, gatewayIP, "e2e-in")).To(Equal("403"), "the policy denies everyone during the conflict")
 
 		By("removing the unsafe mapper restores access")
 		deleteClientMapper(clientID, hardID)
 		reprovision(name)
 		waitAuthReady(name, "True", "AuthConfigured")
-		time.Sleep(10 * time.Second) // let Envoy receive the restored policy
-		Expect(loginStatus(host, gatewayIP, "e2e-in")).To(Equal("200"), "member of /e2e-allowed")
+		eventuallyLogin(host, "e2e-in", "200", "member of /e2e-allowed")
+		Expect(loginStatus(host, gatewayIP, "e2e-out")).To(Equal("403"), "the forged group still does not admit")
 	})
 })
 
