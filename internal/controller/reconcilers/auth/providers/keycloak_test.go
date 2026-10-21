@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -1063,7 +1064,7 @@ func TestKeycloakProvider_SyncClientProtocolMappers_NoMappers(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Should return nil without making any Keycloak calls
-			err := provider.syncClientProtocolMappers(context.Background(), nil, nil, "fake-id", tt.nebariApp)
+			_, err := provider.syncClientProtocolMappers(context.Background(), nil, nil, "fake-id", tt.nebariApp)
 			if err != nil {
 				t.Errorf("expected no error, got: %v", err)
 			}
@@ -1629,13 +1630,17 @@ func TestKeycloakProvider_ConfigureTokenExchange(t *testing.T) {
 //
 // With withClient set, it also serves what ProvisionClient needs for an
 // existing client: the admin token, the client lookup, its secret and update.
+// clientMappers is the client's protocolMappers JSON array (empty when unset),
+// and mapper deletions are recorded by mapper ID.
 type fakeGroupsKeycloak struct {
-	t          *testing.T
-	groups     map[string]string
-	status     int // when non-zero, every lookup fails with this status
-	withClient bool
-	created    []string
-	requests   []string
+	t              *testing.T
+	groups         map[string]string
+	status         int // when non-zero, every lookup fails with this status
+	withClient     bool
+	clientMappers  string
+	created        []string
+	deletedMappers []string
+	requests       []string
 }
 
 func (f *fakeGroupsKeycloak) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -1694,8 +1699,15 @@ func (f *fakeGroupsKeycloak) serveClient(w http.ResponseWriter, r *http.Request)
 		w.WriteHeader(http.StatusNoContent)
 	case r.Method == http.MethodGet && r.URL.Path == "/admin/realms/test/clients/client-uuid":
 		// Read by protocol mapper sync, which runs whenever auth.groups is set.
+		mappers := f.clientMappers
+		if mappers == "" {
+			mappers = "[]"
+		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"client-uuid","protocolMappers":[]}`))
+		_, _ = w.Write([]byte(`{"id":"client-uuid","protocolMappers":` + mappers + `}`))
+	case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/admin/realms/test/clients/client-uuid/protocol-mappers/models/"):
+		f.deletedMappers = append(f.deletedMappers, r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:])
+		w.WriteHeader(http.StatusNoContent)
 	case r.Method == http.MethodPost && r.URL.Path == "/admin/realms/test/clients/client-uuid/protocol-mappers/models":
 		w.Header().Set("Location", "/admin/realms/test/clients/client-uuid/protocol-mappers/models/mapper-uuid")
 		w.WriteHeader(http.StatusCreated)
@@ -1935,6 +1947,67 @@ func TestProvisionClient_GroupsNotResolved(t *testing.T) {
 	}
 }
 
+// TestProvisionClient_GroupsMappersRemoved checks that groups mappers deleted
+// from the client are reported once the client and its Secret are in place,
+// alone or together with unresolved group paths.
+func TestProvisionClient_GroupsMappersRemoved(t *testing.T) {
+	handAdded := `[{"id":"m-hand","name":"hand-hardcoded","protocol":"openid-connect","protocolMapper":"oidc-hardcoded-claim-mapper","config":{"claim.name":"groups"}}]`
+	tests := []struct {
+		name            string
+		groups          []string
+		wantNotResolved bool
+	}{
+		{name: "removed mappers only", groups: []string{"/exists"}},
+		{name: "removed mappers and unresolved paths", groups: []string{"/exists", "/does-not-exist"}, wantNotResolved: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scheme := runtime.NewScheme()
+			_ = corev1.AddToScheme(scheme)
+			_ = appsv1.AddToScheme(scheme)
+			k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+			kcServer := &fakeGroupsKeycloak{t: t, groups: map[string]string{"/exists": "exists-uuid"}, withClient: true, clientMappers: handAdded}
+			server := httptest.NewServer(kcServer)
+			defer server.Close()
+
+			provider := &KeycloakProvider{
+				Client: k8sClient,
+				Config: config.KeycloakConfig{URL: server.URL, Realm: "test", AdminUsername: "admin", AdminPassword: "admin"},
+			}
+			app := &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-app", Namespace: "default"},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "test.example.com",
+					Auth:     &appsv1.AuthConfig{Enabled: true, Groups: tt.groups},
+				},
+			}
+
+			err := provider.ProvisionClient(context.Background(), app)
+
+			var removed *GroupsMappersRemovedError
+			if !errors.As(err, &removed) {
+				t.Fatalf("expected *GroupsMappersRemovedError, got %v", err)
+			}
+			if want := []string{"hand-hardcoded"}; !reflect.DeepEqual(removed.Mappers, want) {
+				t.Errorf("Mappers = %q, want %q", removed.Mappers, want)
+			}
+			if want := []string{"m-hand"}; !reflect.DeepEqual(kcServer.deletedMappers, want) {
+				t.Errorf("deleted mappers = %q, want %q", kcServer.deletedMappers, want)
+			}
+			var notResolved *GroupsNotResolvedError
+			if got := errors.As(err, &notResolved); got != tt.wantNotResolved {
+				t.Errorf("GroupsNotResolvedError present = %v, want %v (err: %v)", got, tt.wantNotResolved, err)
+			}
+			if err := k8sClient.Get(context.Background(), types.NamespacedName{
+				Name: naming.ClientSecretName(app), Namespace: app.Namespace,
+			}, &corev1.Secret{}); err != nil {
+				t.Fatalf("expected the client Secret to be stored before mapper removal is reported: %v", err)
+			}
+		})
+	}
+}
+
 func TestKeycloakProvider_GetJWKSURL(t *testing.T) {
 	tests := []struct {
 		name string
@@ -1982,6 +2055,7 @@ func TestKeycloakProvider_SyncClientProtocolMappers_PrunesStaleGroupsMappers(t *
 	]}`
 	// hand-made-email is not desired but does not emit groups, so it is kept.
 	// no-id-groups emits groups but has no ID to delete by, so it is skipped.
+	mapperNamesByID := map[string]string{"m-stale": "old-groups"}
 	customDept := []appsv1.KeycloakProtocolMapperConfig{{
 		Name: "dept", ProtocolMapper: "oidc-hardcoded-claim-mapper",
 		Config: map[string]string{"claim.name": "department"},
@@ -2022,12 +2096,21 @@ func TestKeycloakProvider_SyncClientProtocolMappers_PrunesStaleGroupsMappers(t *
 				Enabled: true, Groups: tt.groups,
 				KeycloakConfig: &appsv1.KeycloakClientConfig{ProtocolMappers: tt.mappers},
 			}}}
-			err := provider.syncClientProtocolMappers(context.Background(), gocloak.NewClient(server.URL), &gocloak.JWT{AccessToken: "t"}, "cid", app)
+			removed, err := provider.syncClientProtocolMappers(context.Background(), gocloak.NewClient(server.URL), &gocloak.JWT{AccessToken: "t"}, "cid", app)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
+			sort.Strings(deleted)
 			if !reflect.DeepEqual(deleted, tt.wantDeleted) {
 				t.Errorf("deleted = %v, want %v", deleted, tt.wantDeleted)
+			}
+			var wantRemoved []string
+			for _, id := range tt.wantDeleted {
+				wantRemoved = append(wantRemoved, mapperNamesByID[id])
+			}
+			sort.Strings(wantRemoved)
+			if !reflect.DeepEqual(removed, wantRemoved) {
+				t.Errorf("removed = %v, want %v", removed, wantRemoved)
 			}
 		})
 	}

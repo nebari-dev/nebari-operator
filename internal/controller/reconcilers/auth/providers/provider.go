@@ -102,6 +102,18 @@ func (e *GroupsNotResolvedError) Error() string {
 		e.Realm, strings.Join(e.Paths, ", "))
 }
 
+// GroupsMappersRemovedError reports protocol mappers that wrote the groups
+// claim without being declared in the NebariApp, and that provisioning deleted.
+// Everything else was provisioned.
+type GroupsMappersRemovedError struct {
+	Mappers []string
+}
+
+func (e *GroupsMappersRemovedError) Error() string {
+	return fmt.Sprintf("deleted protocol mappers that wrote the groups claim but are not in spec.auth.keycloakConfig.protocolMappers: %s (declare custom mappers in the NebariApp)",
+		strings.Join(e.Mappers, ", "))
+}
+
 // GroupsClaimProvider is implemented by providers whose access tokens carry a
 // groups claim that the gateway can verify against the provider's signing keys.
 type GroupsClaimProvider interface {

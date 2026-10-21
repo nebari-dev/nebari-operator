@@ -159,6 +159,21 @@ var _ = Describe("Auth groups gateway enforcement", Ordered, func() {
 		CleanupTestNamespace(ns)
 	})
 
+	// reprovision asks the operator to provision the client again, which is
+	// when it prunes mappers on the client. It returns once the operator has
+	// provisioned again, which it signals by clearing the annotation.
+	reprovision := func(name string) {
+		_, err := utils.Run(exec.Command("kubectl", "annotate", "nebariapp", name, "-n", ns,
+			"nebari.dev/force-reprovision=true", "--overwrite"))
+		Expect(err).NotTo(HaveOccurred())
+		Eventually(func(g Gomega) {
+			out, err := utils.Run(exec.Command("kubectl", "get", "nebariapp", name, "-n", ns, "-o",
+				`jsonpath={.metadata.annotations.nebari\.dev/force-reprovision}`))
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(out).To(BeEmpty())
+		}, 3*time.Minute, 5*time.Second).Should(Succeed())
+	}
+
 	applyApp := func(name, host, group string) {
 		yaml := fmt.Sprintf(`
 apiVersion: reconcilers.nebari.dev/v1
@@ -230,4 +245,68 @@ spec:
 		applyApp("groups-parent", host, "/e2e-parent")
 		Expect(loginStatus(host, gatewayIP, "e2e-child")).To(Equal("403"), "member of /e2e-parent/e2e-child only")
 	})
+
+	It("deletes groups mappers added to the client by hand, and reports them", func() {
+		name := "groups-mappers"
+		host := "groups-mappers.nebari.local"
+		applyApp(name, host, "/e2e-allowed")
+		clientID := clientInternalID(ns + "-" + name)
+
+		By("adding a groups mapper and an unrelated mapper by hand")
+		// If the gateway trusted it, it would put every user in /e2e-allowed.
+		createClientMapper(clientID, "hand-hardcoded-groups", "oidc-hardcoded-claim-mapper",
+			`config."claim.name"=groups`,
+			// Quoted so kcadm stores the JSON text as the value instead of parsing it.
+			`config."claim.value"="[\"/e2e-allowed\"]"`,
+			`config."jsonType.label"=JSON`, `config."access.token.claim"=true`)
+		createClientMapper(clientID, "hand-department", "oidc-hardcoded-claim-mapper",
+			`config."claim.name"=department`, `config."claim.value"=e2e`, `config."access.token.claim"=true`)
+
+		reprovision(name)
+		Eventually(func(g Gomega) {
+			names := clientMapperNames(clientID)
+			g.Expect(names).NotTo(ContainElement("hand-hardcoded-groups"))
+			g.Expect(names).To(ContainElement("hand-department"), "mappers for other claims are kept")
+		}, time.Minute, 5*time.Second).Should(Succeed())
+		Eventually(func(g Gomega) {
+			out, err := utils.Run(exec.Command("kubectl", "get", "events", "-n", ns,
+				"--field-selector", "reason=GroupsMappersRemoved,involvedObject.name="+name,
+				"-o", "jsonpath={.items[*].type} {.items[*].message}"))
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(out).To(HavePrefix("Warning"))
+			g.Expect(out).To(ContainSubstring("hand-hardcoded-groups"))
+		}, time.Minute, 5*time.Second).Should(Succeed())
+		Expect(loginStatus(host, gatewayIP, "e2e-in")).To(Equal("200"), "member of /e2e-allowed")
+		Expect(loginStatus(host, gatewayIP, "e2e-out")).To(Equal("403"), "user in no groups")
+	})
 })
+
+// clientInternalID returns the Keycloak internal ID of the client with the
+// given clientId.
+func clientInternalID(clientID string) string {
+	out, err := kcadm("get", "clients", "-r", kcRealm, "-q", "clientId="+clientID,
+		"--fields", "id", "--format", "csv", "--noquotes")
+	Expect(err).NotTo(HaveOccurred(), out)
+	id := strings.TrimSpace(out)
+	Expect(id).NotTo(BeEmpty(), "client %s not found", clientID)
+	return id
+}
+
+// createClientMapper adds a protocol mapper to the client by hand, the way a
+// user would in Keycloak. settings are kcadm -s values.
+func createClientMapper(clientID, name, mapperType string, settings ...string) {
+	args := []string{"create", "clients/" + clientID + "/protocol-mappers/models", "-r", kcRealm,
+		"-s", "name=" + name, "-s", "protocol=openid-connect", "-s", "protocolMapper=" + mapperType}
+	for _, setting := range settings {
+		args = append(args, "-s", setting)
+	}
+	out, err := kcadm(args...)
+	Expect(err).NotTo(HaveOccurred(), out)
+}
+
+func clientMapperNames(clientID string) []string {
+	out, err := kcadm("get", "clients/"+clientID+"/protocol-mappers/models", "-r", kcRealm,
+		"--fields", "name", "--format", "csv", "--noquotes")
+	Expect(err).NotTo(HaveOccurred(), out)
+	return strings.Fields(out)
+}

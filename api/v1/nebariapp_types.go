@@ -763,6 +763,11 @@ const (
 
 // Event reasons for recording Kubernetes events
 const (
+	// EventReasonGroupsMappersRemoved is used when provisioning deletes protocol
+	// mappers that wrote the groups claim without being declared in
+	// spec.auth.keycloakConfig.protocolMappers.
+	EventReasonGroupsMappersRemoved = "GroupsMappersRemoved"
+
 	// EventReasonValidationFailed is used when validation fails
 	EventReasonValidationFailed = "ValidationFailed"
 
