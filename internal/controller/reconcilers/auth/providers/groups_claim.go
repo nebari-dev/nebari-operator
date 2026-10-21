@@ -27,19 +27,19 @@ import (
 )
 
 // ErrGroupsClaimConflict reports a protocol mapper that writes the groups claim
-// into the access token from something other than group membership, so the
-// gateway cannot trust the claim.
-var ErrGroupsClaimConflict = errors.New("a protocol mapper other than a group-membership mapper writes the groups claim into the access token")
+// into the access token with values the gateway cannot trust.
+var ErrGroupsClaimConflict = errors.New("a protocol mapper writes the groups claim into the access token with values the gateway cannot trust")
 
 // GroupsClaimConflictError names the mappers on the app's Keycloak client that
-// the operator does not manage and that write the groups claim from a source
-// other than group membership. It wraps ErrGroupsClaimConflict.
+// the operator does not manage and that write the groups claim with values the
+// gateway cannot trust (see unsafeGroupsMapper). It wraps
+// ErrGroupsClaimConflict.
 type GroupsClaimConflictError struct {
 	Mappers []string
 }
 
 func (e *GroupsClaimConflictError) Error() string {
-	return fmt.Sprintf("%v: mapper(s) %s on the client (remove them, or emit the claim with an oidc-group-membership-mapper)",
+	return fmt.Sprintf("%v: mapper(s) %s on the client (remove them, or emit the claim with an oidc-group-membership-mapper with full.path true)",
 		ErrGroupsClaimConflict, strings.Join(e.Mappers, ", "))
 }
 
@@ -91,14 +91,22 @@ func writesGroupsToAccessToken(cfg map[string]string) bool {
 	return cfg["claim.name"] == groupsClaim && cfg["access.token.claim"] == mapperConfigTrue
 }
 
-// unsafeGroupsMapper reports whether a mapper of this type and config writes
-// the access-token "groups" claim from something other than group membership.
-// Keycloak always merges the values of group-membership mappers into the
-// claim, so another one (with full.path false, say) only adds values that
-// never match a full path. Any other mapper can inject arbitrary values, or,
-// when it is single-valued, replace the claim.
+// unsafeGroupsMapper reports whether a mapper may write the access-token
+// "groups" claim with values the gateway cannot trust. Only a group-membership
+// mapper with full.path "true" is trusted: with full.path false it emits group
+// names, and Keycloak lets a group be named "/admins". Any other mapper can
+// inject arbitrary values or, when single-valued, replace the claim.
+//
+// The check is deliberately wider than writesGroupsToAccessToken: Keycloak
+// strips backslashes from claim.name and splits it on dots, so "groups." and
+// "\groups" also land in the top-level claim, and for lightweight access
+// tokens it reads lightweight.claim instead of access.token.claim. Matching
+// too much (a nested "groups.x") only fails closed.
 func unsafeGroupsMapper(mapperType string, cfg map[string]string) bool {
-	return writesGroupsToAccessToken(cfg) && mapperType != groupMembershipMapperType
+	top, _, _ := strings.Cut(strings.ReplaceAll(cfg["claim.name"], `\`, ""), ".")
+	inAccessToken := cfg["access.token.claim"] == mapperConfigTrue || cfg["lightweight.claim"] == mapperConfigTrue
+	trusted := mapperType == groupMembershipMapperType && cfg["full.path"] == mapperConfigTrue
+	return top == groupsClaim && inAccessToken && !trusted
 }
 
 // emitsFullPathGroups reports whether any mapper is a group-membership mapper
@@ -114,8 +122,8 @@ func emitsFullPathGroups(mappers []appsv1.KeycloakProtocolMapperConfig) bool {
 }
 
 // CheckGroupsClaim returns an error wrapping ErrGroupsClaimConflict when a
-// custom mapper in the spec writes the access-token "groups" claim from
-// something other than group membership.
+// custom mapper in the spec may write the access-token "groups" claim with
+// values the gateway cannot trust (see unsafeGroupsMapper).
 func CheckGroupsClaim(kc *appsv1.KeycloakClientConfig) error {
 	if kc == nil {
 		return nil
@@ -129,16 +137,19 @@ func CheckGroupsClaim(kc *appsv1.KeycloakClientConfig) error {
 }
 
 // managedMapperNames reads the names recorded in managedMappersAttribute. An
-// absent or unreadable attribute means the operator manages none yet.
-func managedMapperNames(attrs map[string]string) []string {
+// absent attribute means the operator manages none yet; an unreadable one is
+// reported through the returned error and treated the same way, so its
+// mappers are left in place rather than deleted. The attribute can be edited
+// by hand, so the result is sorted and deduplicated.
+func managedMapperNames(attrs map[string]string) ([]string, error) {
 	var names []string
 	if raw := attrs[managedMappersAttribute]; raw != "" {
 		if err := json.Unmarshal([]byte(raw), &names); err != nil {
-			return nil
+			return nil, fmt.Errorf("client attribute %s is not a JSON array of names: %w", managedMappersAttribute, err)
 		}
 	}
 	slices.Sort(names)
-	return slices.Compact(names)
+	return slices.Compact(names), nil
 }
 
 // encodeMapperNames is the managedMappersAttribute value for names.
@@ -152,12 +163,13 @@ func encodeMapperNames(names []string) string {
 // desiredProtocolMappers returns the client-level mappers to sync.
 //
 // Custom mappers replace the default, as before. When spec.auth.groups is set
-// and no custom mapper already emits full paths into the access-token groups
-// claim, the operator's mapper is appended, because the gateway rule needs
-// them. A custom group-membership mapper without full paths keeps working
-// next to it: Keycloak merges both mappers' values into the claim.
-// Conflicting custom mappers are returned unchanged; the reconciler denies
-// access for them.
+// and enforced at the gateway, and no custom mapper already emits full paths
+// into the access-token groups claim, the operator's mapper is appended,
+// because the gateway rule needs them. When the application enforces groups
+// itself, a custom mapper that emits the groups claim is left to own it, as
+// before: the application reads that claim and only the gateway needs full
+// paths. Conflicting custom mappers are returned unchanged; the reconciler
+// denies access for them.
 func desiredProtocolMappers(nebariApp *appsv1.NebariApp) []appsv1.KeycloakProtocolMapperConfig {
 	auth := nebariApp.Spec.Auth
 	groupsSet := len(auth.Groups) > 0
@@ -174,7 +186,11 @@ func desiredProtocolMappers(nebariApp *appsv1.NebariApp) []appsv1.KeycloakProtoc
 		return nil
 	}
 
-	if !groupsSet || emitsFullPathGroups(custom) {
+	atGateway := auth.EnforceAtGateway == nil || *auth.EnforceAtGateway
+	appOwnsClaim := !atGateway && slices.ContainsFunc(custom, func(m appsv1.KeycloakProtocolMapperConfig) bool {
+		return m.Config["claim.name"] == groupsClaim
+	})
+	if !groupsSet || appOwnsClaim || emitsFullPathGroups(custom) {
 		return custom
 	}
 	out := make([]appsv1.KeycloakProtocolMapperConfig, 0, len(custom)+1)

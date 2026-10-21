@@ -2004,6 +2004,40 @@ func TestProvisionClient_GroupsClaimConflict(t *testing.T) {
 	}
 }
 
+// TestProvisionClient_GroupsClaimConflictSurvivesHardError checks that a hard
+// failure after the mapper sync still carries the conflict it found.
+func TestProvisionClient_GroupsClaimConflictSurvivesHardError(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = appsv1.AddToScheme(scheme)
+
+	kcServer := &fakeGroupsKeycloak{
+		t: t, groups: map[string]string{}, withClient: true, status: http.StatusInternalServerError,
+		clientJSON: `{"id":"client-uuid","protocolMappers":[{"id":"m-hard","name":"hand-hardcoded","protocol":"openid-connect",` +
+			`"protocolMapper":"oidc-hardcoded-claim-mapper","config":{"claim.name":"groups","access.token.claim":"true"}}]}`,
+	}
+	server := httptest.NewServer(kcServer)
+	defer server.Close()
+
+	provider := &KeycloakProvider{
+		Client: fake.NewClientBuilder().WithScheme(scheme).Build(),
+		Config: config.KeycloakConfig{URL: server.URL, Realm: "test", AdminUsername: "admin", AdminPassword: "admin"},
+	}
+	app := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-app", Namespace: "default"},
+		Spec:       appsv1.NebariAppSpec{Hostname: "test.example.com", Auth: &appsv1.AuthConfig{Enabled: true, Groups: []string{"/exists"}}},
+	}
+
+	err := provider.ProvisionClient(context.Background(), app)
+	var conflict *GroupsClaimConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("expected the conflict to be returned with the group sync failure, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "failed to sync groups") {
+		t.Errorf("expected the group sync failure in the error, got %v", err)
+	}
+}
+
 func TestKeycloakProvider_GetJWKSURL(t *testing.T) {
 	tests := []struct {
 		name string
@@ -2044,11 +2078,16 @@ func TestKeycloakProvider_GetJWKSURL(t *testing.T) {
 // mapperKeycloak is a fake Keycloak admin API for mapper sync tests. It serves
 // one client, records every write as "METHOD path", the deleted mapper IDs,
 // and the attributes sent on a client update.
+// mapperClientPath is the admin API path of the client mapperKeycloak serves.
+const mapperClientPath = "/admin/realms/test/clients/cid"
+
 type mapperKeycloak struct {
 	server     *httptest.Server
 	writes     []string
 	deleted    []string
 	attributes map[string]string
+	// fail, when set, makes every matching write answer HTTP 500.
+	fail func(*http.Request) bool
 }
 
 func newMapperKeycloak(t *testing.T, client string) *mapperKeycloak {
@@ -2059,10 +2098,14 @@ func newMapperKeycloak(t *testing.T, client string) *mapperKeycloak {
 		if r.Method != http.MethodGet {
 			kc.writes = append(kc.writes, r.Method+" "+r.URL.Path)
 		}
+		if kc.fail != nil && kc.fail(r) {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/admin/realms/test/clients/cid":
+		case r.Method == http.MethodGet && r.URL.Path == mapperClientPath:
 			_, _ = w.Write([]byte(client))
-		case r.Method == http.MethodPut && r.URL.Path == "/admin/realms/test/clients/cid":
+		case r.Method == http.MethodPut && r.URL.Path == mapperClientPath:
 			var body struct {
 				Attributes map[string]string `json:"attributes"`
 			}
@@ -2086,6 +2129,76 @@ func newMapperKeycloak(t *testing.T, client string) *mapperKeycloak {
 	return kc
 }
 
+// TestKeycloakProvider_SyncClientProtocolMappers_ConflictSurvivesErrors checks
+// that a mapper conflict found on the client is still returned when a later
+// write in the sync fails. Losing it would let the reconciler write the group
+// allow rule over a claim it cannot trust.
+func TestKeycloakProvider_SyncClientProtocolMappers_ConflictSurvivesErrors(t *testing.T) {
+	const (
+		hardcoded = `{"id":"m-hard","name":"hand-hardcoded","protocol":"openid-connect",` +
+			`"protocolMapper":"oidc-hardcoded-claim-mapper","config":{"claim.name":"groups","access.token.claim":"true"}}`
+		dept = `{"id":"m-dept","name":"dept","protocol":"openid-connect",` +
+			`"protocolMapper":"oidc-hardcoded-claim-mapper","config":{"claim.name":"department"}}`
+		oldCustom = `{"id":"m-old","name":"old-custom","protocol":"openid-connect",` +
+			`"protocolMapper":"oidc-hardcoded-claim-mapper","config":{"claim.name":"department"}}`
+	)
+	isMapperModel := func(r *http.Request) bool { return strings.Contains(r.URL.Path, "/protocol-mappers/models") }
+	tests := []struct {
+		name   string
+		client string
+		fail   func(*http.Request) bool
+	}{
+		{
+			name:   "updating a desired mapper fails",
+			client: `{"id":"cid","protocolMappers":[` + hardcoded + `,` + dept + `]}`,
+			fail:   func(r *http.Request) bool { return r.Method == http.MethodPut && isMapperModel(r) },
+		},
+		{
+			name:   "creating a desired mapper fails",
+			client: `{"id":"cid","protocolMappers":[` + hardcoded + `]}`,
+			fail:   func(r *http.Request) bool { return r.Method == http.MethodPost && isMapperModel(r) },
+		},
+		{
+			name: "deleting a mapper the spec dropped fails",
+			client: `{"id":"cid","attributes":{"nebari.dev/managed-protocol-mappers":"[\"dept\",\"old-custom\"]"},` +
+				`"protocolMappers":[` + hardcoded + `,` + dept + `,` + oldCustom + `]}`,
+			fail: func(r *http.Request) bool { return r.Method == http.MethodDelete },
+		},
+		{
+			name:   "recording the managed mappers fails",
+			client: `{"id":"cid","protocolMappers":[` + hardcoded + `,` + dept + `]}`,
+			fail: func(r *http.Request) bool {
+				return r.Method == http.MethodPut && r.URL.Path == mapperClientPath
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			kc := newMapperKeycloak(t, tt.client)
+			defer kc.server.Close()
+			kc.fail = tt.fail
+
+			provider := &KeycloakProvider{Config: config.KeycloakConfig{URL: kc.server.URL, Realm: "test"}}
+			app := &appsv1.NebariApp{Spec: appsv1.NebariAppSpec{Hostname: "t.example.com", Auth: &appsv1.AuthConfig{
+				Enabled: true, Groups: []string{"/finance"},
+				KeycloakConfig: &appsv1.KeycloakClientConfig{ProtocolMappers: []appsv1.KeycloakProtocolMapperConfig{{
+					Name: "dept", ProtocolMapper: "oidc-hardcoded-claim-mapper",
+					Config: map[string]string{"claim.name": "department"},
+				}}},
+			}}}
+			err := provider.syncClientProtocolMappers(context.Background(), gocloak.NewClient(kc.server.URL), &gocloak.JWT{AccessToken: "t"}, "cid", app)
+
+			var conflict *GroupsClaimConflictError
+			if !errors.As(err, &conflict) || !reflect.DeepEqual(conflict.Mappers, []string{"hand-hardcoded"}) {
+				t.Fatalf("expected the hand-hardcoded conflict to survive the failure, got %v", err)
+			}
+			if _, onlyConflict := err.(*GroupsClaimConflictError); onlyConflict {
+				t.Errorf("expected the failure to be returned too, got only %v", err)
+			}
+		})
+	}
+}
+
 // TestKeycloakProvider_SyncClientProtocolMappers_Merge checks that mapper sync
 // merges with what is already on the client: only mappers the operator
 // recorded as its own are deleted, other mappers stay, and when auth.groups is
@@ -2106,6 +2219,7 @@ func TestKeycloakProvider_SyncClientProtocolMappers_Merge(t *testing.T) {
 	}
 	const membership = "oidc-group-membership-mapper"
 	handBareNames := mapper("m-bare", "hand-groups", membership, `{"claim.name":"groups","full.path":"false","access.token.claim":"true"}`)
+	handFullPath := mapper("m-full", "hand-full-path", membership, `{"claim.name":"groups","full.path":"true","access.token.claim":"true"}`)
 	handHardcoded := mapper("m-hard", "hand-hardcoded", "oidc-hardcoded-claim-mapper", `{"claim.name":"groups","claim.value":"/admins","access.token.claim":"true"}`)
 	handIDTokenOnly := mapper("m-id", "hand-id-token", "oidc-hardcoded-claim-mapper", `{"claim.name":"groups","id.token.claim":"true"}`)
 	ours := mapper("m-ours", "nebari-group-membership", membership, `{"claim.name":"groups","full.path":"true","access.token.claim":"true"}`)
@@ -2125,8 +2239,17 @@ func TestKeycloakProvider_SyncClientProtocolMappers_Merge(t *testing.T) {
 		wantManaged   string // recorded attribute value; empty means no client update
 	}{
 		{
-			name:        "hand-added group-membership mapper with bare names is kept",
-			client:      client("", handBareNames),
+			// It emits group names, and a group can be named "/finance".
+			name:          "hand-added group-membership mapper with bare names is kept and reported",
+			client:        client("", handBareNames),
+			groups:        []string{"/finance"},
+			mappers:       dept,
+			wantConflicts: []string{"hand-groups"},
+			wantManaged:   `["dept","nebari-group-membership"]`,
+		},
+		{
+			name:        "hand-added full-path group-membership mapper is kept and trusted",
+			client:      client("", handFullPath),
 			groups:      []string{"/finance"},
 			mappers:     dept,
 			wantManaged: `["dept","nebari-group-membership"]`,

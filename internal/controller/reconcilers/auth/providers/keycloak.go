@@ -25,6 +25,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"slices"
@@ -308,9 +309,17 @@ func (p *KeycloakProvider) ProvisionClient(ctx context.Context, nebariApp *appsv
 	// scopes). A mapper that makes the groups claim untrustworthy doesn't stop
 	// provisioning either; that error is returned with the groups one below.
 	mappersErr := p.syncClientProtocolMappers(ctx, kcClient, token, clientInternalID, nebariApp)
-	var claimConflict *GroupsClaimConflictError
-	if mappersErr != nil && !errors.As(mappersErr, &claimConflict) {
+	if _, onlyConflict := mappersErr.(*GroupsClaimConflictError); mappersErr != nil && !onlyConflict {
+		// Any conflict found stays reachable through errors.As.
 		return fmt.Errorf("failed to sync client protocol mappers: %w", mappersErr)
+	}
+	// withMappers carries a mapper conflict on every later error, so the
+	// reconciler keeps the policy deny-all whatever fails next.
+	withMappers := func(err error) error {
+		if mappersErr == nil {
+			return err
+		}
+		return errors.Join(mappersErr, err)
 	}
 
 	// Sync Keycloak groups and member assignments. Group paths that do not
@@ -319,7 +328,7 @@ func (p *KeycloakProvider) ProvisionClient(ctx context.Context, nebariApp *appsv
 	groupsErr := p.syncGroups(ctx, kcClient, token, nebariApp)
 	var notResolved *GroupsNotResolvedError
 	if groupsErr != nil && !errors.As(groupsErr, &notResolved) {
-		return fmt.Errorf("failed to sync groups: %w", groupsErr)
+		return withMappers(fmt.Errorf("failed to sync groups: %w", groupsErr))
 	}
 
 	// Provision SPA client if requested
@@ -327,7 +336,7 @@ func (p *KeycloakProvider) ProvisionClient(ctx context.Context, nebariApp *appsv
 	if p.shouldProvisionSPAClient(nebariApp) {
 		spaClientID, err = p.provisionSPAClient(ctx, kcClient, token, nebariApp)
 		if err != nil {
-			return fmt.Errorf("failed to provision SPA client: %w", err)
+			return withMappers(fmt.Errorf("failed to provision SPA client: %w", err))
 		}
 		logger.Info("Provisioned SPA client", "clientID", spaClientID)
 	}
@@ -337,7 +346,7 @@ func (p *KeycloakProvider) ProvisionClient(ctx context.Context, nebariApp *appsv
 	if p.shouldProvisionDeviceFlowClient(nebariApp) {
 		deviceClientID, err = p.provisionDeviceFlowClient(ctx, kcClient, token, nebariApp)
 		if err != nil {
-			return fmt.Errorf("failed to provision device flow client: %w", err)
+			return withMappers(fmt.Errorf("failed to provision device flow client: %w", err))
 		}
 		logger.Info("Provisioned device flow client", "clientID", deviceClientID)
 	}
@@ -351,7 +360,7 @@ func (p *KeycloakProvider) ProvisionClient(ctx context.Context, nebariApp *appsv
 
 	// Store all credentials in Kubernetes Secret
 	if err := p.storeClientSecret(ctx, nebariApp, clientID, clientSecret, externalIssuerURL, spaClientID, deviceClientID); err != nil {
-		return err
+		return withMappers(err)
 	}
 	if mappersErr != nil {
 		return errors.Join(mappersErr, groupsErr)
@@ -914,6 +923,10 @@ func (p *KeycloakProvider) syncClientProtocolMappers(ctx context.Context, kcClie
 	logger := log.FromContext(ctx)
 
 	desiredMappers := desiredProtocolMappers(nebariApp)
+	desiredNames := make([]string, 0, len(desiredMappers))
+	for _, desired := range desiredMappers {
+		desiredNames = append(desiredNames, desired.Name)
+	}
 
 	// Get current client to read existing protocol mappers and the mappers the
 	// operator managed on its last sync.
@@ -925,7 +938,10 @@ func (p *KeycloakProvider) syncClientProtocolMappers(ctx context.Context, kcClie
 	if kcClientObj.Attributes != nil {
 		attrs = *kcClientObj.Attributes
 	}
-	previouslyManaged := managedMapperNames(attrs)
+	previouslyManaged, attrErr := managedMapperNames(attrs)
+	if attrErr != nil {
+		logger.Info("Ignoring the managed protocol mapper record; mappers it listed are left in place", "reason", attrErr.Error())
+	}
 
 	// Build lookup of existing client-level mappers by name
 	existingByName := make(map[string]gocloak.ProtocolMapperRepresentation)
@@ -937,9 +953,92 @@ func (p *KeycloakProvider) syncClientProtocolMappers(ctx context.Context, kcClie
 		}
 	}
 
-	desiredNames := make([]string, 0, len(desiredMappers))
+	toDelete := ownedNotDesired(previouslyManaged, existingByName, desiredNames)
+
+	// The gateway trusts the groups claim when auth.groups is set. Mappers the
+	// operator does not manage stay, but one that may write the claim with
+	// values the gateway cannot trust makes it untrustworthy. They are found
+	// before anything is written, so that every error below still carries
+	// them and the reconciler keeps the policy deny-all.
+	groupsSet := len(nebariApp.Spec.Auth.Groups) > 0
+	var conflicts []string
+	if groupsSet {
+		conflicts = unsafeMappers(existingByName, append(slices.Clone(desiredNames), toDelete...))
+	}
+	withConflicts := func(err error) error {
+		if len(conflicts) == 0 {
+			return err
+		}
+		return errors.Join(&GroupsClaimConflictError{Mappers: conflicts}, err)
+	}
+
+	if err := p.upsertMappers(ctx, kcClient, token, clientInternalID, desiredMappers, existingByName); err != nil {
+		return withConflicts(err)
+	}
+
+	for _, name := range toDelete {
+		existing := existingByName[name]
+		if err := kcClient.DeleteClientProtocolMapper(ctx, token.AccessToken, p.Config.Realm, clientInternalID, *existing.ID); err != nil {
+			// The mapper is still on the client, so it counts like any other.
+			if groupsSet {
+				conflicts = unsafeMappers(map[string]gocloak.ProtocolMapperRepresentation{name: existing}, nil, conflicts...)
+			}
+			return withConflicts(fmt.Errorf("failed to delete client protocol mapper %q: %w", name, err))
+		}
+		logger.Info("Deleted client protocol mapper the spec no longer lists", "mapper", name)
+	}
+
+	if encoded := encodeMapperNames(desiredNames); attrs[managedMappersAttribute] != encoded &&
+		(len(desiredNames) > 0 || len(previouslyManaged) > 0) {
+		if err := p.recordManagedMappers(ctx, kcClient, token, kcClientObj, encoded); err != nil {
+			return withConflicts(err)
+		}
+	}
+
+	if len(conflicts) > 0 {
+		return &GroupsClaimConflictError{Mappers: conflicts}
+	}
+	return nil
+}
+
+// ownedNotDesired returns the mappers on the client that the operator
+// managed and that are no longer desired. The appended groups mapper's name is
+// reserved for the operator, so it counts as managed even on clients
+// provisioned before managedMappersAttribute existed.
+func ownedNotDesired(previouslyManaged []string, existingByName map[string]gocloak.ProtocolMapperRepresentation, desiredNames []string) []string {
+	owned := slices.Clone(previouslyManaged)
+	if !slices.Contains(owned, appendedGroupsMapperName) {
+		owned = append(owned, appendedGroupsMapperName)
+	}
+	var names []string
+	for _, name := range owned {
+		if existing, ok := existingByName[name]; ok && existing.ID != nil && !slices.Contains(desiredNames, name) {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// unsafeMappers returns, sorted and added to found, the names of the mappers
+// in existingByName that unsafeGroupsMapper flags, leaving out skip.
+func unsafeMappers(existingByName map[string]gocloak.ProtocolMapperRepresentation, skip []string, found ...string) []string {
+	for name, existing := range existingByName {
+		if slices.Contains(skip, name) || slices.Contains(found, name) || existing.Config == nil {
+			continue
+		}
+		if unsafeGroupsMapper(gocloak.PString(existing.ProtocolMapper), *existing.Config) {
+			found = append(found, name)
+		}
+	}
+	slices.Sort(found)
+	return found
+}
+
+// upsertMappers creates or updates each desired client-level mapper by name.
+func (p *KeycloakProvider) upsertMappers(ctx context.Context, kcClient *gocloak.GoCloak, token *gocloak.JWT, clientInternalID string,
+	desiredMappers []appsv1.KeycloakProtocolMapperConfig, existingByName map[string]gocloak.ProtocolMapperRepresentation) error {
+	logger := log.FromContext(ctx)
 	for _, desired := range desiredMappers {
-		desiredNames = append(desiredNames, desired.Name)
 		cfg := desired.Config
 		mapper := gocloak.ProtocolMapperRepresentation{
 			Name:           gocloak.StringP(desired.Name),
@@ -951,85 +1050,35 @@ func (p *KeycloakProvider) syncClientProtocolMappers(ctx context.Context, kcClie
 		if existing, ok := existingByName[desired.Name]; ok {
 			// Update existing mapper
 			mapper.ID = existing.ID
-			err = kcClient.UpdateClientProtocolMapper(ctx, token.AccessToken, p.Config.Realm, clientInternalID, *existing.ID, mapper)
-			if err != nil {
+			if err := kcClient.UpdateClientProtocolMapper(ctx, token.AccessToken, p.Config.Realm, clientInternalID, *existing.ID, mapper); err != nil {
 				return fmt.Errorf("failed to update client protocol mapper %q: %w", desired.Name, err)
 			}
 			logger.Info("Updated client protocol mapper", "mapper", desired.Name)
 		} else {
 			// Create new mapper
-			_, err = kcClient.CreateClientProtocolMapper(ctx, token.AccessToken, p.Config.Realm, clientInternalID, mapper)
-			if err != nil {
+			if _, err := kcClient.CreateClientProtocolMapper(ctx, token.AccessToken, p.Config.Realm, clientInternalID, mapper); err != nil {
 				return fmt.Errorf("failed to create client protocol mapper %q: %w", desired.Name, err)
 			}
 			logger.Info("Created client protocol mapper", "mapper", desired.Name)
 		}
 	}
-
-	// Delete mappers the operator managed that are no longer desired. The
-	// appended groups mapper's name is reserved for the operator, so it is
-	// removed even if it predates managedMappersAttribute.
-	owned := slices.Clone(previouslyManaged)
-	if !slices.Contains(owned, appendedGroupsMapperName) {
-		owned = append(owned, appendedGroupsMapperName)
-	}
-	for _, name := range owned {
-		existing, ok := existingByName[name]
-		if !ok || existing.ID == nil || slices.Contains(desiredNames, name) {
-			continue
-		}
-		if err := kcClient.DeleteClientProtocolMapper(ctx, token.AccessToken, p.Config.Realm, clientInternalID, *existing.ID); err != nil {
-			return fmt.Errorf("failed to delete client protocol mapper %q: %w", name, err)
-		}
-		delete(existingByName, name)
-		logger.Info("Deleted client protocol mapper the spec no longer lists", "mapper", name)
-	}
-
-	// The gateway trusts the groups claim when auth.groups is set. Mappers the
-	// operator does not manage stay, but one that writes the claim from
-	// anything other than group membership makes it untrustworthy.
-	var conflicts []string
-	if len(nebariApp.Spec.Auth.Groups) > 0 {
-		for name, existing := range existingByName {
-			if slices.Contains(desiredNames, name) || existing.Config == nil {
-				continue
-			}
-			if unsafeGroupsMapper(gocloak.PString(existing.ProtocolMapper), *existing.Config) {
-				conflicts = append(conflicts, name)
-			}
-		}
-	}
-
-	if encoded := encodeMapperNames(desiredNames); attrs[managedMappersAttribute] != encoded &&
-		(len(desiredNames) > 0 || len(previouslyManaged) > 0) {
-		if err := p.recordManagedMappers(ctx, kcClient, token, clientInternalID, encoded); err != nil {
-			return err
-		}
-	}
-
-	if len(conflicts) > 0 {
-		slices.Sort(conflicts)
-		return &GroupsClaimConflictError{Mappers: conflicts}
-	}
 	return nil
 }
 
-// recordManagedMappers stores the managed mapper names on the client. The
-// client is re-read so the update carries every other attribute unchanged.
-func (p *KeycloakProvider) recordManagedMappers(ctx context.Context, kcClient *gocloak.GoCloak, token *gocloak.JWT, clientInternalID, encoded string) error {
-	current, err := kcClient.GetClient(ctx, token.AccessToken, p.Config.Realm, clientInternalID)
-	if err != nil {
-		return fmt.Errorf("failed to get client: %w", err)
-	}
+// recordManagedMappers stores the managed mapper names on the client read at
+// the start of the sync. Only mapper endpoints are called in between, so the
+// update carries every other attribute unchanged.
+func (p *KeycloakProvider) recordManagedMappers(ctx context.Context, kcClient *gocloak.GoCloak, token *gocloak.JWT, rep *gocloak.Client, encoded string) error {
+	update := *rep
 	attrs := map[string]string{}
-	if current.Attributes != nil {
-		attrs = *current.Attributes
+	if rep.Attributes != nil {
+		attrs = maps.Clone(*rep.Attributes)
 	}
 	attrs[managedMappersAttribute] = encoded
-	current.Attributes = &attrs
+	update.Attributes = &attrs
 	// Mappers are synced on their own endpoints; leave them out of the update.
-	current.ProtocolMappers = nil
-	if err := kcClient.UpdateClient(ctx, token.AccessToken, p.Config.Realm, *current); err != nil {
+	update.ProtocolMappers = nil
+	if err := kcClient.UpdateClient(ctx, token.AccessToken, p.Config.Realm, update); err != nil {
 		return fmt.Errorf("failed to record managed protocol mappers: %w", err)
 	}
 	return nil

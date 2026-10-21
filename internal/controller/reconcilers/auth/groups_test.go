@@ -240,7 +240,7 @@ func TestBuildSecurityPolicySpec_Groups(t *testing.T) {
 			}
 			provider := &mockProvider{issuerURL: "https://kc.example.com/realms/nebari", clientID: "c", jwksURL: jwks}
 
-			spec, err := r.buildSecurityPolicySpec(context.Background(), app, provider)
+			spec, err := r.buildSecurityPolicySpec(context.Background(), app, provider, resolveGroupsMode(app.Spec.Auth))
 			if err != nil {
 				t.Fatalf("buildSecurityPolicySpec() error = %v", err)
 			}
@@ -319,7 +319,7 @@ func TestBuildSecurityPolicySpec_GroupsProviderErrors(t *testing.T) {
 					Enabled: true, Provider: constants.ProviderKeycloak, Groups: []string{"finance"},
 				}},
 			}
-			spec, err := r.buildSecurityPolicySpec(context.Background(), app, tt.provider)
+			spec, err := r.buildSecurityPolicySpec(context.Background(), app, tt.provider, resolveGroupsMode(app.Spec.Auth))
 			if err == nil {
 				t.Fatal("buildSecurityPolicySpec() error = nil, want error")
 			}

@@ -606,7 +606,7 @@ func TestBuildSecurityPolicySpec(t *testing.T) {
 				Recorder: record.NewFakeRecorder(10),
 			}
 
-			spec, err := reconciler.buildSecurityPolicySpec(context.Background(), tt.nebariApp, tt.provider)
+			spec, err := reconciler.buildSecurityPolicySpec(context.Background(), tt.nebariApp, tt.provider, resolveGroupsMode(tt.nebariApp.Spec.Auth))
 
 			if tt.expectError && err == nil {
 				t.Error("expected error, got nil")
@@ -705,7 +705,7 @@ func TestBuildSecurityPolicySpec_KeycloakIssuerAndEndpointSplit(t *testing.T) {
 				},
 			}
 
-			spec, err := reconciler.buildSecurityPolicySpec(context.Background(), nebariApp, provider)
+			spec, err := reconciler.buildSecurityPolicySpec(context.Background(), nebariApp, provider, resolveGroupsMode(nebariApp.Spec.Auth))
 			if err != nil {
 				t.Fatalf("buildSecurityPolicySpec returned error: %v", err)
 			}
@@ -786,7 +786,7 @@ func TestBuildSecurityPolicySpec_ForwardAccessToken(t *testing.T) {
 				clientID:  "test-client",
 			}
 
-			spec, err := r.buildSecurityPolicySpec(context.Background(), nebariApp, provider)
+			spec, err := r.buildSecurityPolicySpec(context.Background(), nebariApp, provider, resolveGroupsMode(nebariApp.Spec.Auth))
 			if err != nil {
 				t.Fatalf("buildSecurityPolicySpec returned error: %v", err)
 			}
@@ -2011,6 +2011,8 @@ func TestReconcileAuth_Groups(t *testing.T) {
 		// wantNoHash means status.authConfigHash must stay unset, so the next
 		// reconcile provisions (and checks the client) again.
 		wantNoHash bool
+		// wantMessage, when set, must appear in the AuthReady message.
+		wantMessage string
 	}{
 		{
 			name:        "gateway mode: allow rule and AuthConfigured",
@@ -2052,6 +2054,42 @@ func TestReconcileAuth_Groups(t *testing.T) {
 			wantStatus:     metav1.ConditionFalse, wantReason: appsv1.ReasonGroupsClaimConflict, wantPolicy: true,
 			wantNotReady: appsv1.ReasonGroupsClaimConflict,
 			wantNoHash:   true,
+			wantMessage:  "hand-hardcoded",
+		},
+		{
+			name:        "mapper conflict and missing paths together: deny all, the conflict wins",
+			auth:        &appsv1.AuthConfig{Enabled: true, Provider: constants.ProviderKeycloak, ProvisionClient: ptr.To(true), Groups: []string{"/missing"}},
+			providerKey: constants.ProviderKeycloak,
+			provisionError: errors.Join(&providers.GroupsClaimConflictError{Mappers: []string{"hand-hardcoded"}},
+				&providers.GroupsNotResolvedError{Realm: "nebari", Paths: []string{"/missing"}}),
+			existingPolicy: true,
+			wantErr:        true,
+			wantStatus:     metav1.ConditionFalse, wantReason: appsv1.ReasonGroupsClaimConflict, wantPolicy: true,
+			wantNotReady:        appsv1.ReasonGroupsClaimConflict,
+			provisionErrHandled: true,
+			wantNoHash:          true,
+			wantMessage:         "hand-hardcoded",
+		},
+		{
+			name:        "mapper conflict and a hard provisioning failure: deny all, and the failure is reported",
+			auth:        &appsv1.AuthConfig{Enabled: true, Provider: constants.ProviderKeycloak, ProvisionClient: ptr.To(true), Groups: []string{"finance"}},
+			providerKey: constants.ProviderKeycloak,
+			provisionError: errors.Join(&providers.GroupsClaimConflictError{Mappers: []string{"hand-hardcoded"}},
+				fmt.Errorf("failed to sync groups: %w", errors.New("keycloak returned 500"))),
+			existingPolicy: true,
+			wantErr:        true,
+			wantStatus:     metav1.ConditionFalse, wantReason: "ProvisioningFailed", wantPolicy: true,
+			wantNoHash:  true,
+			wantMessage: "keycloak returned 500",
+		},
+		{
+			name:        "mapper conflict and a hard failure with enforcement in the application: no policy written",
+			auth:        &appsv1.AuthConfig{Enabled: true, Provider: constants.ProviderKeycloak, ProvisionClient: ptr.To(true), Groups: []string{"finance"}, EnforceAtGateway: ptr.To(false)},
+			providerKey: constants.ProviderKeycloak,
+			provisionError: errors.Join(&providers.GroupsClaimConflictError{Mappers: []string{"hand-hardcoded"}},
+				errors.New("keycloak returned 500")),
+			wantErr:    true,
+			wantStatus: metav1.ConditionFalse, wantReason: "ProvisioningFailed", wantPolicy: false,
 		},
 		{
 			name:           "mapper conflict with enforcement in the application: not a gateway concern",
@@ -2193,12 +2231,7 @@ func TestReconcileAuth_Groups(t *testing.T) {
 				wantWrapped = nil
 			}
 			assertWraps(t, err, wantWrapped, tt.policyWriteErr, tt.rbacWriteErr, tt.listErr)
-			if tt.wantNoHash && app.Status.AuthConfigHash != "" {
-				t.Errorf("authConfigHash = %q, want it unset so provisioning runs again", app.Status.AuthConfigHash)
-			}
-			if got, _ := GroupsNotReadyReason(err); got != tt.wantNotReady {
-				t.Errorf("GroupsNotReadyReason() = %q, want %q", got, tt.wantNotReady)
-			}
+			checkGroupsOutcome(t, app, err, tt.wantNotReady, tt.wantNoHash, tt.wantMessage)
 
 			cond := conditions.GetCondition(app, appsv1.ConditionTypeAuthReady)
 			if tt.wantReason == "" {
@@ -2349,5 +2382,145 @@ func TestReconcileAuth_GroupsRemovedClearsEnforcement(t *testing.T) {
 	}
 	if sp.Spec.OIDC == nil || sp.Spec.OIDC.CookieNames != nil {
 		t.Errorf("oidc.cookieNames = %+v, want nil after groups are removed", sp.Spec.OIDC)
+	}
+}
+
+// TestReconcileAuth_DenyAllSticksThroughHardFailures checks that once a mapper
+// conflict made the policy deny-all, a later pass whose provisioning fails
+// before the mapper check can run keeps it deny-all instead of writing the
+// group allow rule, however many times in a row it fails.
+func TestReconcileAuth_DenyAllSticksThroughHardFailures(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = appsv1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+	_ = rbacv1.AddToScheme(scheme)
+	_ = egv1alpha1.AddToScheme(scheme)
+
+	app := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{Name: "finance-dash", Namespace: "finance"},
+		Spec: appsv1.NebariAppSpec{Hostname: "dash.example.com", Auth: &appsv1.AuthConfig{
+			Enabled: true, Provider: constants.ProviderKeycloak, ProvisionClient: ptr.To(true), Groups: []string{"finance"},
+		}},
+	}
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: naming.ClientSecretName(app), Namespace: "finance"},
+		Data:       map[string][]byte{constants.ClientSecretKey: []byte("s")},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(secret).Build()
+	provider := &mockProvider{
+		issuerURL: "https://kc.example.com/realms/nebari", clientID: "c", jwksURL: "http://kc/certs", supportsProvisioning: true,
+	}
+	r := &AuthReconciler{
+		Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(50),
+		Providers: map[string]providers.OIDCProvider{constants.ProviderKeycloak: provider},
+	}
+	allowRules := func() int {
+		t.Helper()
+		sp := &egv1alpha1.SecurityPolicy{}
+		if err := c.Get(context.Background(), types.NamespacedName{Name: naming.SecurityPolicyName(app), Namespace: "finance"}, sp); err != nil {
+			t.Fatalf("failed to get SecurityPolicy: %v", err)
+		}
+		if sp.Spec.Authorization == nil {
+			t.Fatal("SecurityPolicy has no authorization block")
+		}
+		return len(sp.Spec.Authorization.Rules)
+	}
+
+	provider.provisionError = &providers.GroupsClaimConflictError{Mappers: []string{"hand-hardcoded"}}
+	_ = r.ReconcileAuth(context.Background(), app)
+	if n := allowRules(); n != 0 {
+		t.Fatalf("pass 1 (conflict): %d allow rules, want deny-all", n)
+	}
+
+	// Keycloak fails before the mapper check runs, so no conflict is reported.
+	provider.provisionError = errors.New("keycloak unavailable")
+	for pass := 2; pass <= 3; pass++ {
+		if err := r.ReconcileAuth(context.Background(), app); err == nil {
+			t.Fatalf("pass %d: expected the provisioning error", pass)
+		}
+		if n := allowRules(); n != 0 {
+			t.Errorf("pass %d (provisioning fails): %d allow rules, want the policy to stay deny-all", pass, n)
+		}
+	}
+
+	provider.provisionError = nil
+	if err := r.ReconcileAuth(context.Background(), app); err != nil {
+		t.Fatalf("pass 4 (mapper removed, healthy): %v", err)
+	}
+	if n := allowRules(); n != 1 {
+		t.Errorf("pass 4 (healthy): %d allow rules, want the group allow rule back", n)
+	}
+}
+
+// TestReconcileAuth_ApplicationModeConflictIsReported checks that with
+// enforceAtGateway false a mapper conflict is reported as a Warning and the
+// auth hash is stored, so the next pass does not provision again.
+func TestReconcileAuth_ApplicationModeConflictIsReported(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = appsv1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+	_ = rbacv1.AddToScheme(scheme)
+	_ = egv1alpha1.AddToScheme(scheme)
+
+	app := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{Name: "grafana", Namespace: "monitoring"},
+		Spec: appsv1.NebariAppSpec{Hostname: "grafana.example.com", Auth: &appsv1.AuthConfig{
+			Enabled: true, Provider: constants.ProviderKeycloak, ProvisionClient: ptr.To(true),
+			Groups: []string{"admin"}, EnforceAtGateway: ptr.To(false),
+		}},
+	}
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: naming.ClientSecretName(app), Namespace: "monitoring"},
+		Data:       map[string][]byte{constants.ClientSecretKey: []byte("s")},
+	}
+	recorder := record.NewFakeRecorder(50)
+	provider := &mockProvider{
+		issuerURL: "https://kc.example.com/realms/nebari", clientID: "c", supportsProvisioning: true,
+		provisionError: &providers.GroupsClaimConflictError{Mappers: []string{"hand-attribute"}},
+	}
+	r := &AuthReconciler{
+		Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(secret).Build(), Scheme: scheme, Recorder: recorder,
+		Providers: map[string]providers.OIDCProvider{constants.ProviderKeycloak: provider},
+	}
+
+	for pass := 1; pass <= 2; pass++ {
+		if err := r.ReconcileAuth(context.Background(), app); err != nil {
+			t.Fatalf("pass %d: %v", pass, err)
+		}
+	}
+	if provider.provisionCount != 1 {
+		t.Errorf("ProvisionClient called %d times over two passes, want 1 (the hash should be stored)", provider.provisionCount)
+	}
+	cond := conditions.GetCondition(app, appsv1.ConditionTypeAuthReady)
+	if cond == nil || cond.Status != metav1.ConditionTrue || cond.Reason != appsv1.ReasonGroupsEnforcedByApplication {
+		t.Errorf("AuthReady = %+v, want True/%s", cond, appsv1.ReasonGroupsEnforcedByApplication)
+	}
+	var warned bool
+	for len(recorder.Events) > 0 {
+		if e := <-recorder.Events; strings.HasPrefix(e, corev1.EventTypeWarning+" "+appsv1.ReasonGroupsClaimConflict) &&
+			strings.Contains(e, "hand-attribute") {
+			warned = true
+		}
+	}
+	if !warned {
+		t.Error("expected a GroupsClaimConflict Warning event naming the mapper")
+	}
+}
+
+// checkGroupsOutcome asserts what TestReconcileAuth_Groups rows expect beyond
+// the condition and the policy: the reason GroupsNotReadyReason reports, an
+// unset auth hash, and text in the AuthReady message.
+func checkGroupsOutcome(t *testing.T, app *appsv1.NebariApp, err error, wantNotReady string, wantNoHash bool, wantMessage string) {
+	t.Helper()
+	if got, _ := GroupsNotReadyReason(err); got != wantNotReady {
+		t.Errorf("GroupsNotReadyReason() = %q, want %q", got, wantNotReady)
+	}
+	if wantNoHash && app.Status.AuthConfigHash != "" {
+		t.Errorf("authConfigHash = %q, want it unset so provisioning runs again", app.Status.AuthConfigHash)
+	}
+	if wantMessage != "" {
+		if cond := conditions.GetCondition(app, appsv1.ConditionTypeAuthReady); cond == nil || !strings.Contains(cond.Message, wantMessage) {
+			t.Errorf("AuthReady message = %+v, want it to contain %q", cond, wantMessage)
+		}
 	}
 }
