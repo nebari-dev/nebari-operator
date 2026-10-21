@@ -322,7 +322,7 @@ reads that claim and only the gateway needs full paths.
 replacing it. It records the mappers it manages in the client attribute `nebari.dev/managed-protocol-mappers` and
 deletes only those once the spec stops listing them, plus its own `nebari-group-membership` whenever it is not needed.
 Mappers added any other way, for example by hand in Keycloak, are left in place, unless one has the same name as a
-mapper the spec lists, which the operator then updates.
+mapper the spec lists, which the operator then updates, or the app enforces its groups itself (below).
 
 While `auth.groups` is set, the gateway only trusts the `groups` claim if every other mapper that may write it into the
 access token is an `oidc-group-membership-mapper` with `full.path: "true"`. Keycloak merges the values of
@@ -333,8 +333,14 @@ also covers claim names with backslashes or dots that land in the top-level `gro
 write lightweight access tokens. When a mapper fails it, and the groups are enforced at the gateway, the policy is
 deny-all with reason `GroupsClaimConflict`, naming the mapper, until the mapper is removed or fixed. The deny-all
 holds even when a later provisioning step fails, and when provisioning fails before the check can run while the
-policy is already deny-all. With `enforceAtGateway: false` the gateway enforces nothing, so the operator emits a
-Warning event with reason `GroupsClaimConflict` instead and `AuthReady` stays `True`.
+policy is already deny-all.
+
+With `enforceAtGateway: false` the gateway enforces nothing and has no deny-all to fall back on, while the application
+trusts the claim. So the operator deletes such mappers instead, as it did before mappers were merged, and reports each
+deletion as a Warning event with reason `GroupsMappersRemoved` naming the mapper. `AuthReady` stays `True`. The
+application may read the ID token or userinfo as well as the access token, so in this mode a mapper writing the claim
+into any of them counts. Full-path group-membership mappers, mappers for other claims, and the mappers the spec lists
+are kept.
 
 The check runs whenever the operator provisions the client: when the auth config changes, on a forced reprovision,
 and on every pass while `AuthReady` is not `True`. A mapper added by hand after that is only seen on the next

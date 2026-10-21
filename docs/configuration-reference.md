@@ -386,7 +386,9 @@ groups in its `groups` claim.
   app's Keycloak client by hand, must be an `oidc-group-membership-mapper` with `full.path: "true"`. Without full
   paths it emits group names, and a group can be named like a rule path. Otherwise, with `enforceAtGateway: true`,
   every request is denied and `AuthReady` reports reason `GroupsClaimConflict`, naming the mapper; the app's `Ready`
-  condition is also `False`. With `enforceAtGateway: false` the operator emits a Warning event instead.
+  condition is also `False`. With `enforceAtGateway: false` there is no deny-all to fall back on, so the operator
+  deletes such a mapper (one writing the claim into the access token, ID token or userinfo) and reports it as a
+  `GroupsMappersRemoved` Warning event.
 - When `keycloakConfig.protocolMappers` is set, groups are enforced at the gateway, and no custom group-membership
   mapper emits full paths into the access token, the operator appends its own mapper named `nebari-group-membership`.
 - The operator syncs the listed groups in Keycloak, as described below. If provisioning, RBAC, token exchange or

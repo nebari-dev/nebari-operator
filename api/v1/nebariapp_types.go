@@ -753,8 +753,9 @@ const (
 	// ReasonGroupsClaimConflict indicates a protocol mapper, in the spec or on the
 	// app's Keycloak client, may write the groups claim into the access token with
 	// values the gateway cannot trust (anything but a group-membership mapper with
-	// full.path true). With enforceAtGateway true every request is denied; with
-	// enforceAtGateway false it is reported as a Warning event.
+	// full.path true), while the gateway enforces spec.auth.groups. Every
+	// request is denied. With enforceAtGateway false the operator deletes such a
+	// mapper instead (see EventReasonGroupsMappersRemoved).
 	ReasonGroupsClaimConflict = "GroupsClaimConflict"
 
 	// ReasonGroupsEnforcedByApplication indicates spec.auth.groups is set with
