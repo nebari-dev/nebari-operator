@@ -315,7 +315,8 @@ in `auth.groups` are normalized to full paths (`finance` becomes `/finance`) and
 A parent group does not admit members of its subgroups; list the subgroup itself. When the app defines custom
 `keycloakConfig.protocolMappers` and sets `auth.groups`, the operator appends a mapper named `nebari-group-membership`
 unless a custom mapper already emits `groups`. While `auth.groups` is set, any other mapper on the app's client that
-emits the `groups` claim, including one added by hand in Keycloak, is deleted on the next provisioning pass.
+emits the `groups` claim, including one added by hand in Keycloak, is deleted on the next provisioning pass, and a
+`Warning/GroupsMappersRemoved` event names each one. Custom mappers belong in `keycloakConfig.protocolMappers`.
 
 **Removal delay.** Group membership is read from the access token, so removing a user from a group takes effect when
 their token expires: the realm's access token lifespan, 5 minutes by default.
@@ -412,6 +413,7 @@ conditions:
 - `Warning/GroupsNotResolved`: "spec.auth.groups path(s) do not exist in Keycloak: {paths}"
   — partial-success condition; the SecurityPolicy is still created and the reconciler
   retries on the next requeue (see [Client Provisioning](#2-client-provisioning)).
+- `Warning/GroupsMappersRemoved`: groups mappers on the client that are not in `keycloakConfig.protocolMappers` were deleted: {mappers}
 
 ## Cleanup Process
 

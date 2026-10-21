@@ -521,7 +521,7 @@ Each entry has:
 
 Client-level protocol mappers to configure on the OIDC client. These are applied directly to the client (not to shared client scopes), so each NebariApp gets isolated mapper configuration.
 
-When specified, the operator's default mappers (e.g., group-membership) are not auto-created - this configuration takes full control, with two exceptions when `auth.groups` is set. If no mapper emits the `groups` claim, the operator appends a mapper named `nebari-group-membership`. And any other mapper on the app's client that emits the `groups` claim, including one added by hand in Keycloak, is deleted on the next provisioning pass, because the gateway trusts that claim. The default `group-membership` mapper emits full group paths (`full.path=true`) for every app.
+When specified, the operator's default mappers (e.g., group-membership) are not auto-created - this configuration takes full control, with two exceptions when `auth.groups` is set. If no mapper emits the `groups` claim, the operator appends a mapper named `nebari-group-membership`. And any other mapper on the app's client that emits the `groups` claim, including one added by hand in Keycloak, is deleted on the next provisioning pass with a `GroupsMappersRemoved` Warning event, because the gateway trusts that claim. Declare custom mappers here rather than on the client in Keycloak. The default `group-membership` mapper emits full group paths (`full.path=true`) for every app.
 
 Each entry has:
 - `name` (string, required): Name of the protocol mapper
