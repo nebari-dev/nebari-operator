@@ -129,8 +129,7 @@ func (r *AuthReconciler) getProvider(nebariApp *appsv1.NebariApp) (OIDCProvider,
 - Labels: Standard app.kubernetes.io labels
 
 **On Failure:**
-- Event: `Warning` with reason `ProvisioningFailed`
-- Condition: `AuthReady=False` with reason `ProvisioningFailed`
+- Condition: `AuthReady=False` with reason `ProvisioningFailed` (no event is emitted)
 - Error message includes provider error details
 
 **Partial Success — `GroupsNotResolved`:**
@@ -142,7 +141,7 @@ served without OIDC in front of it. The reconciler then:
 - Emits `Warning/GroupsNotResolved` naming the missing paths.
 - Sets `AuthReady=False` with reason `GroupsNotResolved` (the controller mirrors this onto
   `Ready=False/GroupsNotResolved` on the NebariApp).
-- Leaves `status.AuthConfigHash` unset, so the one-minute requeue retries provisioning
+- Does not store the new `status.authConfigHash`, so the one-minute requeue retries provisioning
   until the group is created, at which point the condition clears and the hash is stored.
 - Still publishes `status.serviceDiscovery` so routing stays functional.
 
@@ -269,6 +268,10 @@ When `spec.auth.groups` is non-empty, the provider is `keycloak`, and `enforceAt
 three sections to the SecurityPolicy so that the gateway itself rejects users outside the listed groups. For app
 `finance-dash` in namespace `finance` with `groups: [finance, /ops/oncall]`:
 
+Gateway enforcement needs Envoy Gateway v1.2.0 or later, which added JWT claims as an authorization principal. The
+Envoy proxy pods fetch the realm JWKS from the in-cluster Keycloak service (the `KEYCLOAK_ISSUER_SERVICE_*` settings),
+so a NetworkPolicy in front of Keycloak must allow that traffic.
+
 ```yaml
 spec:
   oidc:
@@ -317,6 +320,9 @@ A parent group does not admit members of its subgroups; list the subgroup itself
 unless a custom mapper already emits `groups`. While `auth.groups` is set, any other mapper on the app's client that
 emits the `groups` claim, including one added by hand in Keycloak, is deleted on the next provisioning pass, and a
 `Warning/GroupsMappersRemoved` event names each one. Custom mappers belong in `keycloakConfig.protocolMappers`.
+Provisioning runs when the auth config changes, while `AuthReady` is not `True`, or when the NebariApp carries the
+`nebari.dev/force-reprovision` annotation, so a mapper added by hand to a ready app is only removed on the next of
+those passes.
 
 **Removal delay.** Group membership is read from the access token, so removing a user from a group takes effect when
 their token expires: the realm's access token lifespan, 5 minutes by default.
@@ -329,12 +335,13 @@ rules) rather than deleting the policy or leaving it open:
 
 | Reason | When | Conditions |
 |--------|------|------------|
-| `GroupsRequireKeycloak` | `generic-oidc` with groups and `enforceAtGateway: true` | `AuthReady=False`, `Ready=False` |
+| `GroupsRequireKeycloak` | `generic-oidc` with groups, `enforceAtGateway: true` and `provisionClient: false` | `AuthReady=False`, `Ready=False` |
 | `GroupsClaimConflict` | A custom mapper emits the `groups` claim and its type is not `oidc-group-membership-mapper`, or `full.path` is not `"true"`, or `access.token.claim` is not `"true"` | `AuthReady=False`, `Ready=False` |
 | `GroupsEmpty` | Every `groups` entry is empty after normalization, for example `"/"` or whitespace | `AuthReady=False`, `Ready=False` |
 
 In all three cases `Ready` carries the same reason, and `observedGeneration` and `status.serviceDiscovery` are still
-published.
+published. `generic-oidc` with groups and the default `provisionClient: true` is denied too, but reports
+`AuthReady=False/ProvisioningNotSupported` and `Ready=False/Failed`, because the provider cannot provision a client.
 
 With `enforceAtGateway: false` the operator provisions the claim but writes no authorization rules, and `AuthReady` is
 `True` with reason `GroupsEnforcedByApplication`.
@@ -394,23 +401,27 @@ conditions:
 conditions:
   - type: AuthReady
     status: "False"
-    reason: ProvisioningFailed | ValidationFailed | SecurityPolicyFailed | GroupsNotResolved | GroupsRequireKeycloak | GroupsClaimConflict
+    reason: ProvisioningFailed | ValidationFailed | SecurityPolicyFailed | GroupsNotResolved | GroupsRequireKeycloak | GroupsClaimConflict | GroupsEmpty
     message: "<detailed error message>"
 ```
 
 ### Events
 
+Provisioning, validation and SecurityPolicy failures are reported through the `AuthReady` condition only; they emit no
+event.
+
 **Success Events:**
 - `Normal/Provisioned`: "OIDC client provisioned successfully"
-- `Normal/Configured`: "Authentication configured successfully"
+- `Normal/Configured`: "Authentication configured successfully", or, with `enforceAtGateway: false` and groups set,
+  a message saying the application must check the groups claim
+- `Normal/Deleted`: "OIDC client deleted" (cleanup)
+- `Normal/SecurityPolicyDeleted`: "SecurityPolicy deleted (enforceAtGateway disabled)"
 
 **Warning Events:**
-- `Warning/ProvisioningFailed`: "Failed to provision OIDC client: {error}"
-- `Warning/ValidationFailed`: "Auth configuration validation failed: {error}"
-- `Warning/SecurityPolicyFailed`: "Failed to reconcile SecurityPolicy: {error}"
 - `Warning/GroupsRequireKeycloak`: "spec.auth.groups requires provider \"keycloak\" for gateway enforcement; all requests are denied"
 - `Warning/GroupsClaimConflict`: "{mapper conflict}; all requests are denied"
-- `Warning/GroupsNotResolved`: "spec.auth.groups path(s) do not exist in Keycloak: {paths}"
+- `Warning/GroupsEmpty`: "every spec.auth.groups entry is empty after normalization, so no group is admitted; all requests are denied"
+- `Warning/GroupsNotResolved`: "group paths not found in realm {realm}: {paths} (paths are never created: ...)"
   — partial-success condition; the SecurityPolicy is still created and the reconciler
   retries on the next requeue (see [Client Provisioning](#2-client-provisioning)).
 - `Warning/GroupsMappersRemoved`: groups mappers on the client that are not in `keycloakConfig.protocolMappers` were deleted: {mappers}
