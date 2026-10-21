@@ -1822,6 +1822,104 @@ func TestReconcileAuth_GroupsNotResolved(t *testing.T) {
 	}
 }
 
+// TestReconcileAuth_GroupsMappersRemoved covers provisioning that deleted groups
+// mappers not declared in the NebariApp: a Warning event names them, and
+// provisioning otherwise counts as done.
+func TestReconcileAuth_GroupsMappersRemoved(t *testing.T) {
+	removed := &providers.GroupsMappersRemovedError{Mappers: []string{"hand-hardcoded"}}
+	tests := []struct {
+		name            string
+		provisionError  error
+		wantNotResolved bool
+	}{
+		{name: "removed mappers only", provisionError: removed},
+		{
+			name:            "removed mappers and unresolved paths",
+			provisionError:  errors.Join(removed, &providers.GroupsNotResolvedError{Realm: "test", Paths: []string{"/missing"}}),
+			wantNotResolved: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scheme := runtime.NewScheme()
+			_ = appsv1.AddToScheme(scheme)
+			_ = corev1.AddToScheme(scheme)
+			_ = rbacv1.AddToScheme(scheme)
+			_ = egv1alpha1.AddToScheme(scheme)
+
+			app := &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-app", Namespace: "default"},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "test.example.com",
+					Auth: &appsv1.AuthConfig{
+						Enabled:         true,
+						Provider:        constants.ProviderKeycloak,
+						ProvisionClient: ptr.To(true),
+						Groups:          []string{"/finance"},
+					},
+				},
+			}
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-app-oidc-client", Namespace: "default"},
+				Data:       map[string][]byte{constants.ClientSecretKey: []byte("test-secret")},
+			}
+			k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(app, secret).Build()
+			recorder := record.NewFakeRecorder(10)
+			reconciler := &AuthReconciler{
+				Client:   k8sClient,
+				Scheme:   scheme,
+				Recorder: recorder,
+				Providers: map[string]providers.OIDCProvider{constants.ProviderKeycloak: &mockProvider{
+					issuerURL:            "https://keycloak.example.com/realms/test",
+					clientID:             "test-client",
+					supportsProvisioning: true,
+					provisionError:       tt.provisionError,
+				}},
+			}
+
+			err := reconciler.ReconcileAuth(context.Background(), app)
+			if got := IsGroupsNotResolved(err); got != tt.wantNotResolved {
+				t.Fatalf("IsGroupsNotResolved = %v, want %v (err: %v)", got, tt.wantNotResolved, err)
+			}
+			if !tt.wantNotResolved && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			var events []string
+			for len(recorder.Events) > 0 {
+				events = append(events, <-recorder.Events)
+			}
+			wantPrefix := corev1.EventTypeWarning + " " + appsv1.EventReasonGroupsMappersRemoved + " "
+			found := false
+			for _, e := range events {
+				if strings.HasPrefix(e, wantPrefix) && strings.Contains(e, "hand-hardcoded") {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("expected a %s Warning event naming the mapper, got %q", appsv1.EventReasonGroupsMappersRemoved, events)
+			}
+
+			cond := conditions.GetCondition(app, appsv1.ConditionTypeAuthReady)
+			if tt.wantNotResolved {
+				if cond == nil || cond.Reason != appsv1.ReasonGroupsNotResolved {
+					t.Errorf("expected AuthReady reason %s, got %+v", appsv1.ReasonGroupsNotResolved, cond)
+				}
+				if app.Status.AuthConfigHash != "" {
+					t.Errorf("expected AuthConfigHash to stay unset while groups are unresolved, got %q", app.Status.AuthConfigHash)
+				}
+				return
+			}
+			if cond == nil || cond.Status != metav1.ConditionTrue {
+				t.Errorf("expected AuthReady=True, got %+v", cond)
+			}
+			if app.Status.AuthConfigHash != computeAuthConfigHash(app) {
+				t.Error("expected AuthConfigHash to be stored after removing mappers")
+			}
+		})
+	}
+}
+
 // TestReconcileAuth_ProvisioningErrorStillFails makes sure only the
 // GroupsNotResolved error degrades; any other provisioning error still fails.
 func TestReconcileAuth_ProvisioningErrorStillFails(t *testing.T) {

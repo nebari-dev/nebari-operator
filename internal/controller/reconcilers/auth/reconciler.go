@@ -249,11 +249,18 @@ func (r *AuthReconciler) ReconcileAuth(ctx context.Context, nebariApp *appsv1.Ne
 
 			logger.Info("Provisioning OIDC client")
 			if err := provider.ProvisionClient(ctx, nebariApp); err != nil {
-				if !errors.As(err, &groupsNotResolved) {
+				// Provisioning returns these two only once everything else is in place.
+				var removed *providers.GroupsMappersRemovedError
+				if errors.As(err, &removed) {
+					r.Recorder.Event(nebariApp, corev1.EventTypeWarning, appsv1.EventReasonGroupsMappersRemoved, removed.Error())
+				}
+				if !errors.As(err, &groupsNotResolved) && removed == nil {
 					conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionFalse,
 						"ProvisioningFailed", fmt.Sprintf("Failed to provision OIDC client: %v", err))
 					return failClosed(err)
 				}
+			}
+			if groupsNotResolved != nil {
 				// Everything except the missing groups is provisioned. Carry on so
 				// the SecurityPolicy is still applied; the condition is reported
 				// once the rest of auth has been reconciled.

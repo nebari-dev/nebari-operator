@@ -304,7 +304,8 @@ func (p *KeycloakProvider) ProvisionClient(ctx context.Context, nebariApp *appsv
 	}
 
 	// Sync client-level protocol mappers (isolated per-client, not on shared scopes)
-	if err := p.syncClientProtocolMappers(ctx, kcClient, token, clientInternalID, nebariApp); err != nil {
+	removedMappers, err := p.syncClientProtocolMappers(ctx, kcClient, token, clientInternalID, nebariApp)
+	if err != nil {
 		return fmt.Errorf("failed to sync client protocol mappers: %w", err)
 	}
 
@@ -347,6 +348,9 @@ func (p *KeycloakProvider) ProvisionClient(ctx context.Context, nebariApp *appsv
 	// Store all credentials in Kubernetes Secret
 	if err := p.storeClientSecret(ctx, nebariApp, clientID, clientSecret, externalIssuerURL, spaClientID, deviceClientID); err != nil {
 		return err
+	}
+	if len(removedMappers) > 0 {
+		return errors.Join(&GroupsMappersRemovedError{Mappers: removedMappers}, groupsErr)
 	}
 	return groupsErr
 }
@@ -890,9 +894,11 @@ func (p *KeycloakProvider) syncClientScopes(ctx context.Context, kcClient *goclo
 // set and no custom mapper emits the groups claim. Otherwise, if spec.auth.groups
 // is set or "groups" is a requested scope, a default group-membership mapper is
 // created with full.path=true.
-func (p *KeycloakProvider) syncClientProtocolMappers(ctx context.Context, kcClient *gocloak.GoCloak, token *gocloak.JWT, clientInternalID string, nebariApp *appsv1.NebariApp) error {
+//
+// It returns the names of the groups mappers it deleted, sorted.
+func (p *KeycloakProvider) syncClientProtocolMappers(ctx context.Context, kcClient *gocloak.GoCloak, token *gocloak.JWT, clientInternalID string, nebariApp *appsv1.NebariApp) ([]string, error) {
 	if nebariApp.Spec.Auth == nil {
-		return nil
+		return nil, nil
 	}
 
 	logger := log.FromContext(ctx)
@@ -900,13 +906,13 @@ func (p *KeycloakProvider) syncClientProtocolMappers(ctx context.Context, kcClie
 	desiredMappers := desiredProtocolMappers(nebariApp)
 
 	if len(desiredMappers) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	// Get current client to read existing protocol mappers
 	kcClientObj, err := kcClient.GetClient(ctx, token.AccessToken, p.Config.Realm, clientInternalID)
 	if err != nil {
-		return fmt.Errorf("failed to get client: %w", err)
+		return nil, fmt.Errorf("failed to get client: %w", err)
 	}
 
 	// Build lookup of existing client-level mappers by name
@@ -933,14 +939,14 @@ func (p *KeycloakProvider) syncClientProtocolMappers(ctx context.Context, kcClie
 			mapper.ID = existing.ID
 			err = kcClient.UpdateClientProtocolMapper(ctx, token.AccessToken, p.Config.Realm, clientInternalID, *existing.ID, mapper)
 			if err != nil {
-				return fmt.Errorf("failed to update client protocol mapper %q: %w", desired.Name, err)
+				return nil, fmt.Errorf("failed to update client protocol mapper %q: %w", desired.Name, err)
 			}
 			logger.Info("Updated client protocol mapper", "mapper", desired.Name)
 		} else {
 			// Create new mapper
 			_, err = kcClient.CreateClientProtocolMapper(ctx, token.AccessToken, p.Config.Realm, clientInternalID, mapper)
 			if err != nil {
-				return fmt.Errorf("failed to create client protocol mapper %q: %w", desired.Name, err)
+				return nil, fmt.Errorf("failed to create client protocol mapper %q: %w", desired.Name, err)
 			}
 			logger.Info("Created client protocol mapper", "mapper", desired.Name)
 		}
@@ -950,6 +956,7 @@ func (p *KeycloakProvider) syncClientProtocolMappers(ctx context.Context, kcClie
 	// mapper that still emits it (for example one the user removed from the
 	// spec, or one added by hand in Keycloak) is pruned on the next
 	// provisioning pass. Only mappers for the groups claim are pruned.
+	var removed []string
 	if len(nebariApp.Spec.Auth.Groups) > 0 {
 		desiredNames := make(map[string]struct{}, len(desiredMappers))
 		for _, d := range desiredMappers {
@@ -963,13 +970,15 @@ func (p *KeycloakProvider) syncClientProtocolMappers(ctx context.Context, kcClie
 				continue
 			}
 			if err := kcClient.DeleteClientProtocolMapper(ctx, token.AccessToken, p.Config.Realm, clientInternalID, *existing.ID); err != nil {
-				return fmt.Errorf("failed to delete stale groups protocol mapper %q: %w", name, err)
+				return nil, fmt.Errorf("failed to delete stale groups protocol mapper %q: %w", name, err)
 			}
 			logger.Info("Deleted stale groups client protocol mapper", "mapper", name)
+			removed = append(removed, name)
 		}
 	}
+	sort.Strings(removed)
 
-	return nil
+	return removed, nil
 }
 
 // hasScope returns true if the NebariApp requests the given OIDC scope.
