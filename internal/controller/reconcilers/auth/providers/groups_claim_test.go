@@ -106,6 +106,30 @@ func TestCheckGroupsClaim(t *testing.T) {
 	}
 }
 
+func TestAppUnsafeGroupsMapper(t *testing.T) {
+	tests := []struct {
+		name       string
+		mapperType string
+		cfg        map[string]string
+		want       bool
+	}{
+		{"hardcoded groups in userinfo only", "oidc-hardcoded-claim-mapper", map[string]string{"claim.name": "groups", "userinfo.token.claim": "true"}, true},
+		{"hardcoded groups in the ID token only", "oidc-hardcoded-claim-mapper", map[string]string{"claim.name": "groups", "id.token.claim": "true"}, true},
+		{"attribute mapper in the access token", "oidc-usermodel-attribute-mapper", map[string]string{"claim.name": "groups", "access.token.claim": "true"}, true},
+		{"bare-name membership mapper", "oidc-group-membership-mapper", map[string]string{"claim.name": "groups", "full.path": "false", "userinfo.token.claim": "true"}, true},
+		{"full-path membership mapper", "oidc-group-membership-mapper", map[string]string{"claim.name": "groups", "full.path": "true", "userinfo.token.claim": "true"}, false},
+		{"groups in no token", "oidc-hardcoded-claim-mapper", map[string]string{"claim.name": "groups"}, false},
+		{"another claim", "oidc-hardcoded-claim-mapper", map[string]string{"claim.name": "department", "userinfo.token.claim": "true"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := appUnsafeGroupsMapper(tt.mapperType, tt.cfg); got != tt.want {
+				t.Errorf("appUnsafeGroupsMapper() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestDesiredProtocolMappers(t *testing.T) {
 	audience := appsv1.KeycloakProtocolMapperConfig{
 		Name: "aud", ProtocolMapper: "oidc-audience-mapper",

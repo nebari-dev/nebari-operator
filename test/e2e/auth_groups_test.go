@@ -318,6 +318,56 @@ spec:
 		eventuallyLogin(host, "e2e-in", "200", "member of /e2e-allowed")
 		Expect(loginStatus(host, gatewayIP, "e2e-out")).To(Equal("403"), "the forged group still does not admit")
 	})
+
+	It("deletes unsafe hand-added mappers when the application enforces the groups", func() {
+		name := "groups-app-enforced"
+		yaml := fmt.Sprintf(`
+apiVersion: reconcilers.nebari.dev/v1
+kind: NebariApp
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  hostname: groups-app-enforced.nebari.local
+  service:
+    name: test-app
+    port: 80
+  routing:
+    tls:
+      enabled: true
+  auth:
+    enabled: true
+    provider: keycloak
+    enforceAtGateway: false
+    groups: ["/e2e-allowed"]
+`, name, ns)
+		cmd := exec.Command("kubectl", "apply", "-f", "-")
+		cmd.Stdin = strings.NewReader(yaml)
+		_, err := utils.Run(cmd)
+		Expect(err).NotTo(HaveOccurred())
+		waitAuthReady(name, "True", "GroupsEnforcedByApplication")
+		clientID := clientInternalID(ns + "-" + name)
+
+		By("a hardcoded groups mapper is deleted and reported; a full-path one stays")
+		// The gateway cannot deny for this app, and the application trusts the
+		// claim, so the operator removes a mapper that could forge it. This one
+		// only writes userinfo, which the gateway never reads but an app may.
+		createClientMapper(clientID, "hand-hardcoded-userinfo", "oidc-hardcoded-claim-mapper",
+			`config."claim.name"=groups`, `config."claim.value"=/e2e-allowed`, `config."userinfo.token.claim"=true`)
+		createClientMapper(clientID, "hand-full-path", "oidc-group-membership-mapper",
+			`config."claim.name"=groups`, `config."full.path"=true`, `config."access.token.claim"=true`)
+		reprovision(name)
+		waitAuthReady(name, "True", "GroupsEnforcedByApplication")
+		Expect(clientMapperNames(clientID)).NotTo(ContainElement("hand-hardcoded-userinfo"))
+		Expect(clientMapperNames(clientID)).To(ContainElement("hand-full-path"))
+		Eventually(func(g Gomega) {
+			out, err := utils.Run(exec.Command("kubectl", "get", "events", "-n", ns,
+				"--field-selector", "reason=GroupsMappersRemoved,involvedObject.name="+name,
+				"-o", "jsonpath={.items[*].message}"))
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(out).To(ContainSubstring("hand-hardcoded-userinfo"))
+		}, time.Minute, 5*time.Second).Should(Succeed())
+	})
 })
 
 // clientInternalID returns the Keycloak internal ID of the client with the

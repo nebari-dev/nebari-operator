@@ -802,6 +802,12 @@ const (
 	// EventReasonAuthConfigured is used when auth is successfully configured
 	EventReasonAuthConfigured = "AuthConfigured"
 
+	// EventReasonGroupsMappersRemoved is used when the operator deletes protocol
+	// mappers from an app's Keycloak client because the application enforces
+	// spec.auth.groups itself and they could write untrustworthy values into the
+	// groups claim it reads.
+	EventReasonGroupsMappersRemoved = "GroupsMappersRemoved"
+
 	// EventReasonConfigured is used when the auth reconciler finishes configuring
 	// authentication, including when the application enforces spec.auth.groups
 	EventReasonConfigured = "Configured"

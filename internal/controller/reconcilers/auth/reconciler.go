@@ -259,6 +259,9 @@ func (r *AuthReconciler) ReconcileAuth(ctx context.Context, nebariApp *appsv1.Ne
 				out := classifyProvisionError(err)
 				groupsNotResolved, claimConflict = out.notResolved, out.conflict
 				groups = r.enforcedGroupsMode(ctx, nebariApp, groups, out)
+				if out.removed != nil {
+					r.Recorder.Event(nebariApp, corev1.EventTypeWarning, appsv1.EventReasonGroupsMappersRemoved, out.removed.Error())
+				}
 				if out.hard != nil {
 					conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionFalse,
 						"ProvisioningFailed", "Failed to provision OIDC client: "+out.message())
@@ -352,6 +355,7 @@ func (r *AuthReconciler) ReconcileAuth(ctx context.Context, nebariApp *appsv1.Ne
 type provisionOutcome struct {
 	notResolved *providers.GroupsNotResolvedError
 	conflict    *providers.GroupsClaimConflictError
+	removed     *providers.GroupsMappersRemovedError
 	hard        []error
 }
 
@@ -366,6 +370,9 @@ func (o provisionOutcome) message() string {
 	}
 	if o.notResolved != nil {
 		parts = append(parts, o.notResolved.Error())
+	}
+	if o.removed != nil {
+		parts = append(parts, o.removed.Error())
 	}
 	return strings.Join(parts, "; ")
 }
@@ -386,6 +393,10 @@ func classifyProvisionError(err error) provisionOutcome {
 			if out.conflict == nil {
 				out.conflict = t
 			}
+		case *providers.GroupsMappersRemovedError:
+			if out.removed == nil {
+				out.removed = t
+			}
 		case interface{ Unwrap() []error }:
 			for _, inner := range t.Unwrap() {
 				walk(inner)
@@ -405,7 +416,8 @@ func classifyProvisionError(err error) provisionOutcome {
 func hasTypedProvisionCause(err error) bool {
 	var notResolved *providers.GroupsNotResolvedError
 	var conflict *providers.GroupsClaimConflictError
-	return errors.As(err, &notResolved) || errors.As(err, &conflict)
+	var removed *providers.GroupsMappersRemovedError
+	return errors.As(err, &notResolved) || errors.As(err, &conflict) || errors.As(err, &removed)
 }
 
 // enforcedGroupsMode returns how spec.auth.groups is enforced after a
@@ -462,14 +474,6 @@ func (r *AuthReconciler) setAuthReadyCondition(nebariApp *appsv1.NebariApp, grou
 			return deniedAll(appsv1.ReasonGroupsEmpty,
 				"every spec.auth.groups entry is empty after normalization, so no group is admitted; all requests are denied", nil)
 		}
-	}
-
-	// The gateway does not act on a mapper conflict when the application
-	// enforces groups, but the application reads the same claim, so say so.
-	// Reported when the client is provisioned; later passes skip the check.
-	if groups == groupsModeApplication && claimConflict != nil {
-		r.Recorder.Event(nebariApp, corev1.EventTypeWarning, appsv1.ReasonGroupsClaimConflict,
-			fmt.Sprintf("%v; enforceAtGateway is false, so the application must not trust these values", claimConflict))
 	}
 
 	if groupsNotResolved != nil {

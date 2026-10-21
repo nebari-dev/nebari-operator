@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -2127,6 +2128,63 @@ func newMapperKeycloak(t *testing.T, client string) *mapperKeycloak {
 		}
 	}))
 	return kc
+}
+
+// TestKeycloakProvider_SyncClientProtocolMappers_ApplicationEnforced checks
+// that when the application enforces auth.groups itself, unmanaged mappers that
+// could write untrusted values into the groups claim, in any token the app can
+// read, are deleted and reported, while trusted and unrelated ones stay.
+func TestKeycloakProvider_SyncClientProtocolMappers_ApplicationEnforced(t *testing.T) {
+	mapper := func(id, name, typ, cfg string) string {
+		return `{"id":"` + id + `","name":"` + name + `","protocol":"openid-connect","protocolMapper":"` + typ + `","config":` + cfg + `}`
+	}
+	const membership = "oidc-group-membership-mapper"
+	userinfoOnly := mapper("m-ui", "hand-userinfo-groups", "oidc-hardcoded-claim-mapper", `{"claim.name":"groups","userinfo.token.claim":"true"}`)
+	attribute := mapper("m-attr", "hand-attribute-groups", "oidc-usermodel-attribute-mapper", `{"claim.name":"groups","access.token.claim":"true"}`)
+	fullPath := mapper("m-full", "hand-full-path", membership, `{"claim.name":"groups","full.path":"true","access.token.claim":"true"}`)
+	dept := mapper("m-dept", "hand-dept", "oidc-hardcoded-claim-mapper", `{"claim.name":"department","access.token.claim":"true"}`)
+	ownBare := mapper("m-own", "group-membership", membership, `{"claim.name":"groups","full.path":"false","access.token.claim":"true"}`)
+	spec := []appsv1.KeycloakProtocolMapperConfig{{
+		Name: "group-membership", ProtocolMapper: membership,
+		Config: map[string]string{"claim.name": "groups", "full.path": "false", "access.token.claim": "true"},
+	}}
+
+	kc := newMapperKeycloak(t, `{"id":"cid","protocolMappers":[`+strings.Join([]string{userinfoOnly, attribute, fullPath, dept, ownBare}, ",")+`]}`)
+	defer kc.server.Close()
+	provider := &KeycloakProvider{Config: config.KeycloakConfig{URL: kc.server.URL, Realm: "test"}}
+	app := &appsv1.NebariApp{Spec: appsv1.NebariAppSpec{Hostname: "grafana.example.com", Auth: &appsv1.AuthConfig{
+		Enabled: true, Groups: []string{"admin"}, EnforceAtGateway: ptr.To(false),
+		KeycloakConfig: &appsv1.KeycloakClientConfig{ProtocolMappers: spec},
+	}}}
+
+	err := provider.syncClientProtocolMappers(context.Background(), gocloak.NewClient(kc.server.URL), &gocloak.JWT{AccessToken: "t"}, "cid", app)
+
+	var removed *GroupsMappersRemovedError
+	if !errors.As(err, &removed) {
+		t.Fatalf("expected a *GroupsMappersRemovedError, got %v", err)
+	}
+	if want := []string{"hand-attribute-groups", "hand-userinfo-groups"}; !reflect.DeepEqual(removed.Mappers, want) {
+		t.Errorf("removed = %v, want %v", removed.Mappers, want)
+	}
+	slices.Sort(kc.deleted)
+	if want := []string{"m-attr", "m-ui"}; !reflect.DeepEqual(kc.deleted, want) {
+		t.Errorf("deleted = %v, want %v (the spec's own mapper, the full-path one and the unrelated one stay)", kc.deleted, want)
+	}
+	var conflict *GroupsClaimConflictError
+	if errors.As(err, &conflict) {
+		t.Errorf("expected no conflict when the application enforces groups, got %v", conflict)
+	}
+
+	t.Run("a failed delete fails the sync", func(t *testing.T) {
+		kc := newMapperKeycloak(t, `{"id":"cid","protocolMappers":[`+attribute+`]}`)
+		defer kc.server.Close()
+		kc.fail = func(r *http.Request) bool { return r.Method == http.MethodDelete }
+		provider := &KeycloakProvider{Config: config.KeycloakConfig{URL: kc.server.URL, Realm: "test"}}
+		err := provider.syncClientProtocolMappers(context.Background(), gocloak.NewClient(kc.server.URL), &gocloak.JWT{AccessToken: "t"}, "cid", app)
+		if err == nil || isMapperNotice(err) {
+			t.Fatalf("expected a hard error, got %v", err)
+		}
+	})
 }
 
 // TestKeycloakProvider_SyncClientProtocolMappers_ConflictSurvivesErrors checks

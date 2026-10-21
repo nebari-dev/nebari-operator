@@ -2452,10 +2452,11 @@ func TestReconcileAuth_DenyAllSticksThroughHardFailures(t *testing.T) {
 	}
 }
 
-// TestReconcileAuth_ApplicationModeConflictIsReported checks that with
-// enforceAtGateway false a mapper conflict is reported as a Warning and the
-// auth hash is stored, so the next pass does not provision again.
-func TestReconcileAuth_ApplicationModeConflictIsReported(t *testing.T) {
+// TestReconcileAuth_ApplicationModeRemovedMappersAreReported checks that with
+// enforceAtGateway false the mappers the provider deleted are reported as a
+// Warning, AuthReady stays True, and the auth hash is stored, so the next pass
+// does not provision again.
+func TestReconcileAuth_ApplicationModeRemovedMappersAreReported(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = appsv1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
@@ -2476,7 +2477,7 @@ func TestReconcileAuth_ApplicationModeConflictIsReported(t *testing.T) {
 	recorder := record.NewFakeRecorder(50)
 	provider := &mockProvider{
 		issuerURL: "https://kc.example.com/realms/nebari", clientID: "c", supportsProvisioning: true,
-		provisionError: &providers.GroupsClaimConflictError{Mappers: []string{"hand-attribute"}},
+		provisionError: &providers.GroupsMappersRemovedError{Mappers: []string{"hand-attribute"}},
 	}
 	r := &AuthReconciler{
 		Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(secret).Build(), Scheme: scheme, Recorder: recorder,
@@ -2497,13 +2498,13 @@ func TestReconcileAuth_ApplicationModeConflictIsReported(t *testing.T) {
 	}
 	var warned bool
 	for len(recorder.Events) > 0 {
-		if e := <-recorder.Events; strings.HasPrefix(e, corev1.EventTypeWarning+" "+appsv1.ReasonGroupsClaimConflict) &&
+		if e := <-recorder.Events; strings.HasPrefix(e, corev1.EventTypeWarning+" "+appsv1.EventReasonGroupsMappersRemoved) &&
 			strings.Contains(e, "hand-attribute") {
 			warned = true
 		}
 	}
 	if !warned {
-		t.Error("expected a GroupsClaimConflict Warning event naming the mapper")
+		t.Error("expected a GroupsMappersRemoved Warning event naming the mapper")
 	}
 }
 
@@ -2522,5 +2523,45 @@ func checkGroupsOutcome(t *testing.T, app *appsv1.NebariApp, err error, wantNotR
 		if cond := conditions.GetCondition(app, appsv1.ConditionTypeAuthReady); cond == nil || !strings.Contains(cond.Message, wantMessage) {
 			t.Errorf("AuthReady message = %+v, want it to contain %q", cond, wantMessage)
 		}
+	}
+}
+
+// TestReconcileAuth_ApplicationModeConflictStoresHash checks that a mapper
+// conflict a provider reports for an app that enforces groups itself does not
+// stop the auth hash from being stored, so the client is not provisioned again
+// on every pass. The gateway enforces nothing for such an app.
+func TestReconcileAuth_ApplicationModeConflictStoresHash(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = appsv1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+	_ = rbacv1.AddToScheme(scheme)
+	_ = egv1alpha1.AddToScheme(scheme)
+
+	app := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{Name: "grafana", Namespace: "monitoring"},
+		Spec: appsv1.NebariAppSpec{Hostname: "grafana.example.com", Auth: &appsv1.AuthConfig{
+			Enabled: true, Provider: constants.ProviderKeycloak, ProvisionClient: ptr.To(true),
+			Groups: []string{"admin"}, EnforceAtGateway: ptr.To(false),
+		}},
+	}
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: naming.ClientSecretName(app), Namespace: "monitoring"},
+		Data:       map[string][]byte{constants.ClientSecretKey: []byte("s")},
+	}
+	provider := &mockProvider{
+		issuerURL: "https://kc.example.com/realms/nebari", clientID: "c", supportsProvisioning: true,
+		provisionError: &providers.GroupsClaimConflictError{Mappers: []string{"hand-attribute"}},
+	}
+	r := &AuthReconciler{
+		Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(secret).Build(), Scheme: scheme,
+		Recorder: record.NewFakeRecorder(50), Providers: map[string]providers.OIDCProvider{constants.ProviderKeycloak: provider},
+	}
+	for pass := 1; pass <= 2; pass++ {
+		if err := r.ReconcileAuth(context.Background(), app); err != nil {
+			t.Fatalf("pass %d: %v", pass, err)
+		}
+	}
+	if provider.provisionCount != 1 {
+		t.Errorf("ProvisionClient called %d times over two passes, want 1 (the hash should be stored)", provider.provisionCount)
 	}
 }

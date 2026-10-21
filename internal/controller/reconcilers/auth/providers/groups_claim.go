@@ -45,6 +45,21 @@ func (e *GroupsClaimConflictError) Error() string {
 
 func (e *GroupsClaimConflictError) Unwrap() error { return ErrGroupsClaimConflict }
 
+// GroupsMappersRemovedError reports mappers the operator deleted from the app's
+// client because the application enforces spec.auth.groups itself
+// (enforceAtGateway false): the gateway cannot deny on its behalf, and the
+// mappers could write values into the groups claim the application trusts.
+// Provisioning otherwise succeeded.
+type GroupsMappersRemovedError struct {
+	Mappers []string
+}
+
+func (e *GroupsMappersRemovedError) Error() string {
+	return fmt.Sprintf("deleted protocol mapper(s) %s from the client: enforceAtGateway is false, so the application "+
+		"trusts the groups claim, and only an oidc-group-membership-mapper with full.path true may write it",
+		strings.Join(e.Mappers, ", "))
+}
+
 const (
 	// mapperConfigTrue is the string Keycloak mapper config uses for boolean true.
 	mapperConfigTrue = "true"
@@ -103,10 +118,33 @@ func writesGroupsToAccessToken(cfg map[string]string) bool {
 // tokens it reads lightweight.claim instead of access.token.claim. Matching
 // too much (a nested "groups.x") only fails closed.
 func unsafeGroupsMapper(mapperType string, cfg map[string]string) bool {
-	top, _, _ := strings.Cut(strings.ReplaceAll(cfg["claim.name"], `\`, ""), ".")
 	inAccessToken := cfg["access.token.claim"] == mapperConfigTrue || cfg["lightweight.claim"] == mapperConfigTrue
-	trusted := mapperType == groupMembershipMapperType && cfg["full.path"] == mapperConfigTrue
-	return top == groupsClaim && inAccessToken && !trusted
+	return writesGroupsClaim(cfg) && inAccessToken && !trustedGroupsMapper(mapperType, cfg)
+}
+
+// appUnsafeGroupsMapper is unsafeGroupsMapper for an application that enforces
+// spec.auth.groups itself. The application may read the ID token or userinfo
+// as well as the access token, so a mapper writing the claim into any of them
+// counts.
+func appUnsafeGroupsMapper(mapperType string, cfg map[string]string) bool {
+	inAnyToken := false
+	for _, key := range []string{"access.token.claim", "lightweight.claim", "id.token.claim", "userinfo.token.claim"} {
+		inAnyToken = inAnyToken || cfg[key] == mapperConfigTrue
+	}
+	return writesGroupsClaim(cfg) && inAnyToken && !trustedGroupsMapper(mapperType, cfg)
+}
+
+// writesGroupsClaim reports whether claim.name lands in the top-level "groups"
+// claim, the way Keycloak places it: backslashes stripped, split on dots.
+func writesGroupsClaim(cfg map[string]string) bool {
+	top, _, _ := strings.Cut(strings.ReplaceAll(cfg["claim.name"], `\`, ""), ".")
+	return top == groupsClaim
+}
+
+// trustedGroupsMapper reports whether a mapper only ever adds the user's real
+// group paths to the groups claim.
+func trustedGroupsMapper(mapperType string, cfg map[string]string) bool {
+	return mapperType == groupMembershipMapperType && cfg["full.path"] == mapperConfigTrue
 }
 
 // emitsFullPathGroups reports whether any mapper is a group-membership mapper

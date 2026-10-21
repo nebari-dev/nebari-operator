@@ -309,7 +309,7 @@ func (p *KeycloakProvider) ProvisionClient(ctx context.Context, nebariApp *appsv
 	// scopes). A mapper that makes the groups claim untrustworthy doesn't stop
 	// provisioning either; that error is returned with the groups one below.
 	mappersErr := p.syncClientProtocolMappers(ctx, kcClient, token, clientInternalID, nebariApp)
-	if _, onlyConflict := mappersErr.(*GroupsClaimConflictError); mappersErr != nil && !onlyConflict {
+	if mappersErr != nil && !isMapperNotice(mappersErr) {
 		// Any conflict found stays reachable through errors.As.
 		return fmt.Errorf("failed to sync client protocol mappers: %w", mappersErr)
 	}
@@ -955,15 +955,23 @@ func (p *KeycloakProvider) syncClientProtocolMappers(ctx context.Context, kcClie
 
 	toDelete := ownedNotDesired(previouslyManaged, existingByName, desiredNames)
 
-	// The gateway trusts the groups claim when auth.groups is set. Mappers the
-	// operator does not manage stay, but one that may write the claim with
-	// values the gateway cannot trust makes it untrustworthy. They are found
-	// before anything is written, so that every error below still carries
-	// them and the reconciler keeps the policy deny-all.
+	// With auth.groups set, something trusts the groups claim. Mappers the
+	// operator does not manage stay, unless one may write the claim with values
+	// that cannot be trusted:
+	//   - When the gateway enforces the groups, such a mapper is a conflict and
+	//     the reconciler makes the policy deny-all. Conflicts are found before
+	//     anything is written, so that every error below still carries them.
+	//   - When the application enforces them, the gateway cannot deny on its
+	//     behalf, so such a mapper is deleted and reported.
 	groupsSet := len(nebariApp.Spec.Auth.Groups) > 0
-	var conflicts []string
-	if groupsSet {
-		conflicts = unsafeMappers(existingByName, append(slices.Clone(desiredNames), toDelete...))
+	atGateway := nebariApp.Spec.Auth.EnforceAtGateway == nil || *nebariApp.Spec.Auth.EnforceAtGateway
+	unmanaged := append(slices.Clone(desiredNames), toDelete...)
+	var conflicts, removed []string
+	switch {
+	case groupsSet && atGateway:
+		conflicts = unsafeMappers(existingByName, unmanaged, unsafeGroupsMapper)
+	case groupsSet:
+		removed = unsafeMappers(existingByName, unmanaged, appUnsafeGroupsMapper)
 	}
 	withConflicts := func(err error) error {
 		if len(conflicts) == 0 {
@@ -980,12 +988,19 @@ func (p *KeycloakProvider) syncClientProtocolMappers(ctx context.Context, kcClie
 		existing := existingByName[name]
 		if err := kcClient.DeleteClientProtocolMapper(ctx, token.AccessToken, p.Config.Realm, clientInternalID, *existing.ID); err != nil {
 			// The mapper is still on the client, so it counts like any other.
-			if groupsSet {
-				conflicts = unsafeMappers(map[string]gocloak.ProtocolMapperRepresentation{name: existing}, nil, conflicts...)
+			if groupsSet && atGateway {
+				conflicts = unsafeMappers(map[string]gocloak.ProtocolMapperRepresentation{name: existing}, nil, unsafeGroupsMapper, conflicts...)
 			}
 			return withConflicts(fmt.Errorf("failed to delete client protocol mapper %q: %w", name, err))
 		}
 		logger.Info("Deleted client protocol mapper the spec no longer lists", "mapper", name)
+	}
+	for _, name := range removed {
+		if err := kcClient.DeleteClientProtocolMapper(ctx, token.AccessToken, p.Config.Realm, clientInternalID,
+			gocloak.PString(existingByName[name].ID)); err != nil {
+			return fmt.Errorf("failed to delete client protocol mapper %q that writes the groups claim: %w", name, err)
+		}
+		logger.Info("Deleted client protocol mapper that writes the groups claim the application trusts", "mapper", name)
 	}
 
 	if encoded := encodeMapperNames(desiredNames); attrs[managedMappersAttribute] != encoded &&
@@ -995,10 +1010,23 @@ func (p *KeycloakProvider) syncClientProtocolMappers(ctx context.Context, kcClie
 		}
 	}
 
-	if len(conflicts) > 0 {
+	switch {
+	case len(conflicts) > 0:
 		return &GroupsClaimConflictError{Mappers: conflicts}
+	case len(removed) > 0:
+		return &GroupsMappersRemovedError{Mappers: removed}
 	}
 	return nil
+}
+
+// isMapperNotice reports whether err from the mapper sync is only a conflict or
+// a report of removed mappers, after which provisioning carries on.
+func isMapperNotice(err error) bool {
+	switch err.(type) {
+	case *GroupsClaimConflictError, *GroupsMappersRemovedError:
+		return true
+	}
+	return false
 }
 
 // ownedNotDesired returns the mappers on the client that the operator
@@ -1020,13 +1048,15 @@ func ownedNotDesired(previouslyManaged []string, existingByName map[string]goclo
 }
 
 // unsafeMappers returns, sorted and added to found, the names of the mappers
-// in existingByName that unsafeGroupsMapper flags, leaving out skip.
-func unsafeMappers(existingByName map[string]gocloak.ProtocolMapperRepresentation, skip []string, found ...string) []string {
+// in existingByName that unsafe flags, leaving out skip and mappers without
+// an ID.
+func unsafeMappers(existingByName map[string]gocloak.ProtocolMapperRepresentation, skip []string,
+	unsafe func(string, map[string]string) bool, found ...string) []string {
 	for name, existing := range existingByName {
-		if slices.Contains(skip, name) || slices.Contains(found, name) || existing.Config == nil {
+		if slices.Contains(skip, name) || slices.Contains(found, name) || existing.Config == nil || existing.ID == nil {
 			continue
 		}
-		if unsafeGroupsMapper(gocloak.PString(existing.ProtocolMapper), *existing.Config) {
+		if unsafe(gocloak.PString(existing.ProtocolMapper), *existing.Config) {
 			found = append(found, name)
 		}
 	}
