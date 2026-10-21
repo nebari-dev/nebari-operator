@@ -171,6 +171,11 @@ Common reasons you'll see in conditions:
 - `SecretNotFound` - OIDC client secret missing
 - `Failed` - General reconciliation failure
 
+**AuthReady and Ready, for `auth.groups`:**
+- `GroupsRequireKeycloak`, `GroupsClaimConflict`, `GroupsEmpty` - Every request is denied (see [authentication.md](authentication.md#group-based-access-control))
+- `GroupsNotResolved` - A listed group path does not exist in Keycloak; the SecurityPolicy is still applied
+- `GroupsEnforcedByApplication` - `AuthReady=True`; with `enforceAtGateway: false` the application must check the groups claim
+
 **TLSReady-specific:**
 - `CertificateNotReady` - cert-manager Certificate exists but is not yet `Ready=True` (cert is still being issued)
 - `ClusterIssuerNotConfigured` - `TLS_CLUSTER_ISSUER_NAME` is unset and the app does not set `routing.tls.secretName`; the routing reconciler falls back to the shared HTTPS listener
@@ -207,12 +212,15 @@ Reconcilers emit Kubernetes events to provide visibility into operations:
 - `UserProvidedSecretCheckFailed` (Warning) - The operator could not check the secret's state (transient error)
 
 **Authentication Events:**
-- `ClientProvisioned` (Normal) - OIDC client created
-- `ClientProvisionFailed` (Warning) - Client provisioning failed
-- `SecurityPolicyCreated` (Normal) - SecurityPolicy created
-- `SecurityPolicyUpdated` (Normal) - SecurityPolicy updated
-- `AuthConfigured` (Normal) - Authentication configured
-- `AuthFailed` (Warning) - Authentication configuration failed
+- `Provisioned` (Normal) - OIDC client provisioned
+- `Configured` (Normal) - Authentication configured
+- `Deleted` (Normal) - OIDC client deleted during cleanup
+- `SecurityPolicyDeleted` (Normal) - SecurityPolicy removed because `enforceAtGateway` is false
+- `GroupsRequireKeycloak`, `GroupsClaimConflict`, `GroupsEmpty` (Warning) - `auth.groups` cannot be enforced; every request is denied
+- `GroupsNotResolved` (Warning) - A `auth.groups` path does not exist in Keycloak
+- `GroupsMappersRemoved` (Warning) - Groups mappers not declared in the spec were deleted from the client
+
+See [authentication.md](authentication.md#events) for messages.
 
 View events for a NebariApp:
 ```bash

@@ -787,6 +787,9 @@ Represents the current state of the NebariApp resource.
 - `GatewayNotFound`: The target gateway doesn't exist
 - `CertificateNotReady`: TLS certificate is not yet ready (for TLSReady condition)
 - `GatewayListenerConflict`: Multiple NebariApps share hostname with per-app TLS (for TLSReady condition)
+- `GroupsRequireKeycloak`, `GroupsClaimConflict`, `GroupsEmpty`: `auth.groups` cannot be enforced, so every request is denied (for AuthReady and Ready)
+- `GroupsNotResolved`: an `auth.groups` path does not exist in Keycloak; the SecurityPolicy is still applied (for AuthReady and Ready)
+- `GroupsEnforcedByApplication`: `AuthReady=True` with `enforceAtGateway: false`; the application must check the groups claim
 
 ### hostname
 

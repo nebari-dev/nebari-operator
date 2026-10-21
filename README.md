@@ -171,7 +171,6 @@ spec:
     description: "A great internal tool"
     category: "Engineering"
     icon: "tool"
-    visibility: authenticated
 ```
 
 The operator will automatically create:
