@@ -67,11 +67,13 @@ func TestCheckGroupsClaim(t *testing.T) {
 		{name: "no mappers", kc: &appsv1.KeycloakClientConfig{}},
 		{name: "unrelated mapper", kc: &appsv1.KeycloakClientConfig{ProtocolMappers: []appsv1.KeycloakProtocolMapperConfig{audience}}},
 		{name: "compatible groups mapper", kc: &appsv1.KeycloakClientConfig{ProtocolMappers: []appsv1.KeycloakProtocolMapperConfig{fullPathMapper("my-groups")}}},
-		{name: "bare names", kc: &appsv1.KeycloakClientConfig{ProtocolMappers: []appsv1.KeycloakProtocolMapperConfig{bareNames}}, conflict: true},
-		{name: "not in access token", kc: &appsv1.KeycloakClientConfig{ProtocolMappers: []appsv1.KeycloakProtocolMapperConfig{idTokenOnly}}, conflict: true},
+		// Keycloak merges group-membership mappers into one claim, so bare names
+		// only add values that never match a full path.
+		{name: "bare names", kc: &appsv1.KeycloakClientConfig{ProtocolMappers: []appsv1.KeycloakProtocolMapperConfig{bareNames}}},
+		{name: "not in access token", kc: &appsv1.KeycloakClientConfig{ProtocolMappers: []appsv1.KeycloakProtocolMapperConfig{idTokenOnly}}},
 		{name: "other mapper type emitting groups", kc: &appsv1.KeycloakClientConfig{ProtocolMappers: []appsv1.KeycloakProtocolMapperConfig{scriptMapper}}, conflict: true},
 		{name: "other mapper type with full paths in the access token", kc: &appsv1.KeycloakClientConfig{ProtocolMappers: []appsv1.KeycloakProtocolMapperConfig{attributeMapper}}, conflict: true},
-		{name: "one compatible and one conflicting", kc: &appsv1.KeycloakClientConfig{ProtocolMappers: []appsv1.KeycloakProtocolMapperConfig{fullPathMapper("a"), bareNames}}, conflict: true},
+		{name: "one compatible and one conflicting", kc: &appsv1.KeycloakClientConfig{ProtocolMappers: []appsv1.KeycloakProtocolMapperConfig{fullPathMapper("a"), attributeMapper}}, conflict: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

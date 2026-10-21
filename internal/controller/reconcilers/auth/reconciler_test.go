@@ -1981,8 +1981,8 @@ func TestReconcileAuth_Groups(t *testing.T) {
 	_ = egv1alpha1.AddToScheme(scheme)
 
 	conflicting := &appsv1.KeycloakClientConfig{ProtocolMappers: []appsv1.KeycloakProtocolMapperConfig{{
-		Name: "g", ProtocolMapper: "oidc-group-membership-mapper",
-		Config: map[string]string{"claim.name": "groups", "full.path": "false", "access.token.claim": "true"},
+		Name: "g", ProtocolMapper: "oidc-usermodel-attribute-mapper",
+		Config: map[string]string{"claim.name": "groups", "user.attribute": "groups", "access.token.claim": "true"},
 	}}}
 
 	tests := []struct {
@@ -2005,6 +2005,9 @@ func TestReconcileAuth_Groups(t *testing.T) {
 		// wantNotReady is the reason GroupsNotReadyReason must report for the
 		// returned error; empty means it must report none.
 		wantNotReady string
+		// provisionErrHandled means provisionError is expected to be absorbed
+		// rather than returned.
+		provisionErrHandled bool
 	}{
 		{
 			name:        "gateway mode: allow rule and AuthConfigured",
@@ -2035,6 +2038,24 @@ func TestReconcileAuth_Groups(t *testing.T) {
 			providerKey: constants.ProviderKeycloak,
 			wantStatus:  metav1.ConditionFalse, wantReason: appsv1.ReasonGroupsClaimConflict, wantPolicy: true, wantErr: true,
 			wantNotReady: appsv1.ReasonGroupsClaimConflict,
+		},
+		{
+			name:           "mapper on the client writes groups from elsewhere: deny all over the old policy",
+			auth:           &appsv1.AuthConfig{Enabled: true, Provider: constants.ProviderKeycloak, ProvisionClient: ptr.To(true), Groups: []string{"finance"}},
+			providerKey:    constants.ProviderKeycloak,
+			provisionError: &providers.GroupsClaimConflictError{Mappers: []string{"hand-hardcoded"}},
+			existingPolicy: true,
+			wantErr:        true,
+			wantStatus:     metav1.ConditionFalse, wantReason: appsv1.ReasonGroupsClaimConflict, wantPolicy: true,
+			wantNotReady: appsv1.ReasonGroupsClaimConflict,
+		},
+		{
+			name:           "mapper conflict with enforcement in the application: not a gateway concern",
+			auth:           &appsv1.AuthConfig{Enabled: true, Provider: constants.ProviderKeycloak, ProvisionClient: ptr.To(true), Groups: []string{"finance"}, EnforceAtGateway: ptr.To(false)},
+			providerKey:    constants.ProviderKeycloak,
+			provisionError: &providers.GroupsClaimConflictError{Mappers: []string{"hand-hardcoded"}},
+			wantStatus:     metav1.ConditionTrue, wantReason: appsv1.ReasonGroupsEnforcedByApplication, wantPolicy: false,
+			provisionErrHandled: true,
 		},
 		{
 			name:        "groups that normalize to nothing: deny all and GroupsEmpty",
@@ -2163,7 +2184,11 @@ func TestReconcileAuth_Groups(t *testing.T) {
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("ReconcileAuth() error = %v, wantErr %v", err, tt.wantErr)
 			}
-			assertWraps(t, err, tt.provisionError, tt.policyWriteErr, tt.rbacWriteErr, tt.listErr)
+			wantWrapped := tt.provisionError
+			if tt.provisionErrHandled {
+				wantWrapped = nil
+			}
+			assertWraps(t, err, wantWrapped, tt.policyWriteErr, tt.rbacWriteErr, tt.listErr)
 			if got, _ := GroupsNotReadyReason(err); got != tt.wantNotReady {
 				t.Errorf("GroupsNotReadyReason() = %q, want %q", got, tt.wantNotReady)
 			}
@@ -2219,8 +2244,8 @@ func TestReconcileAuth_DenyAllReasonOutranksGroupsNotResolved(t *testing.T) {
 			Enabled: true, Provider: constants.ProviderKeycloak, ProvisionClient: ptr.To(true),
 			Groups: []string{"/missing"},
 			KeycloakConfig: &appsv1.KeycloakClientConfig{ProtocolMappers: []appsv1.KeycloakProtocolMapperConfig{{
-				Name: "g", ProtocolMapper: "oidc-group-membership-mapper",
-				Config: map[string]string{"claim.name": "groups", "full.path": "false", "access.token.claim": "true"},
+				Name: "g", ProtocolMapper: "oidc-usermodel-attribute-mapper",
+				Config: map[string]string{"claim.name": "groups", "user.attribute": "groups", "access.token.claim": "true"},
 			}}},
 		}},
 	}

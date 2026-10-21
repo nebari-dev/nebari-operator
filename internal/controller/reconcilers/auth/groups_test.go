@@ -63,8 +63,8 @@ func TestResolveGroupsMode(t *testing.T) {
 	conflicting := &appsv1.KeycloakClientConfig{
 		ProtocolMappers: []appsv1.KeycloakProtocolMapperConfig{{
 			Name:           "my-groups",
-			ProtocolMapper: "oidc-group-membership-mapper",
-			Config:         map[string]string{"claim.name": "groups", "full.path": "false", "access.token.claim": "true"},
+			ProtocolMapper: "oidc-usermodel-attribute-mapper",
+			Config:         map[string]string{"claim.name": "groups", "user.attribute": "groups", "access.token.claim": "true"},
 		}},
 	}
 	tests := []struct {
@@ -163,8 +163,8 @@ func TestBuildSecurityPolicySpec_Groups(t *testing.T) {
 		return r
 	}
 	conflicting := &appsv1.KeycloakClientConfig{ProtocolMappers: []appsv1.KeycloakProtocolMapperConfig{{
-		Name: "g", ProtocolMapper: "oidc-group-membership-mapper",
-		Config: map[string]string{"claim.name": "groups", "full.path": "false", "access.token.claim": "true"},
+		Name: "g", ProtocolMapper: "oidc-usermodel-attribute-mapper",
+		Config: map[string]string{"claim.name": "groups", "user.attribute": "groups", "access.token.claim": "true"},
 	}}}
 
 	tests := []struct {

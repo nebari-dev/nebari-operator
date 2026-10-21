@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1017,21 +1018,12 @@ func TestHasScope(t *testing.T) {
 }
 
 func TestKeycloakProvider_SyncClientProtocolMappers_NoMappers(t *testing.T) {
-	// syncClientProtocolMappers should return nil when no mappers are needed
-	provider := &KeycloakProvider{
-		Config: config.KeycloakConfig{Realm: "test"},
-	}
-
+	// With no mappers needed and none managed before, the sync only reads the
+	// client and writes nothing.
 	tests := []struct {
 		name      string
 		nebariApp *appsv1.NebariApp
 	}{
-		{
-			name: "Nil auth config",
-			nebariApp: &appsv1.NebariApp{
-				Spec: appsv1.NebariAppSpec{Hostname: "test.example.com"},
-			},
-		},
 		{
 			name: "No groups scope and no keycloakConfig mappers",
 			nebariApp: &appsv1.NebariApp{
@@ -1062,13 +1054,27 @@ func TestKeycloakProvider_SyncClientProtocolMappers_NoMappers(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Should return nil without making any Keycloak calls
-			err := provider.syncClientProtocolMappers(context.Background(), nil, nil, "fake-id", tt.nebariApp)
+			kc := newMapperKeycloak(t, `{"id":"cid","protocolMappers":[]}`)
+			defer kc.server.Close()
+			provider := &KeycloakProvider{Config: config.KeycloakConfig{URL: kc.server.URL, Realm: "test"}}
+			err := provider.syncClientProtocolMappers(context.Background(), gocloak.NewClient(kc.server.URL),
+				&gocloak.JWT{AccessToken: "t"}, "cid", tt.nebariApp)
 			if err != nil {
 				t.Errorf("expected no error, got: %v", err)
 			}
+			if len(kc.writes) != 0 {
+				t.Errorf("expected no writes, got %v", kc.writes)
+			}
 		})
 	}
+
+	t.Run("Nil auth config", func(t *testing.T) {
+		provider := &KeycloakProvider{Config: config.KeycloakConfig{Realm: "test"}}
+		app := &appsv1.NebariApp{Spec: appsv1.NebariAppSpec{Hostname: "test.example.com"}}
+		if err := provider.syncClientProtocolMappers(context.Background(), nil, nil, "fake-id", app); err != nil {
+			t.Errorf("expected no error, got: %v", err)
+		}
+	})
 }
 
 func TestKeycloakProvider_DeleteClient(t *testing.T) {
@@ -1972,62 +1978,162 @@ func TestKeycloakProvider_GetJWKSURL(t *testing.T) {
 	}
 }
 
-func TestKeycloakProvider_SyncClientProtocolMappers_PrunesStaleGroupsMappers(t *testing.T) {
-	existing := `{"id":"cid","protocolMappers":[
-		{"id":"m-stale","name":"old-groups","protocol":"openid-connect","protocolMapper":"oidc-hardcoded-claim-mapper","config":{"claim.name":"groups"}},
-		{"id":"m-desired","name":"nebari-group-membership","protocol":"openid-connect","protocolMapper":"oidc-group-membership-mapper","config":{"claim.name":"groups"}},
-		{"id":"m-other","name":"dept","protocol":"openid-connect","protocolMapper":"oidc-hardcoded-claim-mapper","config":{"claim.name":"department"}},
-		{"id":"m-unrelated","name":"hand-made-email","protocol":"openid-connect","protocolMapper":"oidc-usermodel-property-mapper","config":{"claim.name":"email"}},
-		{"name":"no-id-groups","protocol":"openid-connect","protocolMapper":"oidc-hardcoded-claim-mapper","config":{"claim.name":"groups"}}
-	]}`
-	// hand-made-email is not desired but does not emit groups, so it is kept.
-	// no-id-groups emits groups but has no ID to delete by, so it is skipped.
-	customDept := []appsv1.KeycloakProtocolMapperConfig{{
+// mapperKeycloak is a fake Keycloak admin API for mapper sync tests. It serves
+// one client, records every write as "METHOD path", the deleted mapper IDs,
+// and the attributes sent on a client update.
+type mapperKeycloak struct {
+	server     *httptest.Server
+	writes     []string
+	deleted    []string
+	attributes map[string]string
+}
+
+func newMapperKeycloak(t *testing.T, client string) *mapperKeycloak {
+	t.Helper()
+	kc := &mapperKeycloak{}
+	kc.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method != http.MethodGet {
+			kc.writes = append(kc.writes, r.Method+" "+r.URL.Path)
+		}
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/admin/realms/test/clients/cid":
+			_, _ = w.Write([]byte(client))
+		case r.Method == http.MethodPut && r.URL.Path == "/admin/realms/test/clients/cid":
+			var body struct {
+				Attributes map[string]string `json:"attributes"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode client update: %v", err)
+			}
+			kc.attributes = body.Attributes
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodDelete && strings.Contains(r.URL.Path, "/protocol-mappers/models/"):
+			kc.deleted = append(kc.deleted, r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:])
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodPut:
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodPost:
+			w.Header().Set("Location", r.URL.Path+"/new")
+			w.WriteHeader(http.StatusCreated)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	return kc
+}
+
+// TestKeycloakProvider_SyncClientProtocolMappers_Merge checks that mapper sync
+// merges with what is already on the client: only mappers the operator
+// recorded as its own are deleted, other mappers stay, and when auth.groups is
+// set one that writes the groups claim from something other than group
+// membership is reported instead of deleted.
+func TestKeycloakProvider_SyncClientProtocolMappers_Merge(t *testing.T) {
+	mapper := func(id, name, typ, cfg string) string {
+		return `{"id":"` + id + `","name":"` + name + `","protocol":"openid-connect","protocolMapper":"` + typ + `","config":` + cfg + `}`
+	}
+	client := func(managed string, mappers ...string) string {
+		attrs := `{}`
+		if managed != "" {
+			attrs = `{"nebari.dev/managed-protocol-mappers":` + strconv.Quote(managed) + `}`
+		}
+		return `{"id":"cid","attributes":` + attrs + `,"protocolMappers":[` + strings.Join(mappers, ",") + `]}`
+	}
+	const membership = "oidc-group-membership-mapper"
+	handBareNames := mapper("m-bare", "hand-groups", membership, `{"claim.name":"groups","full.path":"false","access.token.claim":"true"}`)
+	handHardcoded := mapper("m-hard", "hand-hardcoded", "oidc-hardcoded-claim-mapper", `{"claim.name":"groups","claim.value":"/admins","access.token.claim":"true"}`)
+	handIDTokenOnly := mapper("m-id", "hand-id-token", "oidc-hardcoded-claim-mapper", `{"claim.name":"groups","id.token.claim":"true"}`)
+	ours := mapper("m-ours", "nebari-group-membership", membership, `{"claim.name":"groups","full.path":"true","access.token.claim":"true"}`)
+	oldCustom := mapper("m-old", "old-custom", "oidc-hardcoded-claim-mapper", `{"claim.name":"department"}`)
+	dept := []appsv1.KeycloakProtocolMapperConfig{{
 		Name: "dept", ProtocolMapper: "oidc-hardcoded-claim-mapper",
 		Config: map[string]string{"claim.name": "department"},
 	}}
+
 	tests := []struct {
-		name        string
-		groups      []string
-		mappers     []appsv1.KeycloakProtocolMapperConfig
-		wantDeleted []string
+		name          string
+		client        string
+		groups        []string
+		mappers       []appsv1.KeycloakProtocolMapperConfig
+		wantDeleted   []string
+		wantConflicts []string
+		wantManaged   string // recorded attribute value; empty means no client update
 	}{
-		{name: "stale groups mapper deleted, desired and other-claim kept", groups: []string{"/finance"}, mappers: customDept, wantDeleted: []string{"m-stale"}},
-		{name: "no groups: nothing deleted", mappers: customDept, wantDeleted: nil},
+		{
+			name:        "hand-added group-membership mapper with bare names is kept",
+			client:      client("", handBareNames),
+			groups:      []string{"/finance"},
+			mappers:     dept,
+			wantManaged: `["dept","nebari-group-membership"]`,
+		},
+		{
+			name:          "hand-added mapper writing groups from elsewhere is reported, not deleted",
+			client:        client(`["dept","nebari-group-membership"]`, ours, handHardcoded),
+			groups:        []string{"/finance"},
+			mappers:       dept,
+			wantConflicts: []string{"hand-hardcoded"},
+		},
+		{
+			name:    "mapper writing groups only into the ID token is not a conflict",
+			client:  client(`["dept","nebari-group-membership"]`, ours, handIDTokenOnly),
+			groups:  []string{"/finance"},
+			mappers: dept,
+		},
+		{
+			name:    "without auth.groups the gateway does not read the claim",
+			client:  client(`["dept"]`, handHardcoded),
+			mappers: dept,
+		},
+		{
+			name:        "a mapper the operator managed is deleted once the spec drops it",
+			client:      client(`["dept","old-custom"]`, oldCustom),
+			mappers:     dept,
+			wantDeleted: []string{"m-old"},
+			wantManaged: `["dept"]`,
+		},
+		{
+			name:        "the operator's groups mapper is deleted once auth.groups is unset, even untracked",
+			client:      client("", ours),
+			mappers:     dept,
+			wantDeleted: []string{"m-ours"},
+			wantManaged: `["dept"]`,
+		},
+		{
+			name:   "an untracked mapper is never deleted",
+			client: client(`["dept"]`, oldCustom),
+			// old-custom is not recorded as managed, so it stays even though the
+			// spec does not list it.
+			mappers: dept,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var deleted []string
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				switch {
-				case r.Method == http.MethodGet && r.URL.Path == "/admin/realms/test/clients/cid":
-					_, _ = w.Write([]byte(existing))
-				case r.Method == http.MethodDelete && strings.Contains(r.URL.Path, "/protocol-mappers/models/"):
-					deleted = append(deleted, r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:])
-					w.WriteHeader(http.StatusNoContent)
-				case r.Method == http.MethodPut:
-					w.WriteHeader(http.StatusNoContent)
-				case r.Method == http.MethodPost:
-					w.Header().Set("Location", r.URL.Path+"/new")
-					w.WriteHeader(http.StatusCreated)
-				default:
-					w.WriteHeader(http.StatusNotFound)
-				}
-			}))
-			defer server.Close()
+			kc := newMapperKeycloak(t, tt.client)
+			defer kc.server.Close()
 
-			provider := &KeycloakProvider{Config: config.KeycloakConfig{URL: server.URL, Realm: "test"}}
+			provider := &KeycloakProvider{Config: config.KeycloakConfig{URL: kc.server.URL, Realm: "test"}}
 			app := &appsv1.NebariApp{Spec: appsv1.NebariAppSpec{Hostname: "t.example.com", Auth: &appsv1.AuthConfig{
 				Enabled: true, Groups: tt.groups,
 				KeycloakConfig: &appsv1.KeycloakClientConfig{ProtocolMappers: tt.mappers},
 			}}}
-			err := provider.syncClientProtocolMappers(context.Background(), gocloak.NewClient(server.URL), &gocloak.JWT{AccessToken: "t"}, "cid", app)
-			if err != nil {
+			err := provider.syncClientProtocolMappers(context.Background(), gocloak.NewClient(kc.server.URL), &gocloak.JWT{AccessToken: "t"}, "cid", app)
+
+			var conflict *GroupsClaimConflictError
+			if tt.wantConflicts != nil {
+				if !errors.As(err, &conflict) || !errors.Is(err, ErrGroupsClaimConflict) {
+					t.Fatalf("expected a *GroupsClaimConflictError, got %v", err)
+				}
+				if !reflect.DeepEqual(conflict.Mappers, tt.wantConflicts) {
+					t.Errorf("conflicting mappers = %v, want %v", conflict.Mappers, tt.wantConflicts)
+				}
+			} else if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if !reflect.DeepEqual(deleted, tt.wantDeleted) {
-				t.Errorf("deleted = %v, want %v", deleted, tt.wantDeleted)
+			if !reflect.DeepEqual(kc.deleted, tt.wantDeleted) {
+				t.Errorf("deleted = %v, want %v", kc.deleted, tt.wantDeleted)
+			}
+			if got := kc.attributes[managedMappersAttribute]; got != tt.wantManaged {
+				t.Errorf("recorded managed mappers = %q, want %q", got, tt.wantManaged)
 			}
 		})
 	}

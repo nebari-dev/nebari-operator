@@ -150,9 +150,13 @@ func IsGroupsNotResolved(err error) bool {
 type GroupsDeniedError struct {
 	Reason  string
 	Message string
+	// Cause is the provider error behind the denial, if any.
+	Cause error
 }
 
 func (e *GroupsDeniedError) Error() string { return e.Message }
+
+func (e *GroupsDeniedError) Unwrap() error { return e.Cause }
 
 // GroupsNotReadyReason reports whether err from ReconcileAuth means that auth
 // is in place but spec.auth.groups does not admit anyone yet, either because
@@ -216,7 +220,7 @@ func (r *AuthReconciler) ReconcileAuth(ctx context.Context, nebariApp *appsv1.Ne
 	// would keep admitting every authenticated user.
 	failClosed := func(err error) error {
 		if groups.enforcedAtGateway() {
-			if spErr := r.reconcileSecurityPolicy(ctx, nebariApp, provider); spErr != nil {
+			if spErr := r.reconcileSecurityPolicy(ctx, nebariApp, provider, groups); spErr != nil {
 				return errors.Join(err, spErr)
 			}
 		}
@@ -226,6 +230,9 @@ func (r *AuthReconciler) ReconcileAuth(ctx context.Context, nebariApp *appsv1.Ne
 	// Set when provisioning succeeded except for spec.auth.groups paths that do
 	// not exist. Auth is still reconciled in full, then reported as not ready.
 	var groupsNotResolved *providers.GroupsNotResolvedError
+	// Set when a mapper the operator does not manage makes the groups claim
+	// untrustworthy. The policy is then written as deny-all.
+	var claimConflict *providers.GroupsClaimConflictError
 
 	// Provision OIDC client if requested and supported
 	if shouldProvisionClient(nebariApp.Spec.Auth) {
@@ -249,15 +256,20 @@ func (r *AuthReconciler) ReconcileAuth(ctx context.Context, nebariApp *appsv1.Ne
 
 			logger.Info("Provisioning OIDC client")
 			if err := provider.ProvisionClient(ctx, nebariApp); err != nil {
-				if !errors.As(err, &groupsNotResolved) {
+				var absorbed bool
+				groupsNotResolved, claimConflict, absorbed = absorbProvisionError(err)
+				if !absorbed {
 					conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionFalse,
 						"ProvisioningFailed", fmt.Sprintf("Failed to provision OIDC client: %v", err))
 					return failClosed(err)
 				}
-				// Everything except the missing groups is provisioned. Carry on so
-				// the SecurityPolicy is still applied; the condition is reported
-				// once the rest of auth has been reconciled.
-				logger.Info("OIDC client provisioned, but some group paths do not exist", "paths", groupsNotResolved.Paths)
+				// Everything else is provisioned. Carry on so the SecurityPolicy is
+				// still applied; the condition is reported once the rest of auth
+				// has been reconciled.
+				logger.Info("OIDC client provisioned, but spec.auth.groups cannot admit anyone yet", "reason", err.Error())
+				if claimConflict != nil && groups == groupsModeGateway {
+					groups = groupsModeClaimConflict
+				}
 			} else {
 				logger.Info("OIDC client provisioned successfully")
 				r.Recorder.Event(nebariApp, corev1.EventTypeNormal, "Provisioned", "OIDC client provisioned successfully")
@@ -278,9 +290,10 @@ func (r *AuthReconciler) ReconcileAuth(ctx context.Context, nebariApp *appsv1.Ne
 			}
 
 			// Store hash so subsequent reconciles can skip provisioning when nothing has changed.
-			// Not while groups are unresolved: provisioning must run again so the
-			// lookup is retried, and AuthReady clears once the groups exist.
-			if groupsNotResolved == nil {
+			// Not while groups are unresolved or the claim is untrustworthy:
+			// provisioning must run again so the check is retried, and AuthReady
+			// clears once the groups exist or the mapper is fixed.
+			if groupsNotResolved == nil && claimConflict == nil {
 				nebariApp.Status.AuthConfigHash = currentHash
 			}
 		}
@@ -314,7 +327,7 @@ func (r *AuthReconciler) ReconcileAuth(ctx context.Context, nebariApp *appsv1.Ne
 
 	// Reconcile SecurityPolicy (only if enforceAtGateway is enabled)
 	if shouldEnforceAtGateway(nebariApp.Spec.Auth) {
-		if err := r.reconcileSecurityPolicy(ctx, nebariApp, provider); err != nil {
+		if err := r.reconcileSecurityPolicy(ctx, nebariApp, provider, groups); err != nil {
 			conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionFalse,
 				"SecurityPolicyFailed", fmt.Sprintf("Failed to reconcile SecurityPolicy: %v", err))
 			return err
@@ -329,29 +342,45 @@ func (r *AuthReconciler) ReconcileAuth(ctx context.Context, nebariApp *appsv1.Ne
 		}
 	}
 
-	return r.setAuthReadyCondition(nebariApp, groups, groupsNotResolved)
+	return r.setAuthReadyCondition(nebariApp, groups, groupsNotResolved, claimConflict)
+}
+
+// absorbProvisionError reports whether err from ProvisionClient leaves the
+// client provisioned except for group paths that do not exist or a mapper that
+// makes the groups claim untrustworthy, and returns those causes. Any other
+// error fails provisioning.
+func absorbProvisionError(err error) (*providers.GroupsNotResolvedError, *providers.GroupsClaimConflictError, bool) {
+	var notResolved *providers.GroupsNotResolvedError
+	var conflict *providers.GroupsClaimConflictError
+	foundNotResolved := errors.As(err, &notResolved)
+	foundConflict := errors.As(err, &conflict)
+	return notResolved, conflict, foundNotResolved || foundConflict
 }
 
 // setAuthReadyCondition sets the final AuthReady condition once every auth step
 // has succeeded. The deny-all groups modes are reported before unresolved
 // group paths, because creating the missing groups would not admit anyone.
-func (r *AuthReconciler) setAuthReadyCondition(nebariApp *appsv1.NebariApp, groups groupsMode, groupsNotResolved *providers.GroupsNotResolvedError) error {
-	deniedAll := func(reason, msg string) error {
+func (r *AuthReconciler) setAuthReadyCondition(nebariApp *appsv1.NebariApp, groups groupsMode,
+	groupsNotResolved *providers.GroupsNotResolvedError, claimConflict *providers.GroupsClaimConflictError) error {
+	deniedAll := func(reason, msg string, cause error) error {
 		conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionFalse, reason, msg)
 		r.Recorder.Event(nebariApp, corev1.EventTypeWarning, reason, msg)
-		return &GroupsDeniedError{Reason: reason, Message: msg}
+		return &GroupsDeniedError{Reason: reason, Message: msg, Cause: cause}
 	}
 	switch groups {
 	case groupsModeRequireKeycloak:
 		return deniedAll(appsv1.ReasonGroupsRequireKeycloak,
-			fmt.Sprintf("spec.auth.groups requires provider %q for gateway enforcement; all requests are denied", constants.ProviderKeycloak))
+			fmt.Sprintf("spec.auth.groups requires provider %q for gateway enforcement; all requests are denied", constants.ProviderKeycloak), nil)
 	case groupsModeClaimConflict:
-		return deniedAll(appsv1.ReasonGroupsClaimConflict,
-			fmt.Sprintf("%v; all requests are denied", providers.CheckGroupsClaim(nebariApp.Spec.Auth.KeycloakConfig)))
+		cause := providers.CheckGroupsClaim(nebariApp.Spec.Auth.KeycloakConfig)
+		if claimConflict != nil {
+			cause = claimConflict
+		}
+		return deniedAll(appsv1.ReasonGroupsClaimConflict, fmt.Sprintf("%v; all requests are denied", cause), cause)
 	case groupsModeGateway:
 		if len(NormalizeGroupPaths(nebariApp.Spec.Auth.Groups)) == 0 {
 			return deniedAll(appsv1.ReasonGroupsEmpty,
-				"every spec.auth.groups entry is empty after normalization, so no group is admitted; all requests are denied")
+				"every spec.auth.groups entry is empty after normalization, so no group is admitted; all requests are denied", nil)
 		}
 	}
 
@@ -490,7 +519,9 @@ func (r *AuthReconciler) deleteSecurityPolicyIfExists(ctx context.Context, nebar
 }
 
 // reconcileSecurityPolicy creates or updates the Envoy SecurityPolicy for OIDC authentication.
-func (r *AuthReconciler) reconcileSecurityPolicy(ctx context.Context, nebariApp *appsv1.NebariApp, provider providers.OIDCProvider) error {
+// groups is how spec.auth.groups is enforced, which can be stricter than what
+// the spec alone implies when provisioning found a conflicting mapper.
+func (r *AuthReconciler) reconcileSecurityPolicy(ctx context.Context, nebariApp *appsv1.NebariApp, provider providers.OIDCProvider, groups groupsMode) error {
 	logger := log.FromContext(ctx)
 
 	securityPolicyName := naming.SecurityPolicyName(nebariApp)
@@ -506,7 +537,7 @@ func (r *AuthReconciler) reconcileSecurityPolicy(ctx context.Context, nebariApp 
 			return fmt.Errorf("failed to set controller reference: %w", err)
 		}
 
-		spec, err := r.buildSecurityPolicySpec(ctx, nebariApp, provider)
+		spec, err := r.buildSecurityPolicySpecForMode(ctx, nebariApp, provider, groups)
 		if err != nil {
 			return fmt.Errorf("failed to build SecurityPolicy spec: %w", err)
 		}
@@ -534,8 +565,15 @@ func isIssuerRejected(err error) bool {
 	return apierrors.IsInvalid(err) && strings.Contains(err.Error(), "spec.oidc.provider.issuer")
 }
 
-// buildSecurityPolicySpec constructs the SecurityPolicy specification for OIDC.
+// buildSecurityPolicySpec constructs the SecurityPolicy specification for OIDC,
+// enforcing spec.auth.groups as the spec alone implies.
 func (r *AuthReconciler) buildSecurityPolicySpec(ctx context.Context, nebariApp *appsv1.NebariApp, provider providers.OIDCProvider) (egv1alpha1.SecurityPolicySpec, error) {
+	return r.buildSecurityPolicySpecForMode(ctx, nebariApp, provider, resolveGroupsMode(nebariApp.Spec.Auth))
+}
+
+// buildSecurityPolicySpecForMode constructs the SecurityPolicy specification
+// for OIDC, enforcing spec.auth.groups according to groups.
+func (r *AuthReconciler) buildSecurityPolicySpecForMode(ctx context.Context, nebariApp *appsv1.NebariApp, provider providers.OIDCProvider, groups groupsMode) (egv1alpha1.SecurityPolicySpec, error) {
 	// Get provider-specific values
 	issuerURL, err := provider.GetIssuerURL(ctx, nebariApp)
 	if err != nil {
@@ -654,7 +692,7 @@ func (r *AuthReconciler) buildSecurityPolicySpec(ctx context.Context, nebariApp 
 		OIDC: oidcConfig,
 	}
 
-	switch resolveGroupsMode(nebariApp.Spec.Auth) {
+	switch groups {
 	case groupsModeGateway:
 		groupsProvider, ok := provider.(providers.GroupsClaimProvider)
 		if !ok {

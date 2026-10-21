@@ -27,6 +27,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -303,9 +304,13 @@ func (p *KeycloakProvider) ProvisionClient(ctx context.Context, nebariApp *appsv
 		return fmt.Errorf("failed to sync client scopes: %w", err)
 	}
 
-	// Sync client-level protocol mappers (isolated per-client, not on shared scopes)
-	if err := p.syncClientProtocolMappers(ctx, kcClient, token, clientInternalID, nebariApp); err != nil {
-		return fmt.Errorf("failed to sync client protocol mappers: %w", err)
+	// Sync client-level protocol mappers (isolated per-client, not on shared
+	// scopes). A mapper that makes the groups claim untrustworthy doesn't stop
+	// provisioning either; that error is returned with the groups one below.
+	mappersErr := p.syncClientProtocolMappers(ctx, kcClient, token, clientInternalID, nebariApp)
+	var claimConflict *GroupsClaimConflictError
+	if mappersErr != nil && !errors.As(mappersErr, &claimConflict) {
+		return fmt.Errorf("failed to sync client protocol mappers: %w", mappersErr)
 	}
 
 	// Sync Keycloak groups and member assignments. Group paths that do not
@@ -347,6 +352,9 @@ func (p *KeycloakProvider) ProvisionClient(ctx context.Context, nebariApp *appsv
 	// Store all credentials in Kubernetes Secret
 	if err := p.storeClientSecret(ctx, nebariApp, clientID, clientSecret, externalIssuerURL, spaClientID, deviceClientID); err != nil {
 		return err
+	}
+	if mappersErr != nil {
+		return errors.Join(mappersErr, groupsErr)
 	}
 	return groupsErr
 }
@@ -887,9 +895,17 @@ func (p *KeycloakProvider) syncClientScopes(ctx context.Context, kcClient *goclo
 //
 // If keycloakConfig.protocolMappers is specified, those mappers are used, and
 // the operator's group-membership mapper is appended when spec.auth.groups is
-// set and no custom mapper emits the groups claim. Otherwise, if spec.auth.groups
-// is set or "groups" is a requested scope, a default group-membership mapper is
-// created with full.path=true.
+// set and no custom mapper emits full paths into the access-token groups claim.
+// Otherwise, if spec.auth.groups is set or "groups" is a requested scope, a
+// default group-membership mapper is created with full.path=true.
+//
+// Mappers are merged with what is already on the client rather than replacing
+// it. The operator records the mappers it manages in managedMappersAttribute
+// and deletes only those once they leave the spec. Mappers added any other
+// way, for example by hand in Keycloak, are left alone. When spec.auth.groups
+// is set and one of them writes the access-token groups claim from something
+// other than group membership, the gateway cannot trust the claim: the sync
+// still completes and returns a *GroupsClaimConflictError naming them.
 func (p *KeycloakProvider) syncClientProtocolMappers(ctx context.Context, kcClient *gocloak.GoCloak, token *gocloak.JWT, clientInternalID string, nebariApp *appsv1.NebariApp) error {
 	if nebariApp.Spec.Auth == nil {
 		return nil
@@ -899,15 +915,17 @@ func (p *KeycloakProvider) syncClientProtocolMappers(ctx context.Context, kcClie
 
 	desiredMappers := desiredProtocolMappers(nebariApp)
 
-	if len(desiredMappers) == 0 {
-		return nil
-	}
-
-	// Get current client to read existing protocol mappers
+	// Get current client to read existing protocol mappers and the mappers the
+	// operator managed on its last sync.
 	kcClientObj, err := kcClient.GetClient(ctx, token.AccessToken, p.Config.Realm, clientInternalID)
 	if err != nil {
 		return fmt.Errorf("failed to get client: %w", err)
 	}
+	var attrs map[string]string
+	if kcClientObj.Attributes != nil {
+		attrs = *kcClientObj.Attributes
+	}
+	previouslyManaged := managedMapperNames(attrs)
 
 	// Build lookup of existing client-level mappers by name
 	existingByName := make(map[string]gocloak.ProtocolMapperRepresentation)
@@ -919,7 +937,9 @@ func (p *KeycloakProvider) syncClientProtocolMappers(ctx context.Context, kcClie
 		}
 	}
 
+	desiredNames := make([]string, 0, len(desiredMappers))
 	for _, desired := range desiredMappers {
+		desiredNames = append(desiredNames, desired.Name)
 		cfg := desired.Config
 		mapper := gocloak.ProtocolMapperRepresentation{
 			Name:           gocloak.StringP(desired.Name),
@@ -946,29 +966,72 @@ func (p *KeycloakProvider) syncClientProtocolMappers(ctx context.Context, kcClie
 		}
 	}
 
-	// The gateway trusts the groups claim when auth.groups is set, so a stale
-	// mapper that still emits it (for example one the user removed from the
-	// spec, or one added by hand in Keycloak) is pruned on the next
-	// provisioning pass. Only mappers for the groups claim are pruned.
-	if len(nebariApp.Spec.Auth.Groups) > 0 {
-		desiredNames := make(map[string]struct{}, len(desiredMappers))
-		for _, d := range desiredMappers {
-			desiredNames[d.Name] = struct{}{}
+	// Delete mappers the operator managed that are no longer desired. The
+	// appended groups mapper's name is reserved for the operator, so it is
+	// removed even if it predates managedMappersAttribute.
+	owned := slices.Clone(previouslyManaged)
+	if !slices.Contains(owned, appendedGroupsMapperName) {
+		owned = append(owned, appendedGroupsMapperName)
+	}
+	for _, name := range owned {
+		existing, ok := existingByName[name]
+		if !ok || existing.ID == nil || slices.Contains(desiredNames, name) {
+			continue
 		}
+		if err := kcClient.DeleteClientProtocolMapper(ctx, token.AccessToken, p.Config.Realm, clientInternalID, *existing.ID); err != nil {
+			return fmt.Errorf("failed to delete client protocol mapper %q: %w", name, err)
+		}
+		delete(existingByName, name)
+		logger.Info("Deleted client protocol mapper the spec no longer lists", "mapper", name)
+	}
+
+	// The gateway trusts the groups claim when auth.groups is set. Mappers the
+	// operator does not manage stay, but one that writes the claim from
+	// anything other than group membership makes it untrustworthy.
+	var conflicts []string
+	if len(nebariApp.Spec.Auth.Groups) > 0 {
 		for name, existing := range existingByName {
-			if _, keep := desiredNames[name]; keep {
+			if slices.Contains(desiredNames, name) || existing.Config == nil {
 				continue
 			}
-			if existing.Config == nil || (*existing.Config)["claim.name"] != groupsClaim || existing.ID == nil {
-				continue
+			if unsafeGroupsMapper(gocloak.PString(existing.ProtocolMapper), *existing.Config) {
+				conflicts = append(conflicts, name)
 			}
-			if err := kcClient.DeleteClientProtocolMapper(ctx, token.AccessToken, p.Config.Realm, clientInternalID, *existing.ID); err != nil {
-				return fmt.Errorf("failed to delete stale groups protocol mapper %q: %w", name, err)
-			}
-			logger.Info("Deleted stale groups client protocol mapper", "mapper", name)
 		}
 	}
 
+	if encoded := encodeMapperNames(desiredNames); attrs[managedMappersAttribute] != encoded &&
+		(len(desiredNames) > 0 || len(previouslyManaged) > 0) {
+		if err := p.recordManagedMappers(ctx, kcClient, token, clientInternalID, encoded); err != nil {
+			return err
+		}
+	}
+
+	if len(conflicts) > 0 {
+		slices.Sort(conflicts)
+		return &GroupsClaimConflictError{Mappers: conflicts}
+	}
+	return nil
+}
+
+// recordManagedMappers stores the managed mapper names on the client. The
+// client is re-read so the update carries every other attribute unchanged.
+func (p *KeycloakProvider) recordManagedMappers(ctx context.Context, kcClient *gocloak.GoCloak, token *gocloak.JWT, clientInternalID, encoded string) error {
+	current, err := kcClient.GetClient(ctx, token.AccessToken, p.Config.Realm, clientInternalID)
+	if err != nil {
+		return fmt.Errorf("failed to get client: %w", err)
+	}
+	attrs := map[string]string{}
+	if current.Attributes != nil {
+		attrs = *current.Attributes
+	}
+	attrs[managedMappersAttribute] = encoded
+	current.Attributes = &attrs
+	// Mappers are synced on their own endpoints; leave them out of the update.
+	current.ProtocolMappers = nil
+	if err := kcClient.UpdateClient(ctx, token.AccessToken, p.Config.Realm, *current); err != nil {
+		return fmt.Errorf("failed to record managed protocol mappers: %w", err)
+	}
 	return nil
 }
 
