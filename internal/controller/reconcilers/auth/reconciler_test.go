@@ -2008,6 +2008,9 @@ func TestReconcileAuth_Groups(t *testing.T) {
 		// provisionErrHandled means provisionError is expected to be absorbed
 		// rather than returned.
 		provisionErrHandled bool
+		// wantNoHash means status.authConfigHash must stay unset, so the next
+		// reconcile provisions (and checks the client) again.
+		wantNoHash bool
 	}{
 		{
 			name:        "gateway mode: allow rule and AuthConfigured",
@@ -2048,6 +2051,7 @@ func TestReconcileAuth_Groups(t *testing.T) {
 			wantErr:        true,
 			wantStatus:     metav1.ConditionFalse, wantReason: appsv1.ReasonGroupsClaimConflict, wantPolicy: true,
 			wantNotReady: appsv1.ReasonGroupsClaimConflict,
+			wantNoHash:   true,
 		},
 		{
 			name:           "mapper conflict with enforcement in the application: not a gateway concern",
@@ -2189,6 +2193,9 @@ func TestReconcileAuth_Groups(t *testing.T) {
 				wantWrapped = nil
 			}
 			assertWraps(t, err, wantWrapped, tt.policyWriteErr, tt.rbacWriteErr, tt.listErr)
+			if tt.wantNoHash && app.Status.AuthConfigHash != "" {
+				t.Errorf("authConfigHash = %q, want it unset so provisioning runs again", app.Status.AuthConfigHash)
+			}
 			if got, _ := GroupsNotReadyReason(err); got != tt.wantNotReady {
 				t.Errorf("GroupsNotReadyReason() = %q, want %q", got, tt.wantNotReady)
 			}

@@ -63,6 +63,13 @@ func TestReconcile_GroupsNotReady(t *testing.T) {
 			wantRequired: []string{"/does-not-exist"},
 		},
 		{
+			name:         "a mapper on the client makes the groups claim untrustworthy",
+			groups:       []string{"finance"},
+			provider:     groupsClaimConflictProvider{},
+			wantReason:   appsv1.ReasonGroupsClaimConflict,
+			wantRequired: []string{"/finance"},
+		},
+		{
 			name:         "every entry normalizes to nothing",
 			groups:       []string{"/"},
 			provider:     groupsProvisionedProvider{},
@@ -179,6 +186,15 @@ type groupsProvisionedProvider struct{ groupsNotResolvedProvider }
 
 func (groupsProvisionedProvider) ProvisionClient(context.Context, *appsv1.NebariApp) error {
 	return nil
+}
+
+// groupsClaimConflictProvider provisions everything, but reports a mapper on
+// the client that writes the groups claim from something other than group
+// membership.
+type groupsClaimConflictProvider struct{ groupsNotResolvedProvider }
+
+func (groupsClaimConflictProvider) ProvisionClient(context.Context, *appsv1.NebariApp) error {
+	return &providers.GroupsClaimConflictError{Mappers: []string{"hand-hardcoded"}}
 }
 
 // groupsNotResolvedProvider provisions everything except a missing group path.

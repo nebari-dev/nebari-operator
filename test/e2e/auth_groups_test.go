@@ -159,6 +159,24 @@ var _ = Describe("Auth groups gateway enforcement", Ordered, func() {
 		CleanupTestNamespace(ns)
 	})
 
+	// reprovision asks the operator to provision the client again, which is
+	// when it checks the mappers on the client.
+	reprovision := func(name string) {
+		_, err := utils.Run(exec.Command("kubectl", "annotate", "nebariapp", name, "-n", ns,
+			"nebari.dev/force-reprovision=true", "--overwrite"))
+		Expect(err).NotTo(HaveOccurred())
+	}
+
+	waitAuthReady := func(name, status, reason string) {
+		Eventually(func(g Gomega) {
+			out, err := utils.Run(exec.Command("kubectl", "get", "nebariapp", name, "-n", ns, "-o",
+				"jsonpath={.status.conditions[?(@.type=='AuthReady')].status}/"+
+					"{.status.conditions[?(@.type=='AuthReady')].reason}"))
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(out).To(Equal(status + "/" + reason))
+		}, 3*time.Minute, 5*time.Second).Should(Succeed())
+	}
+
 	applyApp := func(name, host, group string) {
 		yaml := fmt.Sprintf(`
 apiVersion: reconcilers.nebari.dev/v1
@@ -230,4 +248,78 @@ spec:
 		applyApp("groups-parent", host, "/e2e-parent")
 		Expect(loginStatus(host, gatewayIP, "e2e-child")).To(Equal("403"), "member of /e2e-parent/e2e-child only")
 	})
+
+	It("keeps mappers added to the client by hand, and denies access while one is unsafe", func() {
+		name := "groups-mappers"
+		host := "groups-mappers.nebari.local"
+		applyApp(name, host, "/e2e-allowed")
+		clientID := clientInternalID(ns + "-" + name)
+
+		By("a hand-added group-membership mapper without full paths is kept and still admits members")
+		bareID := createClientMapper(clientID, "hand-bare-names", "oidc-group-membership-mapper",
+			`config."claim.name"=groups`, `config."full.path"=false`, `config."access.token.claim"=true`)
+		reprovision(name)
+		waitAuthReady(name, "True", "AuthConfigured")
+		Expect(clientMapperNames(clientID)).To(ContainElement("hand-bare-names"))
+		Expect(loginStatus(host, gatewayIP, "e2e-in")).To(Equal("200"), "member of /e2e-allowed")
+		Expect(loginStatus(host, gatewayIP, "e2e-out")).To(Equal("403"), "user with no groups claim")
+		deleteClientMapper(clientID, bareID)
+
+		By("a hand-added mapper that hardcodes the groups claim is kept, and denies everyone")
+		// If the gateway trusted it, this would put every user in /e2e-allowed.
+		hardID := createClientMapper(clientID, "hand-hardcoded-groups", "oidc-hardcoded-claim-mapper",
+			`config."claim.name"=groups`,
+			// Quoted so kcadm stores the JSON text as the value instead of parsing it.
+			`config."claim.value"="[\"/e2e-allowed\"]"`,
+			`config."jsonType.label"=JSON`, `config."access.token.claim"=true`)
+		reprovision(name)
+		waitAuthReady(name, "False", "GroupsClaimConflict")
+		Expect(clientMapperNames(clientID)).To(ContainElement("hand-hardcoded-groups"))
+		time.Sleep(10 * time.Second) // let Envoy receive the deny-all policy
+		Expect(loginStatus(host, gatewayIP, "e2e-out")).To(Equal("403"), "the hardcoded claim must not admit anyone")
+		Expect(loginStatus(host, gatewayIP, "e2e-in")).To(Equal("403"), "the policy denies everyone during the conflict")
+
+		By("removing the unsafe mapper restores access")
+		deleteClientMapper(clientID, hardID)
+		reprovision(name)
+		waitAuthReady(name, "True", "AuthConfigured")
+		time.Sleep(10 * time.Second) // let Envoy receive the restored policy
+		Expect(loginStatus(host, gatewayIP, "e2e-in")).To(Equal("200"), "member of /e2e-allowed")
+	})
 })
+
+// clientInternalID returns the Keycloak internal ID of the client with the
+// given clientId.
+func clientInternalID(clientID string) string {
+	out, err := kcadm("get", "clients", "-r", kcRealm, "-q", "clientId="+clientID,
+		"--fields", "id", "--format", "csv", "--noquotes")
+	Expect(err).NotTo(HaveOccurred(), out)
+	id := strings.TrimSpace(out)
+	Expect(id).NotTo(BeEmpty(), "client %s not found", clientID)
+	return id
+}
+
+// createClientMapper adds a protocol mapper to the client by hand, the way a
+// user would in Keycloak, and returns its ID. settings are kcadm -s values.
+func createClientMapper(clientID, name, mapperType string, settings ...string) string {
+	args := []string{"create", "clients/" + clientID + "/protocol-mappers/models", "-r", kcRealm, "-i",
+		"-s", "name=" + name, "-s", "protocol=openid-connect", "-s", "protocolMapper=" + mapperType}
+	for _, setting := range settings {
+		args = append(args, "-s", setting)
+	}
+	out, err := kcadm(args...)
+	Expect(err).NotTo(HaveOccurred(), out)
+	return strings.TrimSpace(out)
+}
+
+func deleteClientMapper(clientID, mapperID string) {
+	out, err := kcadm("delete", "clients/"+clientID+"/protocol-mappers/models/"+mapperID, "-r", kcRealm)
+	Expect(err).NotTo(HaveOccurred(), out)
+}
+
+func clientMapperNames(clientID string) []string {
+	out, err := kcadm("get", "clients/"+clientID+"/protocol-mappers/models", "-r", kcRealm,
+		"--fields", "name", "--format", "csv", "--noquotes")
+	Expect(err).NotTo(HaveOccurred(), out)
+	return strings.Fields(out)
+}

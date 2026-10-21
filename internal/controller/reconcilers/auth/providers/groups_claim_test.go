@@ -105,6 +105,9 @@ func TestDesiredProtocolMappers(t *testing.T) {
 		return a
 	}
 
+	bareNameMapper := fullPathMapper("mine")
+	bareNameMapper.Config = map[string]string{"claim.name": "groups", "full.path": "false", "access.token.claim": "true"}
+
 	tests := []struct {
 		name string
 		app  *appsv1.NebariApp
@@ -116,6 +119,8 @@ func TestDesiredProtocolMappers(t *testing.T) {
 		{name: "custom mappers without groups keep today's behavior", app: app([]string{"groups"}, nil, []appsv1.KeycloakProtocolMapperConfig{audience}), want: []appsv1.KeycloakProtocolMapperConfig{audience}},
 		{name: "custom mappers with groups set get operator mapper appended", app: app(nil, []string{"finance"}, []appsv1.KeycloakProtocolMapperConfig{audience}), want: []appsv1.KeycloakProtocolMapperConfig{audience, fullPathMapper("nebari-group-membership")}},
 		{name: "compatible custom groups mapper used as-is", app: app(nil, []string{"finance"}, []appsv1.KeycloakProtocolMapperConfig{fullPathMapper("mine")}), want: []appsv1.KeycloakProtocolMapperConfig{fullPathMapper("mine")}},
+		// Keycloak merges both mappers' values, so the claim still carries full paths.
+		{name: "custom bare-name groups mapper gets operator mapper appended", app: app(nil, []string{"finance"}, []appsv1.KeycloakProtocolMapperConfig{bareNameMapper}), want: []appsv1.KeycloakProtocolMapperConfig{bareNameMapper, fullPathMapper("nebari-group-membership")}},
 		{name: "appended mapper does not reuse a custom mapper's name", app: app(nil, []string{"finance"}, []appsv1.KeycloakProtocolMapperConfig{sameNameOtherClaim}), want: []appsv1.KeycloakProtocolMapperConfig{sameNameOtherClaim, fullPathMapper("nebari-group-membership")}},
 	}
 	for _, tt := range tests {

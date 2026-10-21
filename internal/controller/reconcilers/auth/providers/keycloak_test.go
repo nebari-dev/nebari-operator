@@ -1640,6 +1640,9 @@ type fakeGroupsKeycloak struct {
 	groups     map[string]string
 	status     int // when non-zero, every lookup fails with this status
 	withClient bool
+	// clientJSON, when set, is the client representation the mapper sync
+	// reads; by default the client has no mappers.
+	clientJSON string
 	created    []string
 	requests   []string
 }
@@ -1701,6 +1704,10 @@ func (f *fakeGroupsKeycloak) serveClient(w http.ResponseWriter, r *http.Request)
 	case r.Method == http.MethodGet && r.URL.Path == "/admin/realms/test/clients/client-uuid":
 		// Read by protocol mapper sync, which runs whenever auth.groups is set.
 		w.Header().Set("Content-Type", "application/json")
+		if f.clientJSON != "" {
+			_, _ = w.Write([]byte(f.clientJSON))
+			return true
+		}
 		_, _ = w.Write([]byte(`{"id":"client-uuid","protocolMappers":[]}`))
 	case r.Method == http.MethodPost && r.URL.Path == "/admin/realms/test/clients/client-uuid/protocol-mappers/models":
 		w.Header().Set("Location", "/admin/realms/test/clients/client-uuid/protocol-mappers/models/mapper-uuid")
@@ -1941,6 +1948,62 @@ func TestProvisionClient_GroupsNotResolved(t *testing.T) {
 	}
 }
 
+// TestProvisionClient_GroupsClaimConflict verifies that a mapper on the client
+// that makes the groups claim untrustworthy does not stop the real provider
+// from provisioning: the client Secret is still written, and the conflict comes
+// back together with any unresolved group paths.
+func TestProvisionClient_GroupsClaimConflict(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = appsv1.AddToScheme(scheme)
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	kcServer := &fakeGroupsKeycloak{
+		t: t, groups: map[string]string{"/exists": "exists-uuid"}, withClient: true,
+		clientJSON: `{"id":"client-uuid","protocolMappers":[{"id":"m-hard","name":"hand-hardcoded","protocol":"openid-connect",` +
+			`"protocolMapper":"oidc-hardcoded-claim-mapper","config":{"claim.name":"groups","access.token.claim":"true"}}]}`,
+	}
+	server := httptest.NewServer(kcServer)
+	defer server.Close()
+
+	provider := &KeycloakProvider{
+		Client: k8sClient,
+		Config: config.KeycloakConfig{URL: server.URL, Realm: "test", AdminUsername: "admin", AdminPassword: "admin"},
+	}
+	app := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-app", Namespace: "default"},
+		Spec: appsv1.NebariAppSpec{
+			Hostname: "test.example.com",
+			Auth:     &appsv1.AuthConfig{Enabled: true, Groups: []string{"/exists", "/does-not-exist"}},
+		},
+	}
+
+	err := provider.ProvisionClient(context.Background(), app)
+
+	var conflict *GroupsClaimConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("expected *GroupsClaimConflictError, got %v", err)
+	}
+	if want := []string{"hand-hardcoded"}; !reflect.DeepEqual(conflict.Mappers, want) {
+		t.Errorf("Mappers = %q, want %q", conflict.Mappers, want)
+	}
+	var notResolved *GroupsNotResolvedError
+	if !errors.As(err, &notResolved) {
+		t.Errorf("expected the unresolved group path to be returned too, got %v", err)
+	}
+	for _, req := range kcServer.requests {
+		if strings.HasPrefix(req, http.MethodDelete) {
+			t.Errorf("expected no mapper to be deleted, got %s", req)
+		}
+	}
+	secret := &corev1.Secret{}
+	if err := k8sClient.Get(context.Background(), types.NamespacedName{
+		Name: naming.ClientSecretName(app), Namespace: app.Namespace,
+	}, secret); err != nil {
+		t.Fatalf("expected the client Secret to be stored despite the conflict: %v", err)
+	}
+}
+
 func TestKeycloakProvider_GetJWKSURL(t *testing.T) {
 	tests := []struct {
 		name string
@@ -2033,9 +2096,11 @@ func TestKeycloakProvider_SyncClientProtocolMappers_Merge(t *testing.T) {
 		return `{"id":"` + id + `","name":"` + name + `","protocol":"openid-connect","protocolMapper":"` + typ + `","config":` + cfg + `}`
 	}
 	client := func(managed string, mappers ...string) string {
-		attrs := `{}`
+		// pkce.code.challenge.method stands in for the client's other attributes,
+		// which the ownership update must carry over unchanged.
+		attrs := `{"pkce.code.challenge.method":"S256"}`
 		if managed != "" {
-			attrs = `{"nebari.dev/managed-protocol-mappers":` + strconv.Quote(managed) + `}`
+			attrs = `{"pkce.code.challenge.method":"S256","nebari.dev/managed-protocol-mappers":` + strconv.Quote(managed) + `}`
 		}
 		return `{"id":"cid","attributes":` + attrs + `,"protocolMappers":[` + strings.Join(mappers, ",") + `]}`
 	}
@@ -2134,6 +2199,9 @@ func TestKeycloakProvider_SyncClientProtocolMappers_Merge(t *testing.T) {
 			}
 			if got := kc.attributes[managedMappersAttribute]; got != tt.wantManaged {
 				t.Errorf("recorded managed mappers = %q, want %q", got, tt.wantManaged)
+			}
+			if tt.wantManaged != "" && kc.attributes["pkce.code.challenge.method"] != "S256" {
+				t.Errorf("client update dropped other attributes: %v", kc.attributes)
 			}
 		})
 	}
