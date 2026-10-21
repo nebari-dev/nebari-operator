@@ -382,11 +382,12 @@ groups in its `groups` claim.
   claim every request is denied while `AuthReady` stays `True`.
 - With `enforceAtGateway: false`, the operator still provisions the `groups` claim, and the application must
   enforce it. `AuthReady` reports reason `GroupsEnforcedByApplication`.
-- If `keycloakConfig.protocolMappers` defines a mapper for the `groups` claim, it must be an
-  `oidc-group-membership-mapper` with `full.path: "true"` and `access.token.claim: "true"`. Otherwise every request is
-  denied and `AuthReady` reports reason `GroupsClaimConflict`. The app's `Ready` condition is also `False`.
-- When `keycloakConfig.protocolMappers` is set and no custom mapper emits `groups`, the operator appends its own
-  mapper named `nebari-group-membership`.
+- A mapper that writes the `groups` claim into the access token, in `keycloakConfig.protocolMappers` or added to the
+  app's Keycloak client by hand, must be an `oidc-group-membership-mapper`. Otherwise every request is denied and
+  `AuthReady` reports reason `GroupsClaimConflict`, naming the mapper. The app's `Ready` condition is also `False`.
+  Group-membership mappers without full paths are fine: Keycloak merges their values into the claim.
+- When `keycloakConfig.protocolMappers` is set and no custom group-membership mapper emits full paths into the access
+  token, the operator appends its own mapper named `nebari-group-membership`.
 - The operator syncs the listed groups in Keycloak, as described below. If provisioning, RBAC, token exchange or
   validation fails, the operator still tries to write the enforced policy. If that write is rejected, the OIDC
   provider is not registered, or the reconcile stops before the auth step (for example while the TLS certificate is
@@ -521,7 +522,7 @@ Each entry has:
 
 Client-level protocol mappers to configure on the OIDC client. These are applied directly to the client (not to shared client scopes), so each NebariApp gets isolated mapper configuration.
 
-When specified, the operator's default mappers (e.g., group-membership) are not auto-created - this configuration takes full control, with two exceptions when `auth.groups` is set. If no mapper emits the `groups` claim, the operator appends a mapper named `nebari-group-membership`. And any other mapper on the app's client that emits the `groups` claim, including one added by hand in Keycloak, is deleted on the next provisioning pass, because the gateway trusts that claim. The default `group-membership` mapper emits full group paths (`full.path=true`) for every app.
+When specified, the operator's default mappers (e.g., group-membership) are not auto-created - this configuration takes full control of the mappers the operator manages. With `auth.groups` set, the operator also appends a mapper named `nebari-group-membership` if no listed group-membership mapper emits full paths into the access token. The operator merges these with the mappers already on the app's client: it deletes only mappers it created (recorded in the client attribute `nebari.dev/managed-protocol-mappers`) once they leave the spec, and leaves mappers added any other way in place. See [Group-based access control](reconcilers/authentication.md#group-based-access-control) for which of those can block access. The default `group-membership` mapper emits full group paths (`full.path=true`) for every app.
 
 Each entry has:
 - `name` (string, required): Name of the protocol mapper

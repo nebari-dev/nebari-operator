@@ -352,7 +352,9 @@ type KeycloakClientConfig struct {
 	// OIDC client. These are applied directly to the client (not to shared client
 	// scopes), so each NebariApp gets isolated mapper configuration.
 	// When specified, the operator's default mappers (e.g., group-membership) are
-	// not auto-created - the user's configuration takes full control.
+	// not auto-created - the user's configuration takes full control of the
+	// mappers the operator manages. Mappers added to the client any other way
+	// are left in place.
 	// +optional
 	ProtocolMappers []KeycloakProtocolMapperConfig `json:"protocolMappers,omitempty"`
 }
@@ -390,7 +392,8 @@ type KeycloakProtocolMapperConfig struct {
 	// Config is the mapper configuration as arbitrary key-value pairs.
 	// Keys and values are specific to the mapper type.
 	// Example for group-membership mapper: {"claim.name": "groups", "full.path": "true", "access.token.claim": "true"}
-	// (with spec.auth.groups set, a groups mapper must emit full paths in the access token)
+	// (with spec.auth.groups set, a mapper that writes the groups claim into the access token must be a
+	// group-membership mapper)
 	// +optional
 	Config map[string]string `json:"config,omitempty"`
 }
@@ -747,8 +750,10 @@ const (
 	// that cannot enforce groups at the gateway. Every request is denied.
 	ReasonGroupsRequireKeycloak = "GroupsRequireKeycloak"
 
-	// ReasonGroupsClaimConflict indicates a custom protocol mapper emits the groups
-	// claim in a format the gateway rule cannot match. Every request is denied.
+	// ReasonGroupsClaimConflict indicates a protocol mapper, in the spec or on the
+	// app's Keycloak client, writes the groups claim into the access token from
+	// something other than group membership, so the gateway cannot trust it.
+	// Every request is denied.
 	ReasonGroupsClaimConflict = "GroupsClaimConflict"
 
 	// ReasonGroupsEnforcedByApplication indicates spec.auth.groups is set with

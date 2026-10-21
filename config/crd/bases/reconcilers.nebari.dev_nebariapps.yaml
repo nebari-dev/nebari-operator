@@ -231,7 +231,9 @@ spec:
                           OIDC client. These are applied directly to the client (not to shared client
                           scopes), so each NebariApp gets isolated mapper configuration.
                           When specified, the operator's default mappers (e.g., group-membership) are
-                          not auto-created - the user's configuration takes full control.
+                          not auto-created - the user's configuration takes full control of the
+                          mappers the operator manages. Mappers added to the client any other way
+                          are left in place.
                         items:
                           description: KeycloakProtocolMapperConfig defines a protocol
                             mapper with arbitrary configuration.
@@ -243,7 +245,8 @@ spec:
                                 Config is the mapper configuration as arbitrary key-value pairs.
                                 Keys and values are specific to the mapper type.
                                 Example for group-membership mapper: {"claim.name": "groups", "full.path": "true", "access.token.claim": "true"}
-                                (with spec.auth.groups set, a groups mapper must emit full paths in the access token)
+                                (with spec.auth.groups set, a mapper that writes the groups claim into the access token must be a
+                                group-membership mapper)
                               type: object
                             name:
                               description: Name of the protocol mapper.

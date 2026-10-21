@@ -130,7 +130,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `groups` _[KeycloakGroup](#keycloakgroup) array_ | Groups defines Keycloak groups to ensure exist in the realm,<br />with optional user membership assignments. |  | Optional: \{\} <br /> |
-| `protocolMappers` _[KeycloakProtocolMapperConfig](#keycloakprotocolmapperconfig) array_ | ProtocolMappers defines client-level protocol mappers to configure on the<br />OIDC client. These are applied directly to the client (not to shared client<br />scopes), so each NebariApp gets isolated mapper configuration.<br />When specified, the operator's default mappers (e.g., group-membership) are<br />not auto-created - the user's configuration takes full control. |  | Optional: \{\} <br /> |
+| `protocolMappers` _[KeycloakProtocolMapperConfig](#keycloakprotocolmapperconfig) array_ | ProtocolMappers defines client-level protocol mappers to configure on the<br />OIDC client. These are applied directly to the client (not to shared client<br />scopes), so each NebariApp gets isolated mapper configuration.<br />When specified, the operator's default mappers (e.g., group-membership) are<br />not auto-created - the user's configuration takes full control of the<br />mappers the operator manages. Mappers added to the client any other way<br />are left in place. |  | Optional: \{\} <br /> |
 
 
 ---
@@ -161,7 +161,7 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `name` _string_ | Name of the protocol mapper. |  | MinLength: 1 <br />Required: \{\} <br /> |
 | `protocolMapper` _string_ | ProtocolMapper is the mapper type identifier.<br />Example: "oidc-group-membership-mapper", "oidc-usermodel-attribute-mapper" |  | MinLength: 1 <br />Required: \{\} <br /> |
-| `config` _object (keys:string, values:string)_ | Config is the mapper configuration as arbitrary key-value pairs.<br />Keys and values are specific to the mapper type.<br />Example for group-membership mapper: \{"claim.name": "groups", "full.path": "true", "access.token.claim": "true"\}<br />(with spec.auth.groups set, a groups mapper must emit full paths in the access token) |  | Optional: \{\} <br /> |
+| `config` _object (keys:string, values:string)_ | Config is the mapper configuration as arbitrary key-value pairs.<br />Keys and values are specific to the mapper type.<br />Example for group-membership mapper: \{"claim.name": "groups", "full.path": "true", "access.token.claim": "true"\}<br />(with spec.auth.groups set, a mapper that writes the groups claim into the access token must be a<br />group-membership mapper) |  | Optional: \{\} <br /> |
 
 
 ---

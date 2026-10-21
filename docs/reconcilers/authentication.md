@@ -314,8 +314,18 @@ split across rules `allow-groups`, `allow-groups-2`, and so on.
 in `auth.groups` are normalized to full paths (`finance` becomes `/finance`) and matched exactly and case-sensitively.
 A parent group does not admit members of its subgroups; list the subgroup itself. When the app defines custom
 `keycloakConfig.protocolMappers` and sets `auth.groups`, the operator appends a mapper named `nebari-group-membership`
-unless a custom mapper already emits `groups`. While `auth.groups` is set, any other mapper on the app's client that
-emits the `groups` claim, including one added by hand in Keycloak, is deleted on the next provisioning pass.
+unless a custom group-membership mapper already emits full paths into the access token.
+
+**Other mappers on the client.** The operator merges its mappers with what is already on the app's client instead of
+replacing it. It records the mappers it manages in the client attribute `nebari.dev/managed-protocol-mappers` and
+deletes only those once the spec stops listing them (and its own `nebari-group-membership` once `auth.groups` is
+unset). Mappers added any other way, for example by hand in Keycloak, are left in place. Keycloak merges the values of
+group-membership mappers into one `groups` claim, so an extra one (with `full.path=false`, say) only adds bare names,
+which never match a full path. A mapper of any other type that writes `groups` into the access token could inject or
+replace values, so while `auth.groups` is set it makes the policy deny-all with reason `GroupsClaimConflict`, naming
+the mapper, until it is removed. The check runs whenever the operator provisions the client: when the auth config
+changes, on a forced reprovision, and on every pass while `AuthReady` is not `True`. Mappers on realm client scopes
+are outside the app's client and are not checked.
 
 **Removal delay.** Group membership is read from the access token, so removing a user from a group takes effect when
 their token expires: the realm's access token lifespan, 5 minutes by default.
@@ -329,7 +339,7 @@ rules) rather than deleting the policy or leaving it open:
 | Reason | When | Conditions |
 |--------|------|------------|
 | `GroupsRequireKeycloak` | `generic-oidc` with groups and `enforceAtGateway: true` | `AuthReady=False`, `Ready=False` |
-| `GroupsClaimConflict` | A custom mapper emits the `groups` claim and its type is not `oidc-group-membership-mapper`, or `full.path` is not `"true"`, or `access.token.claim` is not `"true"` | `AuthReady=False`, `Ready=False` |
+| `GroupsClaimConflict` | A mapper in `keycloakConfig.protocolMappers`, or on the app's Keycloak client, writes the `groups` claim into the access token and is not an `oidc-group-membership-mapper` | `AuthReady=False`, `Ready=False` |
 | `GroupsEmpty` | Every `groups` entry is empty after normalization, for example `"/"` or whitespace | `AuthReady=False`, `Ready=False` |
 
 In all three cases `Ready` carries the same reason, and `observedGeneration` and `status.serviceDiscovery` are still
