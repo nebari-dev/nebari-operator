@@ -393,7 +393,7 @@ type KeycloakProtocolMapperConfig struct {
 	// Keys and values are specific to the mapper type.
 	// Example for group-membership mapper: {"claim.name": "groups", "full.path": "true", "access.token.claim": "true"}
 	// (with spec.auth.groups set, a mapper that writes the groups claim into the access token must be a
-	// group-membership mapper)
+	// group-membership mapper with full.path "true")
 	// +optional
 	Config map[string]string `json:"config,omitempty"`
 }
@@ -751,9 +751,10 @@ const (
 	ReasonGroupsRequireKeycloak = "GroupsRequireKeycloak"
 
 	// ReasonGroupsClaimConflict indicates a protocol mapper, in the spec or on the
-	// app's Keycloak client, writes the groups claim into the access token from
-	// something other than group membership, so the gateway cannot trust it.
-	// Every request is denied.
+	// app's Keycloak client, may write the groups claim into the access token with
+	// values the gateway cannot trust (anything but a group-membership mapper with
+	// full.path true). With enforceAtGateway true every request is denied; with
+	// enforceAtGateway false it is reported as a Warning event.
 	ReasonGroupsClaimConflict = "GroupsClaimConflict"
 
 	// ReasonGroupsEnforcedByApplication indicates spec.auth.groups is set with

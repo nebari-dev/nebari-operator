@@ -246,7 +246,7 @@ spec:
                                 Keys and values are specific to the mapper type.
                                 Example for group-membership mapper: {"claim.name": "groups", "full.path": "true", "access.token.claim": "true"}
                                 (with spec.auth.groups set, a mapper that writes the groups claim into the access token must be a
-                                group-membership mapper)
+                                group-membership mapper with full.path "true")
                               type: object
                             name:
                               description: Name of the protocol mapper.

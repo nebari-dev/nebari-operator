@@ -313,19 +313,39 @@ split across rules `allow-groups`, `allow-groups-2`, and so on.
 `group-membership` mapper is switched to `full.path=true` for every app, not only apps that set `auth.groups`. Entries
 in `auth.groups` are normalized to full paths (`finance` becomes `/finance`) and matched exactly and case-sensitively.
 A parent group does not admit members of its subgroups; list the subgroup itself. When the app defines custom
-`keycloakConfig.protocolMappers` and sets `auth.groups`, the operator appends a mapper named `nebari-group-membership`
-unless a custom group-membership mapper already emits full paths into the access token.
+`keycloakConfig.protocolMappers`, sets `auth.groups` and enforces them at the gateway, the operator appends a mapper
+named `nebari-group-membership` unless a custom group-membership mapper already emits full paths into the access token.
+With `enforceAtGateway: false`, a custom mapper that emits the `groups` claim keeps owning it, since the application
+reads that claim and only the gateway needs full paths.
 
 **Other mappers on the client.** The operator merges its mappers with what is already on the app's client instead of
 replacing it. It records the mappers it manages in the client attribute `nebari.dev/managed-protocol-mappers` and
-deletes only those once the spec stops listing them (and its own `nebari-group-membership` once `auth.groups` is
-unset). Mappers added any other way, for example by hand in Keycloak, are left in place. Keycloak merges the values of
-group-membership mappers into one `groups` claim, so an extra one (with `full.path=false`, say) only adds bare names,
-which never match a full path. A mapper of any other type that writes `groups` into the access token could inject or
-replace values, so while `auth.groups` is set it makes the policy deny-all with reason `GroupsClaimConflict`, naming
-the mapper, until it is removed. The check runs whenever the operator provisions the client: when the auth config
-changes, on a forced reprovision, and on every pass while `AuthReady` is not `True`. Mappers on realm client scopes
-are outside the app's client and are not checked.
+deletes only those once the spec stops listing them, plus its own `nebari-group-membership` whenever it is not needed.
+Mappers added any other way, for example by hand in Keycloak, are left in place, unless one has the same name as a
+mapper the spec lists, which the operator then updates.
+
+While `auth.groups` is set, the gateway only trusts the `groups` claim if every other mapper that may write it into the
+access token is an `oidc-group-membership-mapper` with `full.path: "true"`. Keycloak merges the values of
+group-membership mappers, so such a mapper only adds the user's real group paths. With `full.path: "false"` it emits
+group *names*, and Keycloak lets a group be named `/finance`, so whoever can name a group could hand its members a rule
+value. Any other mapper type can inject values or replace the claim. The check follows how Keycloak places a claim: it
+also covers claim names with backslashes or dots that land in the top-level `groups` claim, and mappers that only
+write lightweight access tokens. When a mapper fails it, and the groups are enforced at the gateway, the policy is
+deny-all with reason `GroupsClaimConflict`, naming the mapper, until the mapper is removed or fixed. The deny-all
+holds even when a later provisioning step fails, and when provisioning fails before the check can run while the
+policy is already deny-all. With `enforceAtGateway: false` the gateway enforces nothing, so the operator emits a
+Warning event with reason `GroupsClaimConflict` instead and `AuthReady` stays `True`.
+
+The check runs whenever the operator provisions the client: when the auth config changes, on a forced reprovision,
+and on every pass while `AuthReady` is not `True`. A mapper added by hand after that is only seen on the next
+provisioning pass.
+
+`full.path: "true"` is required, not a guarantee for nested paths: with Keycloak's escape-slashes option off (the
+default), a top-level group named `team/admins` has the same path as the real `/team/admins`. Top-level rule paths are
+not affected, because sibling group names are unique. Mappers on the client's realm client scopes are not checked.
+Keycloak attaches every realm default and optional client scope to a new client, and the optional `microprofile-jwt`
+scope writes the user's realm-role names into the `groups` claim of the access token when a login requests it, so a
+realm role named like a rule path would pass the gateway rule.
 
 **Removal delay.** Group membership is read from the access token, so removing a user from a group takes effect when
 their token expires: the realm's access token lifespan, 5 minutes by default.
@@ -339,7 +359,7 @@ rules) rather than deleting the policy or leaving it open:
 | Reason | When | Conditions |
 |--------|------|------------|
 | `GroupsRequireKeycloak` | `generic-oidc` with groups and `enforceAtGateway: true` | `AuthReady=False`, `Ready=False` |
-| `GroupsClaimConflict` | A mapper in `keycloakConfig.protocolMappers`, or on the app's Keycloak client, writes the `groups` claim into the access token and is not an `oidc-group-membership-mapper` | `AuthReady=False`, `Ready=False` |
+| `GroupsClaimConflict` | `enforceAtGateway: true`, and a mapper in `keycloakConfig.protocolMappers` or on the app's Keycloak client may write the `groups` claim into the access token and is not an `oidc-group-membership-mapper` with `full.path: "true"` | `AuthReady=False`, `Ready=False` |
 | `GroupsEmpty` | Every `groups` entry is empty after normalization, for example `"/"` or whitespace | `AuthReady=False`, `Ready=False` |
 
 In all three cases `Ready` carries the same reason, and `observedGeneration` and `status.serviceDiscovery` are still
