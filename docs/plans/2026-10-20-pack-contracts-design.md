@@ -166,7 +166,7 @@ The cost is that uninstalling a producer leaves its last values in the consumer'
 
 ### Conditions
 
-Conditions follow the NebariApp pattern: a summary `Ready` plus one condition per concern, with reasons as constants in the API package.
+Conditions follow the NebariApp pattern: a summary `Ready` plus one condition per concern, with reasons as constants in the API package. They are set through the same `utils/conditions` helpers, generalized so they no longer take only a NebariApp (see Component contracts).
 
 | Condition | On | False when |
 |---|---|---|
@@ -305,7 +305,7 @@ gateway:
 | Cluster admin | label namespaces `nebari.dev/managed=true`, enable wildcard grants | (no new rights) |
 | Operator | read sources in opted-in producer namespaces, write copies in opted-in consumer namespaces | read a source for an output that no contract declares |
 
-The operator already has cluster-wide `get/list/watch/create/update/patch` on Secrets (`internal/controller/nebariapp_controller.go:65`). This design adds `delete` on Secrets, because revocation has to remove a copy and owner-reference garbage collection only covers deleting the consumer contract. It also adds full access to ConfigMaps. Both were accepted on 2026-10-20: the operator can already overwrite any Secret, so `delete` adds little real power. In exchange, it narrows what the operator **does** with Secrets: it reads a Secret only when a contract in that Secret's own namespace declares it as an output, and it checks the grant **before** reading. A consumer can therefore never use the operator to learn whether an undeclared Secret exists, unlike `ValidateService` today, which reports whether any Service in any namespace exists and which ports it has (`internal/controller/reconcilers/core/reconciler.go:118-155`).
+The operator already has cluster-wide `get/list/watch/create/update/patch` on Secrets (`internal/controller/nebariapp_controller.go:65`). This design adds `delete` on Secrets, because revocation has to remove a copy and owner-reference garbage collection only covers deleting the consumer contract. It also adds `get;list;watch;create;update;patch;delete` on ConfigMaps. Both were accepted on 2026-10-20: the operator can already overwrite any Secret, so `delete` adds little real power. In exchange, it narrows what the operator **does** with Secrets: it reads a Secret only when a contract in that Secret's own namespace declares it as an output, and it checks the grant **before** reading. That is a rule about what the reconciler does, not about what the operator holds in memory: the manager's cache already holds every Secret in the cluster once any reconciler has read one (see Cache footprint). A consumer can therefore never use the operator to learn whether an undeclared Secret exists, unlike `ValidateService` today, which reports whether any Service in any namespace exists and which ports it has (`internal/controller/reconcilers/core/reconciler.go:118-155`).
 
 ## Alternatives considered
 
@@ -337,8 +337,9 @@ The operator already has cluster-wide `get/list/watch/create/update/patch` on Se
 | Table-driven unit tests next to the code, envtest suite in `internal/controller`, e2e on Kind for cross-resource behavior | [documented: AGENTS.md:229, :262-266] | `internal/controller/suite_test.go`, `test/e2e/` | n/a |
 | Validation is CEL `XValidation` markers on the types; the operator ships no admission webhooks | [inferred] | `api/v1/nebariapp_types.go:174`; no `config/webhook/` | pending |
 | Operator settings are env vars loaded by `internal/config` with `getEnv*` helpers and set in `config/manager/manager.yaml`, from which the Helm chart is generated | [inferred] | `internal/config/tls.go:29`, `internal/config/auth.go:171-205`, `Makefile:176-180` | pending |
-| Watched dependents are mapped back to their owner with `handler.EnqueueRequestsFromMapFunc` | [inferred] | `internal/controller/nebariapp_controller.go:413-433` | pending |
-| Namespace opt-in via `nebari.dev/managed=true`, checked before any work | [inferred] | `internal/controller/reconcilers/core/reconciler.go:102-118` | pending |
+| Watched dependents are mapped back to their owner with `handler.EnqueueRequestsFromMapFunc` | [documented: AGENTS.md:204] | `internal/controller/nebariapp_controller.go:413-433` | n/a |
+| Namespace opt-in via `nebari.dev/managed=true`, with `CoreReconciler.ValidateSpec` as the single enforcement point | [documented: AGENTS.md:24, :256] | `internal/controller/reconcilers/core/reconciler.go:102-118` | n/a |
+| Conditions are set through `utils/conditions`, which only bumps `LastTransitionTime` on a real change | [documented: AGENTS.md:227, :246] | `internal/controller/utils/conditions/conditions.go:29-72` | n/a |
 | Pack charts render operator CRs through `nebari-app` library chart defines with `required` checks | [inferred] | `charts/nebari-app/templates/_nebari-app.tpl:15-40` | pending |
 | Generated resources carry owner references to their NebariApp | [documented: AGENTS.md:200] | `controllerutil.SetControllerReference` in `routing/httproute.go:217`, `auth/reconciler.go:505` | n/a |
 
@@ -352,7 +353,10 @@ The operator already has cluster-wide `get/list/watch/create/update/patch` on Se
 | `nebari-app.packContract` library chart define | new | nebari-operator (`charts/nebari-app`) | pack charts | n/a (new) | n/a | mirrors `nebari-app.nebariApp` |
 | `nebari.dev/managed=true` namespace label | changed-compatible | nebari-operator | NebariApp core reconciler, PackContract reconciler | `rg -n 'nebari.dev/managed' internal/ docs/ charts/` | pending | gains a second reader; meaning unchanged |
 | Operator naming functions `ClientID`, `ClientSecretName`, `GatewayName` (implicit) | unchanged (implicit) | nebari-operator | Keycloak provider, routing, pack-specification section 3, PackContract `fromApp` | `rg -n '^func (ClientID\|ClientSecretName\|GatewayName)' internal/controller/utils/naming` | pending | published as outputs so packs stop re-deriving them |
-| Operator ClusterRole | changed-compatible | nebari-operator | install manifests, generated chart | `rg -n 'kubebuilder:rbac' internal/controller/` | n/a | adds `packcontracts`, full `configmaps`, and `delete` on `secrets` |
+| Operator ClusterRole | changed-compatible | nebari-operator | install manifests, generated chart | `rg -n 'kubebuilder:rbac' internal/controller/` | n/a | adds `packcontracts`, `get;list;watch;create;update;patch;delete` on `configmaps`, and `delete` on `secrets` |
+| Namespace opt-in check: `ManagedNamespaceLabel` constant and the label test | changed (proposed, needs confirmation) | nebari-operator | CoreReconciler, PackContract reconciler | `rg -n 'ManagedNamespaceLabel\|nebari.dev/managed' internal/` | yes | the constant moves from `core` to `utils/constants`, and one helper `namespaces.IsManaged(*corev1.Namespace) bool` replaces the inline check. CoreReconciler stays the NebariApp gate, and the PackContract reconciler calls the same helper. AGENTS.md:256 changes from "single enforcement point" to "single helper" |
+| `utils/conditions` helpers | changed-compatible (proposed, needs confirmation) | nebari-operator | every NebariApp sub-reconciler, PackContract reconciler | `rg -n 'conditions\.(Set\|Get\|Is)' internal/` | n/a | `SetCondition` takes `*[]metav1.Condition` and a generation, and the getters take `[]metav1.Condition`, instead of `*appsv1.NebariApp`. NebariApp callers pass `&app.Status.Conditions, app.Generation` |
+| Architecture records: AGENTS.md (one CRD at :22, :30, :169; RBAC markers at :233; constants at :248), `docs/reconcilers/README.md`, `make docs` source path | changed | nebari-operator | contributors, `docs/api-reference.md` | `rg -n 'single\|api/v1' AGENTS.md docs/reconcilers/README.md Makefile` | n/a | updated in the implementation PR so they describe two CRDs and two controllers |
 
 **`PackContract` CRD.** Promises: the spec fields and status shapes in Data models; resolved plain outputs in `status.outputs`; restricted outputs never in status; per-requirement state in `status.requirements`. Requires: at least one `apps` entry naming a NebariApp in the same namespace; unique output and requirement names; exactly one source per output and one target per projection (enforced by CEL). Errors: reported as conditions, never as rejected reconciles, except CEL validation at admission.
 
@@ -517,7 +521,7 @@ type RequirementStatus struct {
 }
 ```
 
-Condition types and reasons (`AppsReady`, `OutputsResolved`, `GrantsReady`, `RequirementsSatisfied`, `Ready`; the state names above; `AppNotFound`, `SourceNotFound`, `AppFieldUnavailable`, `WildcardGrantsDisabled`) are constants in `api/v1alpha1`, per AGENTS.md:248.
+Condition types and reasons (`AppsReady`, `OutputsResolved`, `GrantsReady`, `RequirementsSatisfied`, `Ready`; the state names above; `AppNotFound`, `SourceNotFound`, `AppFieldUnavailable`, `WildcardGrantsDisabled`) are constants in `api/v1alpha1`, per AGENTS.md:248. So are the event reasons: `WildcardGrantUsed` (the Warning in Grants), `ProjectionTargetIgnored` (the Warning for a same-namespace `into`), `ProjectionSynced`, `ProjectionDeleted`, and `RequirementStale`. The annotation keys `nebari.dev/contract-source` and `nebari.dev/contract-value-hash` are constants in `internal/controller/utils/constants`, next to `AnnotationForceReprovision`.
 
 The `ConsumerSelector` CEL rule uses `__namespace__` because `namespace` is a CEL reserved word; check the escaping against the Kubernetes CEL docs for the cluster's minimum version when implementing.
 
@@ -533,30 +537,32 @@ type PackContractReconciler struct {
 	client.Client
 	Scheme      *runtime.Scheme
 	Recorder    record.EventRecorder
-	Resolver    *contracts.OutputResolver
-	Projector   *contracts.Projector
+	Resolver    *packcontract.OutputResolver
+	Projector   *packcontract.Projector
 	Config      config.ContractConfig
 }
 func (r *PackContractReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error)
 func (r *PackContractReconciler) SetupWithManager(mgr ctrl.Manager) error
 
-// internal/controller/reconcilers/contracts/resolve.go
+// internal/controller/packcontract/resolve.go
 type OutputResolver struct {
-	Reader client.Reader
+	Reader    client.Reader // cached: NebariApps, Services, Secrets
+	APIReader client.Reader // uncached: ConfigMap data (see Cache footprint)
 }
 func (r *OutputResolver) ResolvePlain(ctx context.Context, c *v1alpha1.PackContract) ([]v1alpha1.ResolvedOutput, error)
 func (r *OutputResolver) ReadRestricted(ctx context.Context, producer *v1alpha1.PackContract, output string) ([]byte, error)
 
-// internal/controller/reconcilers/contracts/grants.go
+// internal/controller/packcontract/grants.go
 func IsGranted(out v1alpha1.Output, consumerNS *corev1.Namespace, allowWildcard bool) (granted bool, usedWildcard bool, err error)
 
-// internal/controller/reconcilers/contracts/version.go
+// internal/controller/packcontract/version.go
 func InRange(producerVersion, rng string) (bool, error)
 
-// internal/controller/reconcilers/contracts/project.go
+// internal/controller/packcontract/project.go
 type Projector struct {
-	Client client.Client
-	Scheme *runtime.Scheme
+	Client    client.Client
+	APIReader client.Reader // uncached reads of ConfigMap copies
+	Scheme    *runtime.Scheme
 }
 func (p *Projector) Apply(ctx context.Context, consumer *v1alpha1.PackContract, desired []DesiredProjection) error
 func (p *Projector) Prune(ctx context.Context, consumer *v1alpha1.PackContract, keep []DesiredProjection) error
@@ -571,7 +577,7 @@ type DesiredProjection struct {
 }
 ```
 
-`OutputResolver` takes a `client.Reader` so tests can inject a fake client. It calls the `naming` package directly, as the routing and auth reconcilers do.
+`OutputResolver` and `Projector` take `client.Reader` values so tests can inject a fake client for both the cached and uncached reader. `OutputResolver` calls the `naming` package directly, as the routing and auth reconcilers do.
 
 ### Program layout
 
@@ -579,6 +585,7 @@ type DesiredProjection struct {
 + api/v1alpha1/groupversion_info.go          # follows api/v1/groupversion_info.go
 + api/v1alpha1/packcontract_types.go         # follows api/v1/nebariapp_types.go (types + constants)
 + api/v1alpha1/zz_generated.deepcopy.go      # generated
+~ PROJECT                                    # via `kubebuilder create api --version v1alpha1 --kind PackContract`
 + config/crd/bases/reconcilers.nebari.dev_packcontracts.yaml   # generated
 ~ config/crd/kustomization.yaml              # add the new CRD
 ~ config/rbac/role.yaml                      # generated from markers
@@ -586,12 +593,23 @@ type DesiredProjection struct {
 ~ config/samples/                            # producer and consumer samples
 + internal/config/contract.go                # follows internal/config/tls.go
 + internal/controller/packcontract_controller.go   # follows nebariapp_controller.go
-+ internal/controller/reconcilers/contracts/{resolve,grants,version,project}.go  # one concern per file, like reconcilers/auth
++ internal/controller/packcontract/{resolve,grants,version,project}.go  # sibling of reconcilers/, which holds only NebariApp pipeline stages
++ internal/controller/utils/namespaces/namespaces.go  # IsManaged, shared opt-in check
+~ internal/controller/reconcilers/core/reconciler.go  # ValidateNamespaceOptIn calls namespaces.IsManaged
+~ internal/controller/utils/constants/constants.go    # ManagedNamespaceLabel moves here; contract annotation keys
+~ internal/controller/utils/conditions/conditions.go  # helpers take the condition slice (and a generation for SetCondition)
+~ internal/controller/reconcilers/{core,tls,routing,auth}/  # conditions call sites pass &app.Status.Conditions, app.Generation
 ~ cmd/operator/main.go                       # register v1alpha1 scheme, construct and set up the reconciler
 ~ go.mod                                     # blang/semver/v4 becomes a direct dependency
-~ charts/nebari-app/templates/_pack-contract.tpl  # nebari-app.packContract define
++ charts/nebari-app/templates/_pack-contract.tpl  # nebari-app.packContract define
++ test/helm/nebari-app/templates/pack-contract.yaml  # golden test case
++ test/helm/nebari-app/golden/pack-contract.yaml     # golden output
 ~ docs/using-the-nebari-app-chart.md         # contract section
 + docs/reconcilers/contracts.md              # reconciler behavior record
+~ docs/reconcilers/README.md                 # two controllers, not one pipeline
+~ Makefile                                   # `make docs` source path covers api/v1alpha1
+~ docs/api-reference.md                      # regenerated with PackContract
+~ AGENTS.md                                  # two CRDs (:22, :30, :169), RBAC markers on both controllers (:233), v1alpha1 constants (:248), opt-in helper (:256)
 + test/e2e/packcontract_test.go              # journeys
 ~ dev/                                       # enable wildcard grants in the Kind setup
 ```
@@ -601,11 +619,11 @@ type DesiredProjection struct {
 ```text
 Production: PackContract reconcile (request for <ns>/<name>)
   PackContractReconciler.Reconcile
-    → Get PackContract; if namespace lacks nebari.dev/managed=true
+    → Get PackContract; if !namespaces.IsManaged(namespace)
       → Projector.Prune(keep=none) for copies this contract owns, Ready=False, stop
     → check spec.apps NebariApps exist (client.Get each) → AppsReady
     → OutputResolver.ResolvePlain
-      → client.Get NebariApp / Service / ConfigMap per plain output
+      → client.Get NebariApp / Service, APIReader.Get ConfigMap, per plain output
       → existence check (no value read) for restricted outputs
     → set status.outputs, OutputsResolved, GrantsReady, wildcardGrant
     → for each spec.requires
@@ -625,10 +643,12 @@ Production: PackContract reconcile (request for <ns>/<name>)
 
 Production: watch fan-out
   NebariApp change          → contracts in that namespace listing it in spec.apps
-  Secret/ConfigMap change   → producer contracts in that namespace declaring it, then their consumers
+  Secret change             → producer contracts in that namespace declaring it, then their consumers
+  ConfigMap change          → same, from a metadata-only watch (builder.OnlyMetadata)
   PackContract change       → consumers whose spec.requires.from names it (field index)
   Namespace label change    → contracts in that namespace and consumers of its producers
-  Owned Secret/ConfigMap    → owning consumer contract (Owns)
+  Owned Secret              → owning consumer contract (Owns)
+  Owned ConfigMap           → owning consumer contract (Owns, builder.OnlyMetadata)
 ```
 
 ### Component trees and DI
@@ -640,15 +660,17 @@ cmd/operator/main.go
       Client:    mgr.GetClient(),
       Scheme:    mgr.GetScheme(),
       Recorder:  mgr.GetEventRecorderFor("packcontract-controller"),
-      Resolver:  &contracts.OutputResolver{Reader: mgr.GetClient()},
-      Projector: &contracts.Projector{Client: mgr.GetClient(), Scheme: mgr.GetScheme()},
+      Resolver:  &packcontract.OutputResolver{Reader: mgr.GetClient(), APIReader: mgr.GetAPIReader()},
+      Projector: &packcontract.Projector{Client: mgr.GetClient(), APIReader: mgr.GetAPIReader(), Scheme: mgr.GetScheme()},
       Config:    contractConfig,
   }.SetupWithManager(mgr)
     mgr.GetFieldIndexer().IndexField(PackContract, "spec.requires.from", ...)
     mgr.GetFieldIndexer().IndexField(PackContract, "spec.apps.name", ...)
 ```
 
-The PackContract reconciler is a sibling of `NebariAppReconciler`, not a stage in its pipeline. It reads NebariApps but does not import the NebariApp sub-reconcilers.
+The PackContract reconciler is a sibling of `NebariAppReconciler`, not a stage in its pipeline. It reads NebariApps but does not import the NebariApp sub-reconcilers. Its helpers live in `internal/controller/packcontract/`, not under `reconcilers/`, for the same reason.
+
+**Cache footprint.** `cmd/operator/main.go` builds the manager with no cache options, so controller-runtime caches every object of a type across all namespaces, starting on the first cached read. Existing reconcilers already read Secrets through that cache, so a cluster-wide Secret informer exists today, and the contract watches reuse it at no extra cost. ConfigMaps are new to the operator. Caching them in full would hold every ConfigMap in the cluster in memory, so the design watches ConfigMaps metadata-only (`builder.OnlyMetadata`, valid for both `Watches` and `Owns`: [controller-runtime v0.22.4 pkg/builder/options.go:133-137](https://github.com/kubernetes-sigs/controller-runtime/blob/v0.22.4/pkg/builder/options.go#L133-L137)) and reads their data with the uncached `mgr.GetAPIReader()`: the producer's source on resolve, and the consumer's copy before an update. `Projector.Prune` lists owned ConfigMap copies as `metav1.PartialObjectMetadataList`, so the list hits the metadata cache. A typed `ConfigMapList` through the cached client would start the full informer this avoids. Narrowing the existing Secret cache is out of scope here.
 
 ### Test approach and seams
 
@@ -666,6 +688,8 @@ The PackContract reconciler is a sibling of `NebariAppReconciler`, not a stage i
 
 1. **Grant location.** Grants live on the producer's contract and come from the producer's chart values. If platform admins need to grant without touching a pack's values, a separate grant object would be the escape hatch. Do we expect that need?
 2. **NIC's `nebari-integration.yaml`.** It holds render-time required values today. Should it also list a pack's contract outputs, so NIC can show them before install, or is the in-cluster CRD enough?
+3. **SemVer for contract versions.** The operator ([ADR 2026-08-14](../decisions/2026-08-14-adopt-effver.md)) and the pack specification (`docs/pack-specification.md:105`) use EffVer. This design uses SemVer for `spec.version`, because consumers pin ranges and need a machine-checkable rule for which changes break them. EffVer measures upgrade effort for a human, so a range pinned against it would not say when a projection must stop. Is a third convention acceptable for this one machine-checked interface, or should contracts use EffVer and drop range pinning?
+4. **Shared opt-in helper and generalized condition helpers.** Component contracts proposes moving the `nebari.dev/managed` check into `namespaces.IsManaged` and changing the `utils/conditions` helpers to take a condition slice. Both touch every NebariApp sub-reconciler. Do we land them as a separate refactor PR ahead of the contract work?
 
 ## Follow-ups
 
@@ -680,7 +704,7 @@ The PackContract reconciler is a sibling of `NebariAppReconciler`, not a stage i
 | # | Item | Proof | Check method | Evidence |
 |---|------|-------|--------------|----------|
 | 1 | A pack author can declare a contract with plain and restricted outputs in their chart, and it is discoverable once installed | A chart using `nebari-app.packContract` installs a contract; `kubectl get contracts -A` lists it with Version and Ready=True; `status.outputs` shows plain values and shows the restricted output only as `restricted: true, resolved: true` | automated: e2e `packcontract_test.go` "producer publishes outputs" (helm install of a fixture chart, then assertions on `kubectl get -o json`) | |
-| 2a | A contract cannot reference a NebariApp in another namespace | The CRD has no namespace field on `apps[]` entries; a manifest with `apps: [{name: x, namespace: y}]` is rejected by the API server | automated: envtest "rejects unknown field on apps" (strict decoding) | |
+| 2a | A contract cannot reference a NebariApp in another namespace | The CRD has no namespace field on `apps[]` entries. A manifest with `apps: [{name: x, namespace: y}]` is rejected under Strict field validation, which kubectl sends by default. Under the API server's default of Warn, the field is pruned and never reaches the controller | automated: envtest "rejects unknown field on apps", sending raw JSON through `client.WithFieldValidation(c, metav1.FieldValidationStrict)`, plus a second case without Strict asserting the stored object has no `namespace` key | |
 | 2b | A contract whose NebariApp does not exist is not Ready | Contract with `apps: [{name: missing}]` reports `AppsReady=False / AppNotFound` and `Ready=False`; creating the NebariApp flips both to True | automated: envtest "missing app" | |
 | 3 | Plain outputs drawn from a NebariApp appear without restating them | `fromApp: {field: url}` and `{field: clientId}` resolve to `https://<hostname>` and the same client ID the operator provisioned in Keycloak (`naming.ClientID`) in `status.outputs` | automated: unit table for `OutputResolver` plus e2e assertion in row 1's test | |
 | 4 | dask-gateway-style consumer in its own namespace uses the producer's token through a same-namespace `secretKeyRef` once granted | Two namespaces; the producer grants the consumer namespace; a consumer pod with `env.valueFrom.secretKeyRef` to the projected Secret prints the producer's token value | automated: e2e "cross-namespace projection" (pod logs compared with the source Secret) | |
