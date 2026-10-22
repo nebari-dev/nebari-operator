@@ -740,3 +740,40 @@ These match the resources deployed by the foundational infrastructure via ArgoCD
 - [Gateway API Documentation](https://gateway-api.sigs.k8s.io/)
 - [Envoy Gateway](https://gateway.envoyproxy.io/)
 - [cert-manager](https://cert-manager.io/)
+
+## TLS listener ownership: per-app ListenerSet (ADR-0011 Option 2)
+
+The operator no longer mutates the shared platform Gateway to attach each app's
+HTTPS listener. Instead it owns a per-app **`ListenerSet`**
+(`gateway.networking.k8s.io/v1`, Standard channel) in the **NebariApp's own
+namespace**, attached to the shared Gateway via `spec.parentRef`. The app's TLS
+`Certificate` and secret are co-located in that same namespace and
+owner-referenced to the NebariApp, so they are garbage-collected with it (no
+cross-namespace label bookkeeping, no `ReferenceGrant`). Generated `HTTPRoute`s
+attach to the ListenerSet once it is serving.
+
+This removes the shared-Gateway co-ownership that previously left the platform
+`gateway-config` GitOps app permanently OutOfSync.
+
+### Staged, status-gated migration
+
+The cutover is automatic and per-NebariApp, with no user-facing strategy flag:
+
+1. The ListenerSet is always reconciled.
+2. Until it reports `Accepted=True` **and** `Programmed=True`, the operator keeps
+   the legacy per-app listener on the shared Gateway in place and routes attach
+   there. On an Envoy Gateway that does not reconcile ListenerSet (**pre-v1.8**)
+   the conditions never flip, so per-app TLS is unaffected.
+3. Once Programmed, routes retarget to the ListenerSet and the legacy
+   shared-Gateway listener is removed.
+
+Runtime requirement for the ListenerSet path: **Envoy Gateway v1.8.2+**
+(the version that reconciles the stable `ListenerSet`).
+
+### `routing.tls.secretName` (user-provided secrets)
+
+Under the ListenerSet path a user-provided TLS secret is resolved in the
+**NebariApp's namespace** (co-located with the ListenerSet), not the Gateway
+namespace. Place the secret alongside the NebariApp. During the transitional
+window the legacy Gateway-namespace lookup still applies until the ListenerSet is
+Programmed.

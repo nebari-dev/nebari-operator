@@ -59,8 +59,13 @@ kubectl create namespace envoy-gateway-system --dry-run=client -o yaml | kubectl
 
 # Install Envoy Gateway with Helm
 log_info "Installing Envoy Gateway via Helm (this may take a few minutes)..."
+# TEMPORARY (remove before approval): bumped from v1.2.4 so the e2e/dev cluster
+# ships the standard gateway.networking.k8s.io/v1 ListenerSet CRD (Gateway API
+# v1.5+), which the per-app ListenerSet reconcile requires. This pre-empts NIC's
+# foundational Envoy Gateway pin; reconcile with NIC's EG upgrade
+# (nebari-infrastructure-core#496) before this merges rather than hardcoding it here.
 helm upgrade --install eg oci://docker.io/envoyproxy/gateway-helm \
-    --version v1.2.4 \
+    --version v1.8.2 \
     --namespace envoy-gateway-system \
     --wait \
     --timeout 5m 2>&1 | grep -v "unrecognized format"
