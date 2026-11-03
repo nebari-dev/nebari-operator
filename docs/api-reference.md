@@ -291,6 +291,25 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `pathPrefix` _string_ | PathPrefix specifies the path prefix to match for routing.<br />Traffic matching this prefix will be routed to the service.<br />Must start with "/". Example: "/app-1", "/api/v1" |  | Pattern: `^/.*` <br />Required: \{\} <br /> |
 | `pathType` _string_ | PathType specifies how the path should be matched.<br />Valid values:<br />  - "PathPrefix": Match requests with the specified path prefix<br />  - "Exact": Match requests with the exact path<br />When used in routing.routes, defaults to "PathPrefix".<br />When used in routing.publicRoutes, defaults to "Exact" (safer for auth bypass). |  | Enum: [PathPrefix Exact] <br />Optional: \{\} <br /> |
+| `timeouts` _[RouteTimeouts](#routetimeouts)_ | Timeouts sets request timeouts for the traffic this route matches, for<br />example a long download or a streaming response that outlasts the<br />gateway's default. A route with timeouts gets its own rule in the<br />generated HTTPRoute, carrying them as Gateway API timeouts<br />(HTTPRouteRule.timeouts). Routes without timeouts keep the gateway's<br />default (15s on Envoy Gateway). |  | MinProperties: 1 <br />Optional: \{\} <br /> |
+
+
+---
+
+#### RouteTimeouts
+
+RouteTimeouts holds Gateway API request timeouts for a route. Each value is a
+Gateway API duration such as "30s", "5m" or "1h30m"; "0s" disables the
+timeout.
+_Validation:_
+- MinProperties: 1
+_Appears in:_
+- [RouteMatch](#routematch)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `request` _string_ | Request is the maximum time the gateway takes to respond to a client<br />request, from receiving it until the response is complete. |  | MaxLength: 32 <br />Pattern: `^([0-9]\{1,5\}(h\|m\|s\|ms))\{1,4\}$` <br />Optional: \{\} <br /> |
+| `backendRequest` _string_ | BackendRequest is the maximum time for one request from the gateway to<br />the backend, until the backend's full response is received. It cannot<br />be longer than Request. |  | MaxLength: 32 <br />Pattern: `^([0-9]\{1,5\}(h\|m\|s\|ms))\{1,4\}$` <br />Optional: \{\} <br /> |
 
 
 ---
@@ -308,8 +327,8 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `routes` _[RouteMatch](#routematch) array_ | Routes defines path-based routing rules for the application.<br />If not specified, all traffic to the hostname will be routed to the service.<br />When specified, only traffic matching these path prefixes will be routed.<br />Example: ["/app-1", "/api/v1"] |  | Optional: \{\} <br /> |
-| `publicRoutes` _[RouteMatch](#routematch) array_ | PublicRoutes specifies paths that should bypass OIDC authentication.<br />When auth is enabled and these are specified, these paths will be routed<br />via a separate HTTPRoute that is not protected by the SecurityPolicy.<br />Each entry uses the same RouteMatch format as routes, supporting both<br />PathPrefix (default) and Exact matching via the pathType field.<br />Example: [\{pathPrefix: "/api/v1/health", pathType: "Exact"\}] |  | Optional: \{\} <br /> |
+| `routes` _[RouteMatch](#routematch) array_ | Routes defines path-based routing rules for the application.<br />If not specified, all traffic to the hostname will be routed to the service.<br />When specified, only traffic matching these path prefixes will be routed.<br />Example: ["/app-1", "/api/v1"]<br />At most 64 entries, Gateway API's limit on matches in one HTTPRoute rule. |  | MaxItems: 64 <br />Optional: \{\} <br /> |
+| `publicRoutes` _[RouteMatch](#routematch) array_ | PublicRoutes specifies paths that should bypass OIDC authentication.<br />When auth is enabled and these are specified, these paths will be routed<br />via a separate HTTPRoute that is not protected by the SecurityPolicy.<br />Each entry uses the same RouteMatch format as routes, supporting both<br />PathPrefix (default) and Exact matching via the pathType field.<br />Example: [\{pathPrefix: "/api/v1/health", pathType: "Exact"\}]<br />At most 64 entries, Gateway API's limit on matches in one HTTPRoute rule. |  | MaxItems: 64 <br />Optional: \{\} <br /> |
 | `tls` _[RoutingTLSConfig](#routingtlsconfig)_ | TLS configures TLS certificate management and termination behavior.<br />When TLS is enabled (the default), the operator creates a cert-manager Certificate<br />for the application's hostname and adds a per-app HTTPS listener to the shared Gateway. |  | Optional: \{\} <br /> |
 | `annotations` _object (keys:string, values:string)_ | Annotations defines additional annotations to merge onto the generated HTTPRoute.<br />Useful for tools like ArgoCD that track resources via annotations<br />(e.g. argocd.argoproj.io/tracking-id).<br />These annotations are merged with any operator-managed annotations; operator<br />annotations always take precedence to avoid breaking internal behaviour. |  | Optional: \{\} <br /> |
 

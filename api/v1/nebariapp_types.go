@@ -95,6 +95,8 @@ type RoutingConfig struct {
 	// If not specified, all traffic to the hostname will be routed to the service.
 	// When specified, only traffic matching these path prefixes will be routed.
 	// Example: ["/app-1", "/api/v1"]
+	// At most 64 entries, Gateway API's limit on matches in one HTTPRoute rule.
+	// +kubebuilder:validation:MaxItems=64
 	// +optional
 	Routes []RouteMatch `json:"routes,omitempty"`
 
@@ -104,6 +106,8 @@ type RoutingConfig struct {
 	// Each entry uses the same RouteMatch format as routes, supporting both
 	// PathPrefix (default) and Exact matching via the pathType field.
 	// Example: [{pathPrefix: "/api/v1/health", pathType: "Exact"}]
+	// At most 64 entries, Gateway API's limit on matches in one HTTPRoute rule.
+	// +kubebuilder:validation:MaxItems=64
 	// +optional
 	PublicRoutes []RouteMatch `json:"publicRoutes,omitempty"`
 
@@ -140,6 +144,37 @@ type RouteMatch struct {
 	// +kubebuilder:validation:Enum=PathPrefix;Exact
 	// +optional
 	PathType string `json:"pathType,omitempty"`
+
+	// Timeouts sets request timeouts for the traffic this route matches, for
+	// example a long download or a streaming response that outlasts the
+	// gateway's default. A route with timeouts gets its own rule in the
+	// generated HTTPRoute, carrying them as Gateway API timeouts
+	// (HTTPRouteRule.timeouts). Routes without timeouts keep the gateway's
+	// default (15s on Envoy Gateway).
+	// +optional
+	Timeouts *RouteTimeouts `json:"timeouts,omitempty"`
+}
+
+// RouteTimeouts holds Gateway API request timeouts for a route. Each value is a
+// Gateway API duration such as "30s", "5m" or "1h30m"; "0s" disables the
+// timeout.
+// +kubebuilder:validation:MinProperties=1
+// +kubebuilder:validation:XValidation:rule="!(has(self.request) && has(self.backendRequest) && duration(self.request) != duration('0s') && duration(self.backendRequest) > duration(self.request))",message="backendRequest timeout cannot be longer than request timeout"
+type RouteTimeouts struct {
+	// Request is the maximum time the gateway takes to respond to a client
+	// request, from receiving it until the response is complete.
+	// +kubebuilder:validation:Pattern=`^([0-9]{1,5}(h|m|s|ms)){1,4}$`
+	// +kubebuilder:validation:MaxLength=32
+	// +optional
+	Request string `json:"request,omitempty"`
+
+	// BackendRequest is the maximum time for one request from the gateway to
+	// the backend, until the backend's full response is received. It cannot
+	// be longer than Request.
+	// +kubebuilder:validation:Pattern=`^([0-9]{1,5}(h|m|s|ms)){1,4}$`
+	// +kubebuilder:validation:MaxLength=32
+	// +optional
+	BackendRequest string `json:"backendRequest,omitempty"`
 }
 
 // RoutingTLSConfig controls TLS termination for the HTTPRoute.
