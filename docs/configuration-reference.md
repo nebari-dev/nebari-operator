@@ -129,6 +129,8 @@ matching these path prefixes will be routed.
 **Important:** When no routes are specified, the operator creates an HTTPRoute with an empty matches array, and the
 Gateway API implementation (Envoy Gateway) automatically adds the default `"/"` path match.
 
+At most 64 routes, Gateway API's limit on matches in one HTTPRoute rule.
+
 ##### routing.routes[].pathPrefix
 
 **Type:** `string` (required)
@@ -162,6 +164,37 @@ spec:
         pathType: Exact
 ```
 
+##### routing.routes[].timeouts
+
+**Type:** `object` (optional)
+
+Request timeouts for the traffic this route matches, for paths whose responses outlast the gateway's default (15s on
+Envoy Gateway), such as a large download or a streaming response. The operator writes them to the generated HTTPRoute as
+Gateway API timeouts (`HTTPRouteRule.timeouts`), on a rule of their own, so other paths keep the default.
+
+- `request` (optional): the maximum time the gateway takes to respond to a client request, until the response is
+  complete.
+- `backendRequest` (optional): the maximum time for one request from the gateway to the backend. It cannot be longer
+  than `request`.
+
+Values are Gateway API durations such as `30s`, `5m` or `1h30m`; `0s` disables the timeout. At least one of the two
+must be set. The same field is available on `routing.publicRoutes`.
+
+Routes with the same timeouts share one rule. Gateway API allows 16 rules per HTTPRoute, and routes without timeouts
+take one of them, so a NebariApp can use at most 15 distinct timeout values per route list.
+
+**Example:**
+```yaml
+spec:
+  routing:
+    routes:
+      - pathPrefix: /
+      - pathPrefix: /v2
+        timeouts:
+          request: 1830s
+          backendRequest: 1800s
+```
+
 #### routing.publicRoutes
 
 **Type:** `array of RouteMatch` (optional)
@@ -175,6 +208,9 @@ Each entry uses the same `RouteMatch` format as `routing.routes`:
 - `pathPrefix` (required): The path to match. Must start with `/`.
 - `pathType` (optional): `Exact` (default) or `PathPrefix`. Defaults to `Exact` for public routes
   (safer for auth bypass), unlike `routing.routes` which defaults to `PathPrefix`.
+- `timeouts` (optional): request timeouts for that path, as described under `routing.routes[].timeouts`.
+
+At most 64 public routes.
 
 **Note:** Public routes are only created when `auth.enabled: true`. If auth is disabled, all routes are already public.
 
