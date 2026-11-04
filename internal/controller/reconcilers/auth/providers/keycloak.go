@@ -328,7 +328,8 @@ func (p *KeycloakProvider) ProvisionClient(ctx context.Context, nebariApp *appsv
 		logger.Info("Provisioned SPA client", "clientID", spaClientID)
 	}
 
-	// Provision device flow client if requested
+	// Provision device flow client if requested. When it is turned off, delete
+	// it: the device login path stays open for as long as the client exists.
 	var deviceClientID string
 	if p.shouldProvisionDeviceFlowClient(nebariApp) {
 		deviceClientID, err = p.provisionDeviceFlowClient(ctx, kcClient, token, nebariApp)
@@ -336,6 +337,8 @@ func (p *KeycloakProvider) ProvisionClient(ctx context.Context, nebariApp *appsv
 			return fmt.Errorf("failed to provision device flow client: %w", err)
 		}
 		logger.Info("Provisioned device flow client", "clientID", deviceClientID)
+	} else if err := p.deleteDeviceFlowClient(ctx, kcClient, token, nebariApp); err != nil {
+		return err
 	}
 
 	// Get external issuer URL for the Secret (best-effort: empty if KEYCLOAK_EXTERNAL_URL not set)
@@ -608,22 +611,27 @@ func (p *KeycloakProvider) DeleteClient(ctx context.Context, nebariApp *appsv1.N
 		}
 	}
 
-	// Delete device flow client if it was provisioned
-	// Always attempt cleanup (don't gate on shouldProvisionDeviceFlowClient)
-	// so that disabling device flow in the spec also cleans up the Keycloak client.
-	deviceFlowClientID := p.GetDeviceFlowClientID(ctx, nebariApp)
-	existingDeviceClient, err := p.findClient(ctx, kcClient, token, deviceFlowClientID)
-	if err != nil {
-		return err
-	}
-	if existingDeviceClient != nil {
-		err = kcClient.DeleteClient(ctx, token.AccessToken, p.Config.Realm, *existingDeviceClient.ID)
-		if err != nil {
-			return fmt.Errorf("failed to delete device flow client: %w", err)
-		}
-		logger.Info("Deleted device flow client", "clientID", deviceFlowClientID)
-	}
+	// Delete the device flow client whether or not the spec still enables it:
+	// it may have been provisioned before device flow was turned off.
+	return p.deleteDeviceFlowClient(ctx, kcClient, token, nebariApp)
+}
 
+// deleteDeviceFlowClient deletes the app's device flow client if it exists.
+// Its client ID is always derived from the app, so a client with that ID was
+// created by the operator.
+func (p *KeycloakProvider) deleteDeviceFlowClient(ctx context.Context, kcClient *gocloak.GoCloak, token *gocloak.JWT, nebariApp *appsv1.NebariApp) error {
+	deviceFlowClientID := p.GetDeviceFlowClientID(ctx, nebariApp)
+	existing, err := p.findClient(ctx, kcClient, token, deviceFlowClientID)
+	if err != nil {
+		return fmt.Errorf("failed to query for device flow client: %w", err)
+	}
+	if existing == nil {
+		return nil
+	}
+	if err := kcClient.DeleteClient(ctx, token.AccessToken, p.Config.Realm, gocloak.PString(existing.ID)); err != nil {
+		return fmt.Errorf("failed to delete device flow client: %w", err)
+	}
+	log.FromContext(ctx).Info("Deleted device flow client", "clientID", deviceFlowClientID)
 	return nil
 }
 

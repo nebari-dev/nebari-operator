@@ -84,6 +84,9 @@ type authProvisionState struct {
 	GroupsClaimFormat string                       `json:"groupsClaimFormat"`
 	SPAClient         *appsv1.SPAClientConfig      `json:"spaClient,omitempty"`
 	KeycloakConfig    *appsv1.KeycloakClientConfig `json:"keycloakConfig,omitempty"`
+	// DeviceFlowClient is omitted when unset, so apps that never set it keep
+	// their stored hash and do not reprovision on upgrade.
+	DeviceFlowClient *appsv1.DeviceFlowClientConfig `json:"deviceFlowClient,omitempty"`
 }
 
 // computeAuthConfigHash returns a SHA-256 hex digest of the NebariApp fields that
@@ -110,6 +113,7 @@ func computeAuthConfigHash(nebariApp *appsv1.NebariApp) string {
 		GroupsClaimFormat: groupsClaimFormatVersion,
 		SPAClient:         auth.SPAClient,
 		KeycloakConfig:    auth.KeycloakConfig,
+		DeviceFlowClient:  auth.DeviceFlowClient,
 	}
 
 	data, err := json.Marshal(state)
@@ -302,14 +306,8 @@ func (r *AuthReconciler) ReconcileAuth(ctx context.Context, nebariApp *appsv1.Ne
 		}
 	}
 
-	// Configure token exchange if requested
-	if nebariApp.Spec.Auth.TokenExchange != nil && nebariApp.Spec.Auth.TokenExchange.Enabled {
-		if err := r.reconcileTokenExchange(ctx, nebariApp, provider); err != nil {
-			conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionFalse,
-				"TokenExchangeFailed", fmt.Sprintf("Failed to configure token exchange: %v", err))
-			return failClosed(err)
-		}
-		logger.Info("Token exchange configured")
+	if err := r.reconcileTokenExchangeToggle(ctx, nebariApp, provider); err != nil {
+		return failClosed(err)
 	}
 
 	// Validate auth configuration (check client secret exists)
@@ -677,6 +675,41 @@ func (r *AuthReconciler) buildSecurityPolicySpec(ctx context.Context, nebariApp 
 	}
 
 	return spec, nil
+}
+
+// reconcileTokenExchangeToggle configures token exchange while the spec enables
+// it, and removes it once the spec turns it off. status.tokenExchangeConfigured
+// records that the operator configured it, so the removal only reaches the
+// provider for apps that had it on. On failure it sets AuthReady=False.
+func (r *AuthReconciler) reconcileTokenExchangeToggle(ctx context.Context, nebariApp *appsv1.NebariApp, provider providers.OIDCProvider) error {
+	logger := log.FromContext(ctx)
+
+	if nebariApp.Spec.Auth.TokenExchange != nil && nebariApp.Spec.Auth.TokenExchange.Enabled {
+		// Set before configuring: a configuration that fails partway may already
+		// have enabled permissions in the provider, and those must be removed too.
+		nebariApp.Status.TokenExchangeConfigured = true
+		if err := r.reconcileTokenExchange(ctx, nebariApp, provider); err != nil {
+			conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionFalse,
+				"TokenExchangeFailed", fmt.Sprintf("Failed to configure token exchange: %v", err))
+			return err
+		}
+		logger.Info("Token exchange configured")
+		return nil
+	}
+
+	if !nebariApp.Status.TokenExchangeConfigured {
+		return nil
+	}
+	if err := provider.CleanupTokenExchange(ctx, nebariApp); err != nil {
+		conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionFalse,
+			appsv1.ReasonTokenExchangeCleanupFailed, fmt.Sprintf("Failed to remove token exchange: %v", err))
+		return err
+	}
+	nebariApp.Status.TokenExchangeConfigured = false
+	logger.Info("Token exchange removed")
+	r.Recorder.Event(nebariApp, corev1.EventTypeNormal, appsv1.EventReasonTokenExchangeRemoved,
+		"Token exchange turned off: other clients can no longer exchange tokens for this client's audience")
+	return nil
 }
 
 // reconcileTokenExchange discovers all other NebariApp OIDC clients in the same

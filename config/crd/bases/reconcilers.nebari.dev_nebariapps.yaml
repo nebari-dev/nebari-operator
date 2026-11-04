@@ -103,6 +103,7 @@ spec:
                       using the OAuth2 Device Authorization Grant (RFC 8628).
                       When enabled, the operator provisions a separate public client configured for device flow.
                       The device flow client ID is written to the OIDC client Secret under key "device-client-id".
+                      Turning it off deletes the device flow client from Keycloak.
                       Only supported for provider="keycloak".
                     properties:
                       enabled:
@@ -330,6 +331,7 @@ spec:
                       When enabled, other NebariApp OIDC clients in the same Keycloak realm can
                       exchange their access tokens for tokens with this client's audience.
                       Requires KC_FEATURES=token-exchange on the Keycloak server.
+                      Turning it off removes the token exchange permissions from the client.
                       Only supported for provider="keycloak".
                     properties:
                       enabled:
@@ -788,6 +790,13 @@ spec:
                 required:
                 - enabled
                 type: object
+              tokenExchangeConfigured:
+                description: |-
+                  TokenExchangeConfigured is true once the operator has configured token
+                  exchange on this app's OIDC client. When spec.auth.tokenExchange is turned
+                  off while this is true, the operator removes the token exchange permissions
+                  from the client and clears it.
+                type: boolean
             type: object
         required:
         - spec
