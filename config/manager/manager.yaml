@@ -75,6 +75,15 @@ spec:
             value: "http://keycloak-keycloakx-http.keycloak.svc.cluster.local/auth"
           - name: KEYCLOAK_REALM
             value: "nebari"
+          # Issuer URL components used to build the SecurityPolicy OIDC issuer that
+          # Envoy fetches in-cluster. These match the codecentric/keycloakx chart
+          # (HTTP on port 80, realm served under /auth). They mirror the operator's
+          # defaults but are set explicitly so the deployed issuer is obvious and
+          # easy to retarget for a different Keycloak layout.
+          - name: KEYCLOAK_ISSUER_SERVICE_PORT
+            value: "80"
+          - name: KEYCLOAK_ISSUER_CONTEXT_PATH
+            value: "/auth"
           - name: KEYCLOAK_ADMIN_SECRET_NAME
             value: "nebari-realm-admin-credentials"
           - name: KEYCLOAK_ADMIN_SECRET_NAMESPACE
