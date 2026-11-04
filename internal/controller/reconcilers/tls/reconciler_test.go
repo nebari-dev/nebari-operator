@@ -347,7 +347,7 @@ func TestReconcileTLS(t *testing.T) { //nolint:gocyclo // table-driven test with
 				Spec: certmanagerv1.CertificateSpec{
 					SecretName: naming.CertificateSecretName(&appsv1.NebariApp{ObjectMeta: metav1.ObjectMeta{Name: "ready-app", Namespace: "default"}}),
 					DNSNames:   []string{"ready.example.com"},
-					IssuerRef: cmmeta.ObjectReference{
+					IssuerRef: cmmeta.IssuerReference{
 						Name: "letsencrypt-prod",
 						Kind: "ClusterIssuer",
 					},
@@ -449,7 +449,7 @@ func TestReconcileTLS(t *testing.T) { //nolint:gocyclo // table-driven test with
 				Spec: certmanagerv1.CertificateSpec{
 					SecretName: "old-secret-name",
 					DNSNames:   []string{"old.example.com"},
-					IssuerRef: cmmeta.ObjectReference{
+					IssuerRef: cmmeta.IssuerReference{
 						Name: "old-issuer",
 						Kind: "ClusterIssuer",
 					},

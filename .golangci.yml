@@ -36,6 +36,15 @@ linters:
           - dupl
           - lll
         path: internal/*
+      - linters:
+          - goconst
+        path: _test\.go
+      # controller-runtime deprecates the core/v1 event recorder. Moving to
+      # mgr.GetEventRecorder (events.k8s.io) changes every reconciler's recorder
+      # type and the RBAC, so it is tracked as its own change.
+      - linters:
+          - staticcheck
+        text: "GetEventRecorderFor is deprecated"
     paths:
       - third_party$
       - builtin$

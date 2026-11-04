@@ -164,7 +164,7 @@ func applyGroupsEnforcement(spec *egv1alpha1.SecurityPolicySpec, cookieName, jwk
 		spec.Authorization.Rules = append(spec.Authorization.Rules, egv1alpha1.AuthorizationRule{
 			Name:   ptr.To(name),
 			Action: egv1alpha1.AuthorizationActionAllow,
-			Principal: egv1alpha1.Principal{
+			Principal: &egv1alpha1.Principal{
 				JWT: &egv1alpha1.JWTPrincipal{
 					Provider: groupsJWTProviderName,
 					Claims: []egv1alpha1.JWTClaim{
