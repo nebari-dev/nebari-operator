@@ -325,6 +325,7 @@ type AuthConfig struct {
 	// When enabled, other NebariApp OIDC clients in the same Keycloak realm can
 	// exchange their access tokens for tokens with this client's audience.
 	// Requires KC_FEATURES=token-exchange on the Keycloak server.
+	// Turning it off removes the token exchange permissions from the client.
 	// Only supported for provider="keycloak".
 	// +optional
 	TokenExchange *TokenExchangeConfig `json:"tokenExchange,omitempty"`
@@ -644,6 +645,13 @@ type NebariAppStatus struct {
 	// +optional
 	AuthConfigHash string `json:"authConfigHash,omitempty"`
 
+	// TokenExchangeConfigured is true once the operator has configured token
+	// exchange on this app's OIDC client. When spec.auth.tokenExchange is turned
+	// off while this is true, the operator removes the token exchange permissions
+	// from the client and clears it.
+	// +optional
+	TokenExchangeConfigured bool `json:"tokenExchangeConfigured,omitempty"`
+
 	// ServiceDiscovery is the computed service discovery descriptor.
 	// The controller populates this after reconciling spec.landingPage so the
 	// webapi watcher can consume a pre-validated, URL-resolved view via
@@ -760,6 +768,11 @@ const (
 	// normalization (for example "/" or whitespace), so no group is admitted.
 	// Every request is denied.
 	ReasonGroupsEmpty = "GroupsEmpty"
+
+	// ReasonTokenExchangeCleanupFailed indicates spec.auth.tokenExchange was
+	// turned off but the token exchange permissions could not be removed from the
+	// client, so other clients may still exchange tokens for its audience.
+	ReasonTokenExchangeCleanupFailed = "TokenExchangeCleanupFailed"
 )
 
 // Event reasons for recording Kubernetes events
@@ -768,6 +781,10 @@ const (
 	// mappers that wrote the groups claim without being declared in
 	// spec.auth.keycloakConfig.protocolMappers.
 	EventReasonGroupsMappersRemoved = "GroupsMappersRemoved"
+
+	// EventReasonTokenExchangeRemoved is used when token exchange is removed from
+	// the client after spec.auth.tokenExchange was turned off.
+	EventReasonTokenExchangeRemoved = "TokenExchangeRemoved"
 
 	// EventReasonValidationFailed is used when validation fails
 	EventReasonValidationFailed = "ValidationFailed"

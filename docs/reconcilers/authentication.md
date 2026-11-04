@@ -401,7 +401,7 @@ conditions:
 conditions:
   - type: AuthReady
     status: "False"
-    reason: ProvisioningFailed | ValidationFailed | SecurityPolicyFailed | GroupsNotResolved | GroupsRequireKeycloak | GroupsClaimConflict | GroupsEmpty
+    reason: ProvisioningFailed | ValidationFailed | SecurityPolicyFailed | TokenExchangeFailed | TokenExchangeCleanupFailed | GroupsNotResolved | GroupsRequireKeycloak | GroupsClaimConflict | GroupsEmpty
     message: "<detailed error message>"
 ```
 
@@ -416,6 +416,9 @@ event.
   a message saying the application must check the groups claim
 - `Normal/Deleted`: "OIDC client deleted" (cleanup)
 - `Normal/SecurityPolicyDeleted`: "SecurityPolicy deleted (enforceAtGateway disabled)"
+- `Normal/TokenExchangeRemoved`: `spec.auth.tokenExchange` was turned off and its permissions were removed from the client.
+  `status.tokenExchangeConfigured` records that the operator configured token exchange, so this only runs for apps that
+  had it on.
 
 **Warning Events:**
 - `Warning/GroupsRequireKeycloak`: "spec.auth.groups requires provider \"keycloak\" for gateway enforcement; all requests are denied"
