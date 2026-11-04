@@ -680,10 +680,10 @@ func (p *KeycloakProvider) updateExistingClient(ctx context.Context, kcClient *g
 	existingClient.StandardFlowEnabled = gocloak.BoolP(true)
 
 	// Ensure post-logout redirect URIs are set (preserving any existing attributes)
-	postLogoutAttr := map[string]string{"post.logout.redirect.uris": p.buildPostLogoutRedirectURIs(nebariApp)}
+	postLogoutAttr := map[string]string{postLogoutRedirectURIsAttr: p.buildPostLogoutRedirectURIs(nebariApp)}
 	if existingClient.Attributes != nil {
 		for k, v := range *existingClient.Attributes {
-			if k != "post.logout.redirect.uris" {
+			if k != postLogoutRedirectURIsAttr {
 				postLogoutAttr[k] = v
 			}
 		}
@@ -716,7 +716,7 @@ func (p *KeycloakProvider) createNewClient(ctx context.Context, kcClient *gocloa
 		Secret:                    gocloak.StringP(clientSecret),
 		RedirectURIs:              &redirectURIs,
 		WebOrigins:                &[]string{"*"},
-		Attributes:                &map[string]string{"post.logout.redirect.uris": p.buildPostLogoutRedirectURIs(nebariApp)},
+		Attributes:                &map[string]string{postLogoutRedirectURIsAttr: p.buildPostLogoutRedirectURIs(nebariApp)},
 		PublicClient:              gocloak.BoolP(false),
 		StandardFlowEnabled:       gocloak.BoolP(true),
 		DirectAccessGrantsEnabled: gocloak.BoolP(false),
@@ -744,6 +744,10 @@ func (p *KeycloakProvider) buildRedirectURLs(nebariApp *appsv1.NebariApp) []stri
 		fmt.Sprintf("http://%s%s", nebariApp.Spec.Hostname, redirectPath),
 	}
 }
+
+// postLogoutRedirectURIsAttr is the Keycloak client attribute holding the
+// allowed post-logout redirect URIs.
+const postLogoutRedirectURIsAttr = "post.logout.redirect.uris"
 
 // buildPostLogoutRedirectURIs constructs the Keycloak post.logout.redirect.uris attribute value.
 // Keycloak stores multiple URIs as "##"-delimited strings in this client attribute.
@@ -854,7 +858,7 @@ func (p *KeycloakProvider) syncClientScopes(ctx context.Context, kcClient *goclo
 			scopeID = *existing.ID
 		} else {
 			// Create the scope in the realm
-			includeInToken := "true"
+			includeInToken := "true" //nolint:goconst // client-scope attribute, unrelated to mapperConfigTrue
 			newScope := gocloak.ClientScope{
 				Name:        gocloak.StringP(scopeName),
 				Description: gocloak.StringP("Managed by nebari-operator"),

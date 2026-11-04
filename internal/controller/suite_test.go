@@ -79,7 +79,7 @@ var _ = BeforeSuite(func() {
 		CRDDirectoryPaths: []string{
 			filepath.Join("..", "..", "config", "crd", "bases"),
 			filepath.Join(moduleDir("sigs.k8s.io/gateway-api"), "config", "crd", "standard"),
-			filepath.Join(moduleDir("github.com/envoyproxy/gateway"), "charts", "gateway-helm", "crds", "generated"),
+			filepath.Join(moduleDir("github.com/envoyproxy/gateway"), "charts", "gateway-helm", "charts", "crds", "crds", "generated"),
 		},
 		ErrorIfCRDPathMissing: true,
 	}

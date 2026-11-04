@@ -29,7 +29,7 @@ var (
 	GroupVersion = schema.GroupVersion{Group: "reconcilers.nebari.dev", Version: "v1"}
 
 	// SchemeBuilder is used to add go types to the GroupVersionKind scheme.
-	SchemeBuilder = &scheme.Builder{GroupVersion: GroupVersion}
+	SchemeBuilder = &scheme.Builder{GroupVersion: GroupVersion} //nolint:staticcheck // kubebuilder scaffold; dropping it is an api/ refactor, not a dep bump
 
 	// AddToScheme adds the types in this group-version to the given scheme.
 	AddToScheme = SchemeBuilder.AddToScheme

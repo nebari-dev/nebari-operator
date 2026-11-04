@@ -139,7 +139,7 @@ func TestBuildSecurityPolicySpec_Groups(t *testing.T) {
 		return []egv1alpha1.AuthorizationRule{{
 			Name:   ptr.To("allow-groups"),
 			Action: egv1alpha1.AuthorizationActionAllow,
-			Principal: egv1alpha1.Principal{JWT: &egv1alpha1.JWTPrincipal{
+			Principal: &egv1alpha1.Principal{JWT: &egv1alpha1.JWTPrincipal{
 				Provider: "nebari-groups",
 				Claims: []egv1alpha1.JWTClaim{{
 					Name: "groups", ValueType: &stringArray, Values: values,

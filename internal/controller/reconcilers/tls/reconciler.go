@@ -281,7 +281,7 @@ func (r *TLSReconciler) reconcileCertificate(ctx context.Context, nebariApp *app
 		cert.Spec = certmanagerv1.CertificateSpec{
 			SecretName: secretName,
 			DNSNames:   []string{nebariApp.Spec.Hostname},
-			IssuerRef: cmmeta.ObjectReference{
+			IssuerRef: cmmeta.IssuerReference{
 				Name: r.ClusterIssuerName,
 				Kind: "ClusterIssuer",
 			},
