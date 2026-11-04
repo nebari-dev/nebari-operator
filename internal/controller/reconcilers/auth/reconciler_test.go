@@ -1521,6 +1521,19 @@ func TestComputeAuthConfigHash(t *testing.T) {
 		}
 	})
 
+	t.Run("enabling deviceFlowClient changes hash", func(t *testing.T) {
+		changed := base.DeepCopy()
+		changed.Spec.Auth.DeviceFlowClient = &appsv1.DeviceFlowClientConfig{Enabled: true}
+		if computeAuthConfigHash(changed) == baseHash {
+			t.Error("expected enabling deviceFlowClient to produce a different hash")
+		}
+		disabled := changed.DeepCopy()
+		disabled.Spec.Auth.DeviceFlowClient.Enabled = false
+		if computeAuthConfigHash(disabled) == computeAuthConfigHash(changed) {
+			t.Error("expected disabling deviceFlowClient to produce a different hash")
+		}
+	})
+
 	t.Run("issuerURL change (generic-oidc) changes hash", func(t *testing.T) {
 		changed := base.DeepCopy()
 		changed.Spec.Auth.IssuerURL = "https://accounts.google.com"
@@ -1609,6 +1622,27 @@ func TestReconcileAuth_SpecChangeCycle(t *testing.T) {
 			mutate: func(a *appsv1.AuthConfig) {
 				a.Scopes = append(a.Scopes, "groups")
 			},
+		},
+		{
+			name: "enabling deviceFlowClient triggers re-provisioning",
+			initial: appsv1.AuthConfig{
+				Enabled:         true,
+				Provider:        constants.ProviderKeycloak,
+				ProvisionClient: ptr.To(true),
+			},
+			mutate: func(a *appsv1.AuthConfig) {
+				a.DeviceFlowClient = &appsv1.DeviceFlowClientConfig{Enabled: true}
+			},
+		},
+		{
+			name: "disabling deviceFlowClient triggers re-provisioning",
+			initial: appsv1.AuthConfig{
+				Enabled:          true,
+				Provider:         constants.ProviderKeycloak,
+				ProvisionClient:  ptr.To(true),
+				DeviceFlowClient: &appsv1.DeviceFlowClientConfig{Enabled: true},
+			},
+			mutate: func(a *appsv1.AuthConfig) { a.DeviceFlowClient.Enabled = false },
 		},
 		{
 			name: "adding a keycloakConfig group member triggers re-provisioning",

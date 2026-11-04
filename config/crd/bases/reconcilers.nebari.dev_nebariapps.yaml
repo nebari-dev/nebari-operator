@@ -103,6 +103,7 @@ spec:
                       using the OAuth2 Device Authorization Grant (RFC 8628).
                       When enabled, the operator provisions a separate public client configured for device flow.
                       The device flow client ID is written to the OIDC client Secret under key "device-client-id".
+                      Turning it off deletes the device flow client from Keycloak.
                       Only supported for provider="keycloak".
                     properties:
                       enabled:

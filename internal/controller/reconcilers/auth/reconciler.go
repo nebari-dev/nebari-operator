@@ -84,6 +84,9 @@ type authProvisionState struct {
 	GroupsClaimFormat string                       `json:"groupsClaimFormat"`
 	SPAClient         *appsv1.SPAClientConfig      `json:"spaClient,omitempty"`
 	KeycloakConfig    *appsv1.KeycloakClientConfig `json:"keycloakConfig,omitempty"`
+	// DeviceFlowClient is omitted when unset, so apps that never set it keep
+	// their stored hash and do not reprovision on upgrade.
+	DeviceFlowClient *appsv1.DeviceFlowClientConfig `json:"deviceFlowClient,omitempty"`
 }
 
 // computeAuthConfigHash returns a SHA-256 hex digest of the NebariApp fields that
@@ -110,6 +113,7 @@ func computeAuthConfigHash(nebariApp *appsv1.NebariApp) string {
 		GroupsClaimFormat: groupsClaimFormatVersion,
 		SPAClient:         auth.SPAClient,
 		KeycloakConfig:    auth.KeycloakConfig,
+		DeviceFlowClient:  auth.DeviceFlowClient,
 	}
 
 	data, err := json.Marshal(state)
