@@ -129,7 +129,20 @@ matching these path prefixes will be routed.
 **Important:** When no routes are specified, the operator creates an HTTPRoute with an empty matches array, and the
 Gateway API implementation (Envoy Gateway) automatically adds the default `"/"` path match.
 
-At most 64 routes, Gateway API's limit on matches in one HTTPRoute rule.
+**Limit: at most 64 routes.** The operator puts the routes that set no timeouts (before `timeouts` existed, all of
+them) into one HTTPRoute rule, and Gateway API allows at most 64 matches in a rule. A longer list could never be
+routed: the API server rejected the generated HTTPRoute and the NebariApp reported `RoutingReady=False` with reason
+`CreationFailed`. The NebariApp schema now rejects the list when the resource is applied instead:
+
+```text
+spec.routing.routes: Too many: 65: must have at most 64 items
+```
+
+Kubernetes does not re-check objects it has already stored, so upgrading the operator leaves an existing NebariApp with
+a longer list as it is (and still not routed). An edit that changes the list has to bring it down to 64 entries. Other
+edits are accepted on Kubernetes 1.30 and later, which skip validation of unchanged fields; older versions reject every
+edit until the list is fixed. To cover more paths, match a shared parent prefix once instead of listing each path
+under it (for example `/api` instead of `/api/users`, `/api/orders` and so on).
 
 ##### routing.routes[].pathPrefix
 
@@ -215,7 +228,8 @@ Each entry uses the same `RouteMatch` format as `routing.routes`:
   (safer for auth bypass), unlike `routing.routes` which defaults to `PathPrefix`.
 - `timeouts` (optional): request timeouts for that path, as described under `routing.routes[].timeouts`.
 
-At most 64 public routes.
+**Limit: at most 64 public routes**, for the same reason and with the same upgrade behavior as `routing.routes`. The
+generated public HTTPRoute puts them in one rule, so a longer list could not be routed before the schema enforced it.
 
 **Note:** Public routes are only created when `auth.enabled: true`. If auth is disabled, all routes are already public.
 

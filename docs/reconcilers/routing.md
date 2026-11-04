@@ -272,7 +272,9 @@ rules:
 ```
 
 **Note:** All path rules are combined into a single HTTPRoute rule with multiple matches, following Gateway API best
-practices. All matches route to the same backend service.
+practices. All matches route to the same backend service. Gateway API allows at most 64 matches in a rule, so the
+NebariApp schema caps `routes` and `publicRoutes` at 64 entries each (see
+[`routing.routes`](../configuration-reference.md#routingroutes)).
 
 #### Route Timeouts
 

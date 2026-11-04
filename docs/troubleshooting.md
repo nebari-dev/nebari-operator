@@ -141,6 +141,26 @@ kubectl get gateway nebari-gateway -n envoy-gateway-system -o jsonpath='{.spec.l
 
 **Note:** When using internal services (accessed via Kubernetes DNS only), you typically don't need external routing at all. Consider whether a NebariApp resource is necessary for purely internal services.
 
+### Route List Too Long
+
+**Symptom:** applying a NebariApp fails with `spec.routing.routes: Too many: 65: must have at most 64 items` (or the
+same for `spec.routing.publicRoutes`), or an edit to an existing NebariApp with a long route list is rejected with it.
+
+**Cause:** each list holds at most 64 entries, because the operator puts routes in one HTTPRoute rule and Gateway API
+allows 64 matches per rule. A NebariApp stored with a longer list before the schema enforced this was never routed: its
+HTTPRoute was rejected, with `RoutingReady=False` and reason `CreationFailed`.
+
+**Solution:** match a shared parent prefix once instead of listing each path under it, until each list has 64 entries
+or fewer. See [`routing.routes`](configuration-reference.md#routingroutes).
+
+```bash
+# Count the entries in each list
+kubectl get nebariapp <name> -n <namespace> \
+  -o jsonpath='{.spec.routing.routes[*].pathPrefix}' | wc -w
+kubectl get nebariapp <name> -n <namespace> \
+  -o jsonpath='{.spec.routing.publicRoutes[*].pathPrefix}' | wc -w
+```
+
 ### Group Access (`auth.groups`) Issues
 
 These apply when a NebariApp sets `auth.groups` (see [Group-based access control](reconcilers/authentication.md#group-based-access-control)).
