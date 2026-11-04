@@ -183,6 +183,11 @@ must be set. The same field is available on `routing.publicRoutes`.
 Routes with the same timeouts share one rule. Gateway API allows 16 rules per HTTPRoute, and routes without timeouts
 take one of them, so a NebariApp can use at most 15 distinct timeout values per route list.
 
+Timeouts on `routes` do not carry over to `publicRoutes`: setting them on `pathPrefix: /` times every protected path,
+while each public route keeps the default unless it sets its own. They also end at the gateway. A proxy between the
+gateway and the app, such as an auth sidecar, has its own upstream timeout (30s by default on oauth2-proxy), which must
+be at least as long for a slow response to get through.
+
 **Example:**
 ```yaml
 spec:
