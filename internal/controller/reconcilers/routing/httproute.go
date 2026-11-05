@@ -229,33 +229,78 @@ func (r *RoutingReconciler) buildHTTPRouteRules(nebariApp *appsv1.NebariApp) []g
 		routes = nebariApp.Spec.Routing.Routes
 	}
 
-	// Build a single rule with multiple matches (one per route)
-	// All matches route to the same backend, so we use one rule
-	// If no routes specified, we create an empty matches array. Gateway API will automatically
-	// add a default path match of "/" (PathPrefix) when matches is empty or null.
-	matches := make([]gatewayv1.HTTPRouteMatch, 0, len(routes))
-	for _, route := range routes {
-		pathType := gatewayv1.PathMatchPathPrefix
-		if route.PathType == "Exact" {
-			pathType = gatewayv1.PathMatchExact
-		}
+	// With no routes the rule has no matches, and Gateway API matches every
+	// path ("/" PathPrefix).
+	return buildRouteRules(routes, gatewayv1.PathMatchPathPrefix, r.buildBackendRefs(nebariApp))
+}
 
-		pathValue := route.PathPrefix
-		match := gatewayv1.HTTPRouteMatch{
-			Path: &gatewayv1.HTTPPathMatch{
-				Type:  &pathType,
-				Value: &pathValue,
-			},
+// buildRouteRules turns route matches into HTTPRoute rules that all forward to
+// backendRefs. Matches without timeouts share one rule, so an app that sets no
+// timeouts gets the same single rule as before. Matches with timeouts are
+// grouped by their timeouts, one rule per distinct value, in the order they
+// first appear. The shared rule is left out when every match has timeouts,
+// because a rule with no matches would match every path.
+func buildRouteRules(routes []appsv1.RouteMatch, defaultPathType gatewayv1.PathMatchType, backendRefs []gatewayv1.HTTPBackendRef) []gatewayv1.HTTPRouteRule {
+	shared := make([]gatewayv1.HTTPRouteMatch, 0, len(routes))
+	var timed []gatewayv1.HTTPRouteRule
+	timedIndex := map[appsv1.RouteTimeouts]int{}
+
+	for _, route := range routes {
+		match := buildRouteMatch(route, defaultPathType)
+		if route.Timeouts == nil {
+			shared = append(shared, match)
+			continue
 		}
-		matches = append(matches, match)
+		i, ok := timedIndex[*route.Timeouts]
+		if !ok {
+			i = len(timed)
+			timedIndex[*route.Timeouts] = i
+			timed = append(timed, gatewayv1.HTTPRouteRule{
+				Timeouts:    buildRouteTimeouts(route.Timeouts),
+				BackendRefs: append([]gatewayv1.HTTPBackendRef(nil), backendRefs...),
+			})
+		}
+		timed[i].Matches = append(timed[i].Matches, match)
 	}
 
-	return []gatewayv1.HTTPRouteRule{
-		{
-			Matches:     matches,
-			BackendRefs: r.buildBackendRefs(nebariApp),
+	rules := make([]gatewayv1.HTTPRouteRule, 0, len(timed)+1)
+	if len(shared) > 0 || len(timed) == 0 {
+		rules = append(rules, gatewayv1.HTTPRouteRule{Matches: shared, BackendRefs: backendRefs})
+	}
+	return append(rules, timed...)
+}
+
+// buildRouteMatch builds the path match for a route, using defaultPathType
+// when the route does not set one.
+func buildRouteMatch(route appsv1.RouteMatch, defaultPathType gatewayv1.PathMatchType) gatewayv1.HTTPRouteMatch {
+	pathType := defaultPathType
+	switch route.PathType {
+	case "Exact":
+		pathType = gatewayv1.PathMatchExact
+	case "PathPrefix":
+		pathType = gatewayv1.PathMatchPathPrefix
+	}
+	pathValue := route.PathPrefix
+	return gatewayv1.HTTPRouteMatch{
+		Path: &gatewayv1.HTTPPathMatch{
+			Type:  &pathType,
+			Value: &pathValue,
 		},
 	}
+}
+
+// buildRouteTimeouts converts a route's timeouts to Gateway API timeouts.
+func buildRouteTimeouts(t *appsv1.RouteTimeouts) *gatewayv1.HTTPRouteTimeouts {
+	out := &gatewayv1.HTTPRouteTimeouts{}
+	if t.Request != "" {
+		d := gatewayv1.Duration(t.Request)
+		out.Request = &d
+	}
+	if t.BackendRequest != "" {
+		d := gatewayv1.Duration(t.BackendRequest)
+		out.BackendRequest = &d
+	}
+	return out
 }
 
 // buildBackendRefs generates backend references for the HTTPRoute
@@ -403,22 +448,6 @@ func (r *RoutingReconciler) buildPublicHTTPRoute(nebariApp *appsv1.NebariApp, ga
 		sectionName = gatewayv1.SectionName(tlsListenerName)
 	}
 
-	// Build matches for each public route (default to Exact for safer auth bypass)
-	matches := make([]gatewayv1.HTTPRouteMatch, 0, len(nebariApp.Spec.Routing.PublicRoutes))
-	for _, route := range nebariApp.Spec.Routing.PublicRoutes {
-		pathType := gatewayv1.PathMatchExact
-		if route.PathType == "PathPrefix" {
-			pathType = gatewayv1.PathMatchPathPrefix
-		}
-		pathValue := route.PathPrefix
-		matches = append(matches, gatewayv1.HTTPRouteMatch{
-			Path: &gatewayv1.HTTPPathMatch{
-				Type:  &pathType,
-				Value: &pathValue,
-			},
-		})
-	}
-
 	route := &gatewayv1.HTTPRoute{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      routeName,
@@ -446,12 +475,8 @@ func (r *RoutingReconciler) buildPublicHTTPRoute(nebariApp *appsv1.NebariApp, ga
 			Hostnames: []gatewayv1.Hostname{
 				gatewayv1.Hostname(nebariApp.Spec.Hostname),
 			},
-			Rules: []gatewayv1.HTTPRouteRule{
-				{
-					Matches:     matches,
-					BackendRefs: r.buildBackendRefs(nebariApp),
-				},
-			},
+			// Public routes default to Exact, which is safer for an auth bypass.
+			Rules: buildRouteRules(nebariApp.Spec.Routing.PublicRoutes, gatewayv1.PathMatchExact, r.buildBackendRefs(nebariApp)),
 		},
 	}
 

@@ -129,6 +129,21 @@ matching these path prefixes will be routed.
 **Important:** When no routes are specified, the operator creates an HTTPRoute with an empty matches array, and the
 Gateway API implementation (Envoy Gateway) automatically adds the default `"/"` path match.
 
+**Limit: at most 64 routes.** The operator puts the routes that set no timeouts (before `timeouts` existed, all of
+them) into one HTTPRoute rule, and Gateway API allows at most 64 matches in a rule. A longer list could never be
+routed: the API server rejected the generated HTTPRoute and the NebariApp reported `RoutingReady=False` with reason
+`CreationFailed`. The NebariApp schema now rejects the list when the resource is applied instead:
+
+```text
+spec.routing.routes: Too many: 65: must have at most 64 items
+```
+
+Kubernetes does not re-check objects it has already stored, so upgrading the operator leaves an existing NebariApp with
+a longer list as it is (and still not routed). An edit that changes the list has to bring it down to 64 entries. Other
+edits are accepted on Kubernetes 1.30 and later, which skip validation of unchanged fields; older versions reject every
+edit until the list is fixed. To cover more paths, match a shared parent prefix once instead of listing each path
+under it (for example `/api` instead of `/api/users`, `/api/orders` and so on).
+
 ##### routing.routes[].pathPrefix
 
 **Type:** `string` (required)
@@ -162,6 +177,42 @@ spec:
         pathType: Exact
 ```
 
+##### routing.routes[].timeouts
+
+**Type:** `object` (optional)
+
+Request timeouts for the traffic this route matches, for paths whose responses outlast the gateway's default (15s on
+Envoy Gateway), such as a large download or a streaming response. The operator writes them to the generated HTTPRoute as
+Gateway API timeouts (`HTTPRouteRule.timeouts`), on a rule of their own, so other paths keep the default.
+
+- `request` (optional): the maximum time the gateway takes to respond to a client request, until the response is
+  complete.
+- `backendRequest` (optional): the maximum time for one request from the gateway to the backend. It cannot be longer
+  than `request`.
+
+Values are Gateway API durations such as `30s`, `5m` or `1h30m`; `0s` disables the timeout. At least one of the two
+must be set. The same field is available on `routing.publicRoutes`.
+
+Routes with the same timeouts share one rule. Gateway API allows 16 rules per HTTPRoute, and routes without timeouts
+take one of them, so a NebariApp can use at most 15 distinct timeout values per route list.
+
+Timeouts on `routes` do not carry over to `publicRoutes`: setting them on `pathPrefix: /` times every protected path,
+while each public route keeps the default unless it sets its own. They also end at the gateway. A proxy between the
+gateway and the app, such as an auth sidecar, has its own upstream timeout (30s by default on oauth2-proxy), which must
+be at least as long for a slow response to get through.
+
+**Example:**
+```yaml
+spec:
+  routing:
+    routes:
+      - pathPrefix: /
+      - pathPrefix: /v2
+        timeouts:
+          request: 1830s
+          backendRequest: 1800s
+```
+
 #### routing.publicRoutes
 
 **Type:** `array of RouteMatch` (optional)
@@ -175,6 +226,10 @@ Each entry uses the same `RouteMatch` format as `routing.routes`:
 - `pathPrefix` (required): The path to match. Must start with `/`.
 - `pathType` (optional): `Exact` (default) or `PathPrefix`. Defaults to `Exact` for public routes
   (safer for auth bypass), unlike `routing.routes` which defaults to `PathPrefix`.
+- `timeouts` (optional): request timeouts for that path, as described under `routing.routes[].timeouts`.
+
+**Limit: at most 64 public routes**, for the same reason and with the same upgrade behavior as `routing.routes`. The
+generated public HTTPRoute puts them in one rule, so a longer list could not be routed before the schema enforced it.
 
 **Note:** Public routes are only created when `auth.enabled: true`. If auth is disabled, all routes are already public.
 

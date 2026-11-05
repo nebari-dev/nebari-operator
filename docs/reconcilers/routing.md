@@ -272,7 +272,52 @@ rules:
 ```
 
 **Note:** All path rules are combined into a single HTTPRoute rule with multiple matches, following Gateway API best
-practices. All matches route to the same backend service.
+practices. All matches route to the same backend service. Gateway API allows at most 64 matches in a rule, so the
+NebariApp schema caps `routes` and `publicRoutes` at 64 entries each (see
+[`routing.routes`](../configuration-reference.md#routingroutes)).
+
+#### Route Timeouts
+
+A route can set `timeouts` for paths whose responses outlast the gateway's default request timeout (15s on Envoy
+Gateway). Each route with timeouts goes to a rule of its own carrying them as Gateway API `HTTPRouteRule.timeouts`;
+routes with equal timeouts share a rule, and routes without timeouts stay in the shared rule:
+
+```yaml
+routing:
+  routes:
+    - pathPrefix: /v1
+    - pathPrefix: /v2
+      timeouts:
+        request: 1830s
+        backendRequest: 1800s
+```
+
+**Generates:**
+
+```yaml
+rules:
+  - matches:
+      - path:
+          type: PathPrefix
+          value: /v1
+    backendRefs:
+      - name: myapp-service
+        port: 8080
+  - matches:
+      - path:
+          type: PathPrefix
+          value: /v2
+    timeouts:
+      request: 1830s
+      backendRequest: 1800s
+    backendRefs:
+      - name: myapp-service
+        port: 8080
+```
+
+The shared rule is left out when every route sets timeouts, because a rule with no matches would match every path.
+Public routes work the same way. The timeouts are on the rules only, so they apply whichever parent the route attaches
+to.
 
 ### Public Routes (Authentication Bypass)
 

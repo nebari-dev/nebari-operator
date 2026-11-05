@@ -486,6 +486,7 @@ spec:
                       Each entry uses the same RouteMatch format as routes, supporting both
                       PathPrefix (default) and Exact matching via the pathType field.
                       Example: [{pathPrefix: "/api/v1/health", pathType: "Exact"}]
+                      At most 64 entries, Gateway API's limit on matches in one HTTPRoute rule.
                     items:
                       description: RouteMatch defines a path-based routing rule.
                       properties:
@@ -508,9 +509,42 @@ spec:
                           - PathPrefix
                           - Exact
                           type: string
+                        timeouts:
+                          description: |-
+                            Timeouts sets request timeouts for the traffic this route matches, for
+                            example a long download or a streaming response that outlasts the
+                            gateway's default. A route with timeouts gets its own rule in the
+                            generated HTTPRoute, carrying them as Gateway API timeouts
+                            (HTTPRouteRule.timeouts). Routes without timeouts keep the gateway's
+                            default (15s on Envoy Gateway).
+                          minProperties: 1
+                          properties:
+                            backendRequest:
+                              description: |-
+                                BackendRequest is the maximum time for one request from the gateway to
+                                the backend, until the backend's full response is received. It cannot
+                                be longer than Request.
+                              maxLength: 32
+                              pattern: ^([0-9]{1,5}(h|m|s|ms)){1,4}$
+                              type: string
+                            request:
+                              description: |-
+                                Request is the maximum time the gateway takes to respond to a client
+                                request, from receiving it until the response is complete.
+                              maxLength: 32
+                              pattern: ^([0-9]{1,5}(h|m|s|ms)){1,4}$
+                              type: string
+                          type: object
+                          x-kubernetes-validations:
+                          - message: backendRequest timeout cannot be longer than
+                              request timeout
+                            rule: '!(has(self.request) && has(self.backendRequest)
+                              && duration(self.request) != duration(''0s'') && duration(self.backendRequest)
+                              > duration(self.request))'
                       required:
                       - pathPrefix
                       type: object
+                    maxItems: 64
                     type: array
                   routes:
                     description: |-
@@ -518,6 +552,7 @@ spec:
                       If not specified, all traffic to the hostname will be routed to the service.
                       When specified, only traffic matching these path prefixes will be routed.
                       Example: ["/app-1", "/api/v1"]
+                      At most 64 entries, Gateway API's limit on matches in one HTTPRoute rule.
                     items:
                       description: RouteMatch defines a path-based routing rule.
                       properties:
@@ -540,9 +575,42 @@ spec:
                           - PathPrefix
                           - Exact
                           type: string
+                        timeouts:
+                          description: |-
+                            Timeouts sets request timeouts for the traffic this route matches, for
+                            example a long download or a streaming response that outlasts the
+                            gateway's default. A route with timeouts gets its own rule in the
+                            generated HTTPRoute, carrying them as Gateway API timeouts
+                            (HTTPRouteRule.timeouts). Routes without timeouts keep the gateway's
+                            default (15s on Envoy Gateway).
+                          minProperties: 1
+                          properties:
+                            backendRequest:
+                              description: |-
+                                BackendRequest is the maximum time for one request from the gateway to
+                                the backend, until the backend's full response is received. It cannot
+                                be longer than Request.
+                              maxLength: 32
+                              pattern: ^([0-9]{1,5}(h|m|s|ms)){1,4}$
+                              type: string
+                            request:
+                              description: |-
+                                Request is the maximum time the gateway takes to respond to a client
+                                request, from receiving it until the response is complete.
+                              maxLength: 32
+                              pattern: ^([0-9]{1,5}(h|m|s|ms)){1,4}$
+                              type: string
+                          type: object
+                          x-kubernetes-validations:
+                          - message: backendRequest timeout cannot be longer than
+                              request timeout
+                            rule: '!(has(self.request) && has(self.backendRequest)
+                              && duration(self.request) != duration(''0s'') && duration(self.backendRequest)
+                              > duration(self.request))'
                       required:
                       - pathPrefix
                       type: object
+                    maxItems: 64
                     type: array
                   tls:
                     description: |-

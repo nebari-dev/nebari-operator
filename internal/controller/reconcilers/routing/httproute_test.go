@@ -18,6 +18,7 @@ package routing
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -1188,4 +1189,150 @@ func TestBuildBackendRefs(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestBuildRouteRules_Timeouts(t *testing.T) {
+	backendRefs := []gatewayv1.HTTPBackendRef{{BackendRef: gatewayv1.BackendRef{
+		BackendObjectReference: gatewayv1.BackendObjectReference{Name: "svc"},
+	}}}
+	long := &appsv1.RouteTimeouts{Request: "1830s", BackendRequest: "1800s"}
+	stream := &appsv1.RouteTimeouts{Request: "0s"}
+
+	// wantRule is a rule's paths and timeouts; empty strings mean unset.
+	type wantRule struct {
+		paths          []string
+		request        string
+		backendRequest string
+	}
+	tests := []struct {
+		name            string
+		routes          []appsv1.RouteMatch
+		defaultPathType gatewayv1.PathMatchType
+		want            []wantRule
+	}{
+		{
+			name:            "no routes: one rule with no matches",
+			defaultPathType: gatewayv1.PathMatchPathPrefix,
+			want:            []wantRule{{}},
+		},
+		{
+			name:            "no timeouts: one shared rule, as before",
+			routes:          []appsv1.RouteMatch{{PathPrefix: "/a"}, {PathPrefix: "/b"}},
+			defaultPathType: gatewayv1.PathMatchPathPrefix,
+			want:            []wantRule{{paths: []string{"/a", "/b"}}},
+		},
+		{
+			name: "mixed: shared rule first, then one rule per timeouts value",
+			routes: []appsv1.RouteMatch{
+				{PathPrefix: "/v2", Timeouts: long},
+				{PathPrefix: "/v1"},
+				{PathPrefix: "/events", Timeouts: stream},
+				{PathPrefix: "/health"},
+			},
+			defaultPathType: gatewayv1.PathMatchPathPrefix,
+			want: []wantRule{
+				{paths: []string{"/v1", "/health"}},
+				{paths: []string{"/v2"}, request: "1830s", backendRequest: "1800s"},
+				{paths: []string{"/events"}, request: "0s"},
+			},
+		},
+		{
+			name: "equal timeouts share a rule",
+			routes: []appsv1.RouteMatch{
+				{PathPrefix: "/v2", Timeouts: long},
+				{PathPrefix: "/blobs", Timeouts: &appsv1.RouteTimeouts{Request: "1830s", BackendRequest: "1800s"}},
+			},
+			defaultPathType: gatewayv1.PathMatchPathPrefix,
+			want:            []wantRule{{paths: []string{"/v2", "/blobs"}, request: "1830s", backendRequest: "1800s"}},
+		},
+		{
+			// A rule with no matches would match every path, so it must not be written.
+			name:            "every route has timeouts: no shared rule",
+			routes:          []appsv1.RouteMatch{{PathPrefix: "/v2", Timeouts: long}},
+			defaultPathType: gatewayv1.PathMatchExact,
+			want:            []wantRule{{paths: []string{"/v2"}, request: "1830s", backendRequest: "1800s"}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rules := buildRouteRules(tt.routes, tt.defaultPathType, backendRefs)
+			if len(rules) != len(tt.want) {
+				t.Fatalf("got %d rules, want %d: %+v", len(rules), len(tt.want), rules)
+			}
+			for i, rule := range rules {
+				want := tt.want[i]
+				var paths []string
+				for _, m := range rule.Matches {
+					paths = append(paths, *m.Path.Value)
+				}
+				if !reflect.DeepEqual(paths, want.paths) {
+					t.Errorf("rule %d paths = %v, want %v", i, paths, want.paths)
+				}
+				if want.request == "" && want.backendRequest == "" {
+					if rule.Timeouts != nil {
+						t.Errorf("rule %d timeouts = %+v, want none", i, rule.Timeouts)
+					}
+				} else {
+					if rule.Timeouts == nil {
+						t.Fatalf("rule %d has no timeouts, want request=%q backendRequest=%q", i, want.request, want.backendRequest)
+					}
+					if got := durationString(rule.Timeouts.Request); got != want.request {
+						t.Errorf("rule %d request = %q, want %q", i, got, want.request)
+					}
+					if got := durationString(rule.Timeouts.BackendRequest); got != want.backendRequest {
+						t.Errorf("rule %d backendRequest = %q, want %q", i, got, want.backendRequest)
+					}
+				}
+				if len(rule.BackendRefs) != 1 {
+					t.Errorf("rule %d backendRefs = %d, want 1", i, len(rule.BackendRefs))
+				}
+			}
+		})
+	}
+}
+
+// TestBuildPublicHTTPRoute_Timeouts checks that public routes keep their Exact
+// default when one of them sets timeouts.
+func TestBuildPublicHTTPRoute_Timeouts(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = appsv1.AddToScheme(scheme)
+	reconciler := &RoutingReconciler{Scheme: scheme}
+	app := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{Name: "hub", Namespace: "collab"},
+		Spec: appsv1.NebariAppSpec{
+			Hostname: "hub.example.com",
+			Service:  appsv1.ServiceReference{Name: "hub", Port: 8080},
+			Routing: &appsv1.RoutingConfig{PublicRoutes: []appsv1.RouteMatch{
+				{PathPrefix: "/health"},
+				{PathPrefix: "/v2", PathType: "PathPrefix", Timeouts: &appsv1.RouteTimeouts{Request: "1830s"}},
+			}},
+		},
+	}
+	route, err := reconciler.buildPublicHTTPRoute(app, "nebari-gateway", "")
+	if err != nil {
+		t.Fatalf("buildPublicHTTPRoute: %v", err)
+	}
+	rules := route.Spec.Rules
+	if len(rules) != 2 {
+		t.Fatalf("got %d rules, want 2", len(rules))
+	}
+	if got := *rules[0].Matches[0].Path.Type; got != gatewayv1.PathMatchExact {
+		t.Errorf("/health path type = %s, want Exact", got)
+	}
+	if rules[0].Timeouts != nil {
+		t.Errorf("/health rule timeouts = %+v, want none", rules[0].Timeouts)
+	}
+	if got := *rules[1].Matches[0].Path.Type; got != gatewayv1.PathMatchPathPrefix {
+		t.Errorf("/v2 path type = %s, want PathPrefix", got)
+	}
+	if got := durationString(rules[1].Timeouts.Request); got != "1830s" {
+		t.Errorf("/v2 request timeout = %q, want 1830s", got)
+	}
+}
+
+func durationString(d *gatewayv1.Duration) string {
+	if d == nil {
+		return ""
+	}
+	return string(*d)
 }

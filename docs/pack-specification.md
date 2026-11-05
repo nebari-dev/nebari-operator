@@ -59,6 +59,8 @@ Routing is declared, not implemented. A pack MUST NOT create its own `HTTPRoute`
 - A pack MUST declare any route that has to bypass authentication under `spec.routing.publicRoutes`, and MUST keep that set as small as the app genuinely requires. Health and readiness endpoints are the normal case.
 - A pack SHOULD prefer an exact path match over a prefix match for a public route, so that a bypass cannot widen unintentionally.
 
+`spec.routing.routes` and `spec.routing.publicRoutes` each hold at most 64 entries. The schema rejects a longer list, and the gateway never routed one, since Gateway API allows 64 matches in a rule.
+
 ## 3. Authentication
 
 The platform provides identity. A pack MUST NOT implement its own login flow for platform users, and MUST NOT ask users for platform credentials.
