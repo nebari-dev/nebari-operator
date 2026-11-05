@@ -1,0 +1,22 @@
+# Group-gated: the gateway admits only members of one group. Packs list the
+# group by bare name, which the operator treats as the top-level path.
+apiVersion: reconcilers.nebari.dev/v1
+kind: NebariApp
+metadata:
+  name: group-gated
+  namespace: NAMESPACE_PLACEHOLDER
+spec:
+  hostname: group-gated.contract.nebari.local
+  service:
+    name: claims-echo
+    port: 8080
+  routing:
+    routes:
+      - pathPrefix: /
+    publicRoutes:
+      - pathPrefix: /healthz
+  auth:
+    enabled: true
+    provider: keycloak
+    groups:
+      - ct-team-a
