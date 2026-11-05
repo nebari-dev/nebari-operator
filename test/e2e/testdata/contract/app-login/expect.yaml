@@ -1,0 +1,33 @@
+# What each persona gets from app-login, which runs its own login. The gateway
+# enforces nothing here, so every outcome is the app's own. See ../README.md.
+paths:
+  /hub/:
+    anonymous: login
+    no-group: 200
+    team-a: 200
+    team-a-sub: 200
+    team-b: 200
+  /hub/health:
+    anonymous: 200
+    no-group: 200
+    team-a: 200
+    team-a-sub: 200
+    team-b: 200
+
+# Claims of the access token the app receives on this path. null means the
+# claim must be absent.
+claims:
+  path: /hub/
+  personas:
+    no-group:
+      azp: e2e-contract-app-login
+      groups: null
+    team-a:
+      azp: e2e-contract-app-login
+      groups: [/ct-team-a]
+    team-a-sub:
+      azp: e2e-contract-app-login
+      groups: [/ct-team-a/sub]
+    team-b:
+      azp: e2e-contract-app-login
+      groups: [/ct-team-b]
