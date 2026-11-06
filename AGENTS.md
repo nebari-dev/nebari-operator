@@ -287,7 +287,7 @@ When you add a new design doc, ADR, or plan, link it here so it is discoverable 
 
 ## Dependencies
 
-Core libraries (see `go.mod`; module `github.com/nebari-dev/nebari-operator`, Go 1.25):
+Core libraries (see `go.mod`; module `github.com/nebari-dev/nebari-operator`, Go 1.26):
 
 - `sigs.k8s.io/controller-runtime` — operator framework.
 - `k8s.io/api` / `apimachinery` / `client-go` — Kubernetes API machinery.
