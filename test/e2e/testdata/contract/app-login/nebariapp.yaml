@@ -1,6 +1,7 @@
 # App-owned login: the app is its own OIDC client (JupyterHub's shape). The
 # operator provisions the client and its Secret but creates no SecurityPolicy,
 # and the app reads client-id and client-secret from <name>-oidc-client.
+# auth.groups is the app's to enforce here, so the gateway admits everyone.
 # workload.yaml stands in for the app with oauth2-proxy.
 apiVersion: reconcilers.nebari.dev/v1
 kind: NebariApp
@@ -22,6 +23,8 @@ spec:
     enforceAtGateway: false
     forwardAccessToken: false
     redirectURI: /hub/oauth/callback
+    groups:
+      - ct-team-a
     scopes:
       - openid
       - profile
