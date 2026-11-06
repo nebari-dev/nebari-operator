@@ -68,6 +68,7 @@ _Generated from the Makefile; do not edit by hand. Change a target and run `make
 | `make lint` | Run golangci-lint linter |
 | `make lint-fix` | Run golangci-lint linter and perform fixes |
 | `make lint-config` | Verify golangci-lint linter configuration |
+| `make vuln` | Fail on reachable Go vulnerabilities that have a fix (govulncheck). |
 
 ### Documentation
 
