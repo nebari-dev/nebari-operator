@@ -26,8 +26,9 @@ Seeded in the `nebari` realm by the test, with the e2e password:
 | App | Shape |
 | --- | ----- |
 | `gateway-signin` | The gateway runs sign-in and forwards the access token; `/healthz` is public |
-| `group-gated` | The gateway admits members of `ct-team-a` only; `/healthz` is public |
-| `app-login` | The app runs its own sign-in with the operator's client Secret (JupyterHub's shape); no SecurityPolicy |
+| `group-gated` | The gateway admits members of `ct-team-a` only, listed by bare name; `/healthz` is public |
+| `group-paths` | The gateway admits `/ct-team-b` and `/ct-team-a/sub`, listed as paths; `/healthz` is public |
+| `app-login` | The app runs its own sign-in with the operator's client Secret (JupyterHub's shape); `auth.groups` is set but left to the app, so no SecurityPolicy |
 
 Each app has a `nebariapp.yaml`, an `expect.yaml`, and, when it needs more
 than `claims-echo.yaml`, a `workload.yaml`. `claims-echo` answers every request

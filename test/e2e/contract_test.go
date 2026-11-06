@@ -70,6 +70,7 @@ type contractApp struct {
 var contractApps = []contractApp{
 	{name: "gateway-signin"},
 	{name: "group-gated"},
+	{name: "group-paths"},
 	{name: "app-login", workload: true},
 }
 

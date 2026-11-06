@@ -1,5 +1,6 @@
 # What each persona gets from app-login, which runs its own login. The gateway
-# enforces nothing here, so every outcome is the app's own. See ../README.md.
+# enforces nothing here, not even auth.groups, so every outcome is the app's
+# own. See ../README.md.
 paths:
   /hub/:
     anonymous: login
