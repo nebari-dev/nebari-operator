@@ -36,6 +36,11 @@ linters:
           - dupl
           - lll
         path: internal/*
+      # controller-runtime 0.23 deprecates the old events API. Moving every
+      # reconciler to GetEventRecorder is its own change.
+      - linters:
+          - staticcheck
+        text: "SA1019: mgr.GetEventRecorderFor is deprecated"
     paths:
       - third_party$
       - builtin$
