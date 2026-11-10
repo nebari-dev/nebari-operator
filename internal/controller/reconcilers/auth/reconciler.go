@@ -690,7 +690,7 @@ func (r *AuthReconciler) reconcileTokenExchangeToggle(ctx context.Context, nebar
 		nebariApp.Status.TokenExchangeConfigured = true
 		if err := r.reconcileTokenExchange(ctx, nebariApp, provider); err != nil {
 			conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionFalse,
-				"TokenExchangeFailed", fmt.Sprintf("Failed to configure token exchange: %v", err))
+				appsv1.ReasonTokenExchangeFailed, fmt.Sprintf("Failed to configure token exchange: %v", err))
 			return err
 		}
 		logger.Info("Token exchange configured")
@@ -703,6 +703,10 @@ func (r *AuthReconciler) reconcileTokenExchangeToggle(ctx context.Context, nebar
 	if err := provider.CleanupTokenExchange(ctx, nebariApp); err != nil {
 		conditions.SetCondition(nebariApp, appsv1.ConditionTypeAuthReady, metav1.ConditionFalse,
 			appsv1.ReasonTokenExchangeCleanupFailed, fmt.Sprintf("Failed to remove token exchange: %v", err))
+		// Until the removal succeeds, peer clients can still exchange tokens for
+		// this client's audience, so make it visible in the app's events too.
+		r.Recorder.Eventf(nebariApp, corev1.EventTypeWarning, appsv1.ReasonTokenExchangeCleanupFailed,
+			"Token exchange turned off but not removed, other clients can still exchange tokens for this client's audience: %v", err)
 		return err
 	}
 	nebariApp.Status.TokenExchangeConfigured = false

@@ -104,6 +104,9 @@ spec:
                       When enabled, the operator provisions a separate public client configured for device flow.
                       The device flow client ID is written to the OIDC client Secret under key "device-client-id".
                       Turning it off deletes the device flow client from Keycloak.
+                      Its client ID is "<namespace>-<name>-device", which is also the main client ID of an app
+                      named "<name>-device" in the same namespace. A client with that ID that is not a public
+                      device flow client is never changed or deleted; with device flow on, provisioning fails.
                       Only supported for provider="keycloak".
                     properties:
                       enabled:

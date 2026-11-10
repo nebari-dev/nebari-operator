@@ -2240,7 +2240,7 @@ func TestReconcileAuth_Groups(t *testing.T) {
 			listErr:        errors.New("apiserver list failed"),
 			existingPolicy: true,
 			wantErr:        true,
-			wantStatus:     metav1.ConditionFalse, wantReason: "TokenExchangeFailed", wantPolicy: true, wantAllowRule: true,
+			wantStatus:     metav1.ConditionFalse, wantReason: appsv1.ReasonTokenExchangeFailed, wantPolicy: true, wantAllowRule: true,
 		},
 		{
 			// The app is not stored in the fake client, so clearing the annotation fails.
@@ -2563,8 +2563,8 @@ func TestReconcileAuth_TokenExchangeTurnedOff(t *testing.T) {
 		}
 	})
 
-	t.Run("failed removal keeps AuthReady false and retries", func(t *testing.T) {
-		r, provider, _, app := setup(t, &appsv1.TokenExchangeConfig{Enabled: true})
+	t.Run("failed removal keeps AuthReady false, warns and retries", func(t *testing.T) {
+		r, provider, recorder, app := setup(t, &appsv1.TokenExchangeConfig{Enabled: true})
 		reconcile(t, r, app)
 
 		app.Spec.Auth.TokenExchange.Enabled = false
@@ -2578,6 +2578,9 @@ func TestReconcileAuth_TokenExchangeTurnedOff(t *testing.T) {
 		}
 		if !app.Status.TokenExchangeConfigured {
 			t.Fatal("expected status.tokenExchangeConfigured to stay set so the removal is retried")
+		}
+		if want := corev1.EventTypeWarning + " " + appsv1.ReasonTokenExchangeCleanupFailed; !hasEvent(recorder, want) {
+			t.Errorf("expected a %q event", want)
 		}
 
 		provider.cleanupTEError = nil

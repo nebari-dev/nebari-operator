@@ -616,9 +616,30 @@ func (p *KeycloakProvider) DeleteClient(ctx context.Context, nebariApp *appsv1.N
 	return p.deleteDeviceFlowClient(ctx, kcClient, token, nebariApp)
 }
 
-// deleteDeviceFlowClient deletes the app's device flow client if it exists.
-// Its client ID is always derived from the app, so a client with that ID was
-// created by the operator.
+// deviceGrantAttribute is the Keycloak client attribute that turns on the OAuth
+// 2.0 device authorization grant, and deviceGrantEnabled its value when on.
+const (
+	deviceGrantAttribute = "oauth2.device.authorization.grant.enabled"
+	deviceGrantEnabled   = "true"
+)
+
+// isDeviceFlowClient reports whether c has the shape of a device flow client the
+// operator provisions: public, with the device authorization grant on.
+//
+// The ID alone does not prove that: the device client ID of app "x"
+// (<ns>-x-device) is also the main client ID of an app named "x-device" in the
+// same namespace. Anything that deletes or rewrites a client found by the device
+// client ID must check its shape first.
+func isDeviceFlowClient(c *gocloak.Client) bool {
+	if !gocloak.PBool(c.PublicClient) || c.Attributes == nil {
+		return false
+	}
+	return (*c.Attributes)[deviceGrantAttribute] == deviceGrantEnabled
+}
+
+// deleteDeviceFlowClient deletes the app's device flow client if it exists. A
+// client with the derived ID that is not shaped like a device flow client
+// belongs to something else (see isDeviceFlowClient) and is left alone.
 func (p *KeycloakProvider) deleteDeviceFlowClient(ctx context.Context, kcClient *gocloak.GoCloak, token *gocloak.JWT, nebariApp *appsv1.NebariApp) error {
 	deviceFlowClientID := p.GetDeviceFlowClientID(ctx, nebariApp)
 	existing, err := p.findClient(ctx, kcClient, token, deviceFlowClientID)
@@ -626,6 +647,11 @@ func (p *KeycloakProvider) deleteDeviceFlowClient(ctx context.Context, kcClient 
 		return fmt.Errorf("failed to query for device flow client: %w", err)
 	}
 	if existing == nil {
+		return nil
+	}
+	if !isDeviceFlowClient(existing) {
+		log.FromContext(ctx).Info("Not deleting client with the device flow client ID: it is not a device flow client",
+			"clientID", deviceFlowClientID)
 		return nil
 	}
 	if err := kcClient.DeleteClient(ctx, token.AccessToken, p.Config.Realm, gocloak.PString(existing.ID)); err != nil {
@@ -1319,6 +1345,13 @@ func (p *KeycloakProvider) provisionDeviceFlowClient(ctx context.Context, kcClie
 	var internalID string
 
 	if existingClient != nil {
+		// Refuse to turn some other client into a public device client (see
+		// isDeviceFlowClient for how the IDs collide).
+		if !isDeviceFlowClient(existingClient) {
+			return "", fmt.Errorf("client %s already exists and is not a device flow client; "+
+				"it may be the main client of another NebariApp, so it was not changed", deviceClientID)
+		}
+
 		// Update existing device flow client
 		existingClient.PublicClient = gocloak.BoolP(true)
 		existingClient.StandardFlowEnabled = gocloak.BoolP(false)
@@ -1327,7 +1360,7 @@ func (p *KeycloakProvider) provisionDeviceFlowClient(ctx context.Context, kcClie
 		if existingClient.Attributes == nil {
 			existingClient.Attributes = &map[string]string{}
 		}
-		(*existingClient.Attributes)["oauth2.device.authorization.grant.enabled"] = "true"
+		(*existingClient.Attributes)[deviceGrantAttribute] = deviceGrantEnabled
 
 		err = kcClient.UpdateClient(ctx, token.AccessToken, realm, *existingClient)
 		if err != nil {
@@ -1346,7 +1379,7 @@ func (p *KeycloakProvider) provisionDeviceFlowClient(ctx context.Context, kcClie
 			Protocol:                  gocloak.StringP("openid-connect"),
 			Enabled:                   gocloak.BoolP(true),
 			Attributes: &map[string]string{
-				"oauth2.device.authorization.grant.enabled": "true",
+				deviceGrantAttribute: deviceGrantEnabled,
 			},
 		}
 

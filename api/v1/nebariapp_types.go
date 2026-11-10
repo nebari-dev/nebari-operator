@@ -310,6 +310,9 @@ type AuthConfig struct {
 	// When enabled, the operator provisions a separate public client configured for device flow.
 	// The device flow client ID is written to the OIDC client Secret under key "device-client-id".
 	// Turning it off deletes the device flow client from Keycloak.
+	// Its client ID is "<namespace>-<name>-device", which is also the main client ID of an app
+	// named "<name>-device" in the same namespace. A client with that ID that is not a public
+	// device flow client is never changed or deleted; with device flow on, provisioning fails.
 	// Only supported for provider="keycloak".
 	// +optional
 	DeviceFlowClient *DeviceFlowClientConfig `json:"deviceFlowClient,omitempty"`
@@ -768,6 +771,10 @@ const (
 	// normalization (for example "/" or whitespace), so no group is admitted.
 	// Every request is denied.
 	ReasonGroupsEmpty = "GroupsEmpty"
+
+	// ReasonTokenExchangeFailed indicates token exchange permissions could not be
+	// configured on the client while spec.auth.tokenExchange enables it.
+	ReasonTokenExchangeFailed = "TokenExchangeFailed"
 
 	// ReasonTokenExchangeCleanupFailed indicates spec.auth.tokenExchange was
 	// turned off but the token exchange permissions could not be removed from the

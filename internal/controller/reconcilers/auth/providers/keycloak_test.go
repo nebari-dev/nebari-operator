@@ -1643,8 +1643,11 @@ type fakeGroupsKeycloak struct {
 	requests       []string
 	// deviceClient makes the app's device flow client exist; deleting it is
 	// recorded in deletedClients.
-	deviceClient   bool
-	deletedClients []string
+	deviceClient bool
+	// deviceClientConfidential makes the client found by the device flow client
+	// ID a confidential client, as when it is another app's main client.
+	deviceClientConfidential bool
+	deletedClients           []string
 }
 
 func (f *fakeGroupsKeycloak) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -1699,8 +1702,11 @@ func (f *fakeGroupsKeycloak) serveClient(w http.ResponseWriter, r *http.Request)
 		switch {
 		case !strings.HasSuffix(clientID, "-device"):
 			_, _ = w.Write([]byte(`[{"id":"client-uuid","clientId":"` + clientID + `"}]`))
+		case f.deviceClient && f.deviceClientConfidential:
+			_, _ = w.Write([]byte(`[{"id":"device-uuid","clientId":"` + clientID + `","publicClient":false,"standardFlowEnabled":true}]`))
 		case f.deviceClient:
-			_, _ = w.Write([]byte(`[{"id":"device-uuid","clientId":"` + clientID + `"}]`))
+			_, _ = w.Write([]byte(`[{"id":"device-uuid","clientId":"` + clientID + `","publicClient":true,` +
+				`"attributes":{"oauth2.device.authorization.grant.enabled":"true"}}]`))
 		default:
 			_, _ = w.Write([]byte(`[]`))
 		}
@@ -2139,11 +2145,15 @@ func TestProvisionClient_DeviceFlowClientTurnedOff(t *testing.T) {
 		name         string
 		deviceFlow   *appsv1.DeviceFlowClientConfig
 		deviceExists bool
+		confidential bool
 		wantDeleted  []string
 	}{
 		{name: "turned off with the client still in Keycloak", deviceFlow: &appsv1.DeviceFlowClientConfig{Enabled: false}, deviceExists: true, wantDeleted: []string{"device-uuid"}},
 		{name: "block removed with the client still in Keycloak", deviceExists: true, wantDeleted: []string{"device-uuid"}},
 		{name: "never enabled", deviceExists: false},
+		// The device client ID of "test-app" is the main client ID of an app
+		// named "test-app-device" in the same namespace.
+		{name: "device client ID held by another app's confidential client", deviceExists: true, confidential: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -2152,7 +2162,7 @@ func TestProvisionClient_DeviceFlowClientTurnedOff(t *testing.T) {
 			_ = appsv1.AddToScheme(scheme)
 			k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-			kcServer := &fakeGroupsKeycloak{t: t, withClient: true, deviceClient: tt.deviceExists}
+			kcServer := &fakeGroupsKeycloak{t: t, withClient: true, deviceClient: tt.deviceExists, deviceClientConfidential: tt.confidential}
 			server := httptest.NewServer(kcServer)
 			defer server.Close()
 
@@ -2185,5 +2195,42 @@ func TestProvisionClient_DeviceFlowClientTurnedOff(t *testing.T) {
 				t.Errorf("Secret has %s with device flow off", constants.DeviceClientIDKey)
 			}
 		})
+	}
+}
+
+// TestProvisionClient_DeviceFlowClientIDTaken covers device flow turned on when
+// the device flow client ID already names a confidential client, such as the
+// main client of an app called "<name>-device". Provisioning must fail without
+// rewriting that client into a public device client.
+func TestProvisionClient_DeviceFlowClientIDTaken(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = appsv1.AddToScheme(scheme)
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	kcServer := &fakeGroupsKeycloak{t: t, withClient: true, deviceClient: true, deviceClientConfidential: true}
+	server := httptest.NewServer(kcServer)
+	defer server.Close()
+
+	provider := &KeycloakProvider{
+		Client: k8sClient,
+		Config: config.KeycloakConfig{URL: server.URL, Realm: "test", AdminUsername: "admin", AdminPassword: "admin"},
+	}
+	app := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-app", Namespace: "default"},
+		Spec: appsv1.NebariAppSpec{
+			Hostname: "test.example.com",
+			Auth:     &appsv1.AuthConfig{Enabled: true, DeviceFlowClient: &appsv1.DeviceFlowClientConfig{Enabled: true}},
+		},
+	}
+
+	err := provider.ProvisionClient(context.Background(), app)
+	if err == nil || !strings.Contains(err.Error(), "is not a device flow client") {
+		t.Fatalf("ProvisionClient error = %v, want one saying the client is not a device flow client", err)
+	}
+	for _, req := range kcServer.requests {
+		if strings.Contains(req, "/clients/device-uuid") {
+			t.Errorf("request touched the other app's client: %s", req)
+		}
 	}
 }
