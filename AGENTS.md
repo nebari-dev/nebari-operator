@@ -273,7 +273,7 @@ CI (`build-pr.yml`) runs the unit, e2e, and chart suites on every PR. **Never di
 
 - **`docs/decisions/`** — ADR-style records of choices already made, and why. Currently `2026-03-05-webapi-extracted-to-nebari-landing.md` (why the web API moved out to nebari-landing), `2026-08-10-library-helm-chart-added.md`, and `2026-08-14-adopt-effver.md` (the versioning convention). Don't re-litigate a decision recorded here without amending it.
 - **`docs/pack-specification.md`** — the normative contract between the platform and a software pack: registration, routing, auth, TLS, the security baseline, and how the contract is versioned. Read it before changing anything in `api/v1/`, since a field change is a contract change. Requirements in it are governed by the Core team via a platform RFD in [`nebari-dev/governance`](https://github.com/nebari-dev/governance).
-- **`docs/plans/`** — in-flight implementation plans (e.g. `2026-02-20-tls-certificate-management*.md`). Check whether the work is already planned here before starting.
+- **`docs/plans/`** — in-flight implementation plans (e.g. `2026-02-20-tls-certificate-management*.md`). `2026-10-20-pack-contracts-design.md` proposes the `PackContract` CRD for wiring packs to each other. Check whether the work is already planned here before starting.
 - **`docs/reconcilers/`** — per-reconciler architecture with condition/reason/event tables and pipeline diagrams (`README.md`, `routing.md`, `validation.md`, `authentication.md`). The source of truth for reconciler behavior.
 
 **Reference material:**
