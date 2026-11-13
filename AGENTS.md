@@ -37,7 +37,7 @@ When you change the CRD's shape or behavior, these are the downstreams that feel
 
 ## Common Development Commands
 
-Dependencies (kustomize, controller-gen, setup-envtest, golangci-lint, crd-ref-docs) are auto-installed into `bin/` on first use — you do not need to install them globally.
+Dependencies (kustomize, controller-gen, setup-envtest, golangci-lint, govulncheck, crd-ref-docs) are auto-installed into `bin/` on first use — you do not need to install them globally.
 
 The tables below are generated from the Makefile (see [Keeping this file current](#keeping-this-file-current)).
 
