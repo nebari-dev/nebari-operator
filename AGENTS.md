@@ -172,7 +172,7 @@ The operator manages a **single** custom resource:
 
 `NebariAppSpec` top-level fields: `hostname`, `service` (name/port/namespace), `routing` (routes, publicRoutes, TLS, annotations), `auth` (OIDC/Keycloak config), `gateway` (`public`|`internal`), `serviceAccountName`, `landingPage`. Validation is expressed via kubebuilder markers (Required/Enum/Min/Max/Pattern/default) plus a CEL `XValidation` on `AuthConfig`.
 
-`NebariAppStatus`: `conditions[]` (`Ready`, `RoutingReady`, `TLSReady`, `AuthReady`), `observedGeneration`, `hostname`, `gatewayRef`, `clientSecretRef`, `authConfigHash`, `serviceDiscovery`.
+`NebariAppStatus`: `conditions[]` (`Ready`, `RoutingReady`, `TLSReady`, `AuthReady`), `observedGeneration`, `hostname`, `gatewayRef`, `clientSecretRef`, `authConfigHash`, `tokenExchangeConfigured`, `serviceDiscovery`.
 
 ### The Reconciler Pipeline
 

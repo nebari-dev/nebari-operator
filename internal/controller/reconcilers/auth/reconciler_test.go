@@ -83,6 +83,9 @@ type mockProvider struct {
 	provisionCount         int // tracks how many times ProvisionClient was called
 	jwksURL                string
 	jwksError              error
+	configureTECount       int // tracks ConfigureTokenExchange calls
+	cleanupTECount         int // tracks CleanupTokenExchange calls
+	cleanupTEError         error
 }
 
 func (m *mockProvider) GetJWKSURL(_ context.Context, _ *appsv1.NebariApp) (string, error) {
@@ -128,11 +131,13 @@ func (m *mockProvider) SupportsProvisioning() bool {
 }
 
 func (m *mockProvider) ConfigureTokenExchange(ctx context.Context, nebariApp *appsv1.NebariApp, peerClientIDs []string) error {
+	m.configureTECount++
 	return nil
 }
 
 func (m *mockProvider) CleanupTokenExchange(ctx context.Context, nebariApp *appsv1.NebariApp) error {
-	return nil
+	m.cleanupTECount++
+	return m.cleanupTEError
 }
 
 func TestGetProvider(t *testing.T) {
@@ -1521,6 +1526,19 @@ func TestComputeAuthConfigHash(t *testing.T) {
 		}
 	})
 
+	t.Run("enabling deviceFlowClient changes hash", func(t *testing.T) {
+		changed := base.DeepCopy()
+		changed.Spec.Auth.DeviceFlowClient = &appsv1.DeviceFlowClientConfig{Enabled: true}
+		if computeAuthConfigHash(changed) == baseHash {
+			t.Error("expected enabling deviceFlowClient to produce a different hash")
+		}
+		disabled := changed.DeepCopy()
+		disabled.Spec.Auth.DeviceFlowClient.Enabled = false
+		if computeAuthConfigHash(disabled) == computeAuthConfigHash(changed) {
+			t.Error("expected disabling deviceFlowClient to produce a different hash")
+		}
+	})
+
 	t.Run("issuerURL change (generic-oidc) changes hash", func(t *testing.T) {
 		changed := base.DeepCopy()
 		changed.Spec.Auth.IssuerURL = "https://accounts.google.com"
@@ -1609,6 +1627,27 @@ func TestReconcileAuth_SpecChangeCycle(t *testing.T) {
 			mutate: func(a *appsv1.AuthConfig) {
 				a.Scopes = append(a.Scopes, "groups")
 			},
+		},
+		{
+			name: "enabling deviceFlowClient triggers re-provisioning",
+			initial: appsv1.AuthConfig{
+				Enabled:         true,
+				Provider:        constants.ProviderKeycloak,
+				ProvisionClient: ptr.To(true),
+			},
+			mutate: func(a *appsv1.AuthConfig) {
+				a.DeviceFlowClient = &appsv1.DeviceFlowClientConfig{Enabled: true}
+			},
+		},
+		{
+			name: "disabling deviceFlowClient triggers re-provisioning",
+			initial: appsv1.AuthConfig{
+				Enabled:          true,
+				Provider:         constants.ProviderKeycloak,
+				ProvisionClient:  ptr.To(true),
+				DeviceFlowClient: &appsv1.DeviceFlowClientConfig{Enabled: true},
+			},
+			mutate: func(a *appsv1.AuthConfig) { a.DeviceFlowClient.Enabled = false },
 		},
 		{
 			name: "adding a keycloakConfig group member triggers re-provisioning",
@@ -2201,7 +2240,7 @@ func TestReconcileAuth_Groups(t *testing.T) {
 			listErr:        errors.New("apiserver list failed"),
 			existingPolicy: true,
 			wantErr:        true,
-			wantStatus:     metav1.ConditionFalse, wantReason: "TokenExchangeFailed", wantPolicy: true, wantAllowRule: true,
+			wantStatus:     metav1.ConditionFalse, wantReason: appsv1.ReasonTokenExchangeFailed, wantPolicy: true, wantAllowRule: true,
 		},
 		{
 			// The app is not stored in the fake client, so clearing the annotation fails.
@@ -2416,4 +2455,138 @@ func TestReconcileAuth_GroupsRemovedClearsEnforcement(t *testing.T) {
 	if sp.Spec.OIDC == nil || sp.Spec.OIDC.CookieNames != nil {
 		t.Errorf("oidc.cookieNames = %+v, want nil after groups are removed", sp.Spec.OIDC)
 	}
+}
+
+// TestReconcileAuth_TokenExchangeTurnedOff walks token exchange on and off and
+// checks that turning it off removes it from the provider exactly once, and
+// that an app that never enabled it never reaches CleanupTokenExchange.
+func TestReconcileAuth_TokenExchangeTurnedOff(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = appsv1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+	_ = rbacv1.AddToScheme(scheme)
+	_ = egv1alpha1.AddToScheme(scheme)
+
+	setup := func(t *testing.T, tokenExchange *appsv1.TokenExchangeConfig) (*AuthReconciler, *mockProvider, *record.FakeRecorder, *appsv1.NebariApp) {
+		t.Helper()
+		app := &appsv1.NebariApp{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-app", Namespace: "default"},
+			Spec: appsv1.NebariAppSpec{
+				Hostname: "test.example.com",
+				Auth: &appsv1.AuthConfig{
+					Enabled:       true,
+					Provider:      constants.ProviderKeycloak,
+					TokenExchange: tokenExchange,
+				},
+			},
+		}
+		secret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: naming.ClientSecretName(app), Namespace: app.Namespace},
+			Data:       map[string][]byte{constants.ClientSecretKey: []byte("s3cr3t")},
+		}
+		provider := &mockProvider{
+			issuerURL:            "https://keycloak.example.com/realms/test",
+			clientID:             "default-test-app",
+			supportsProvisioning: true,
+		}
+		recorder := record.NewFakeRecorder(32)
+		reconciler := &AuthReconciler{
+			Client:    fake.NewClientBuilder().WithScheme(scheme).WithObjects(app, secret).WithStatusSubresource(app).Build(),
+			Scheme:    scheme,
+			Recorder:  recorder,
+			Providers: map[string]providers.OIDCProvider{constants.ProviderKeycloak: provider},
+		}
+		return reconciler, provider, recorder, app
+	}
+	reconcile := func(t *testing.T, r *AuthReconciler, app *appsv1.NebariApp) {
+		t.Helper()
+		if err := r.ReconcileAuth(context.Background(), app); err != nil {
+			t.Fatalf("ReconcileAuth: %v", err)
+		}
+	}
+	hasEvent := func(recorder *record.FakeRecorder, reason string) bool {
+		found := false
+		for len(recorder.Events) > 0 {
+			if strings.Contains(<-recorder.Events, reason) {
+				found = true
+			}
+		}
+		return found
+	}
+
+	t.Run("turning it off removes it once", func(t *testing.T) {
+		r, provider, recorder, app := setup(t, &appsv1.TokenExchangeConfig{Enabled: true})
+
+		reconcile(t, r, app)
+		if !app.Status.TokenExchangeConfigured {
+			t.Fatal("expected status.tokenExchangeConfigured after enabling token exchange")
+		}
+
+		app.Spec.Auth.TokenExchange.Enabled = false
+		reconcile(t, r, app)
+		if provider.cleanupTECount != 1 {
+			t.Fatalf("CleanupTokenExchange calls = %d, want 1", provider.cleanupTECount)
+		}
+		if app.Status.TokenExchangeConfigured {
+			t.Error("expected status.tokenExchangeConfigured to be cleared after removal")
+		}
+		if !hasEvent(recorder, appsv1.EventReasonTokenExchangeRemoved) {
+			t.Errorf("expected a %s event", appsv1.EventReasonTokenExchangeRemoved)
+		}
+
+		reconcile(t, r, app)
+		if provider.cleanupTECount != 1 {
+			t.Errorf("CleanupTokenExchange calls after a steady reconcile = %d, want 1", provider.cleanupTECount)
+		}
+	})
+
+	t.Run("removing the block removes it", func(t *testing.T) {
+		r, provider, _, app := setup(t, &appsv1.TokenExchangeConfig{Enabled: true})
+		reconcile(t, r, app)
+
+		app.Spec.Auth.TokenExchange = nil
+		reconcile(t, r, app)
+		if provider.cleanupTECount != 1 {
+			t.Errorf("CleanupTokenExchange calls = %d, want 1", provider.cleanupTECount)
+		}
+	})
+
+	t.Run("never enabled never cleans up", func(t *testing.T) {
+		r, provider, _, app := setup(t, nil)
+		reconcile(t, r, app)
+		reconcile(t, r, app)
+		if provider.cleanupTECount != 0 {
+			t.Errorf("CleanupTokenExchange calls = %d, want 0", provider.cleanupTECount)
+		}
+		if app.Status.TokenExchangeConfigured {
+			t.Error("expected status.tokenExchangeConfigured to stay false")
+		}
+	})
+
+	t.Run("failed removal keeps AuthReady false, warns and retries", func(t *testing.T) {
+		r, provider, recorder, app := setup(t, &appsv1.TokenExchangeConfig{Enabled: true})
+		reconcile(t, r, app)
+
+		app.Spec.Auth.TokenExchange.Enabled = false
+		provider.cleanupTEError = errors.New("keycloak unavailable")
+		if err := r.ReconcileAuth(context.Background(), app); err == nil {
+			t.Fatal("expected an error when token exchange cannot be removed")
+		}
+		cond := conditions.GetCondition(app, appsv1.ConditionTypeAuthReady)
+		if cond == nil || cond.Status != metav1.ConditionFalse || cond.Reason != appsv1.ReasonTokenExchangeCleanupFailed {
+			t.Fatalf("AuthReady = %+v, want False/%s", cond, appsv1.ReasonTokenExchangeCleanupFailed)
+		}
+		if !app.Status.TokenExchangeConfigured {
+			t.Fatal("expected status.tokenExchangeConfigured to stay set so the removal is retried")
+		}
+		if want := corev1.EventTypeWarning + " " + appsv1.ReasonTokenExchangeCleanupFailed; !hasEvent(recorder, want) {
+			t.Errorf("expected a %q event", want)
+		}
+
+		provider.cleanupTEError = nil
+		reconcile(t, r, app)
+		if provider.cleanupTECount != 2 || app.Status.TokenExchangeConfigured {
+			t.Errorf("after retry: calls = %d, configured = %v; want 2, false", provider.cleanupTECount, app.Status.TokenExchangeConfigured)
+		}
+	})
 }
