@@ -219,6 +219,8 @@ Reconcilers emit Kubernetes events to provide visibility into operations:
 - `GroupsRequireKeycloak`, `GroupsClaimConflict`, `GroupsEmpty` (Warning) - `auth.groups` cannot be enforced; every request is denied
 - `GroupsNotResolved` (Warning) - A `auth.groups` path does not exist in Keycloak
 - `GroupsMappersRemoved` (Warning) - Groups mappers not declared in the spec were deleted from the client
+- `TokenExchangeRemoved` (Normal) - `auth.tokenExchange` was turned off and its permissions were removed from the client
+- `TokenExchangeCleanupFailed` (Warning) - `auth.tokenExchange` was turned off but its permissions could not be removed; other clients can still exchange tokens for this client's audience
 
 See [authentication.md](authentication.md#events) for messages.
 
