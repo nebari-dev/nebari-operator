@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="470" viewBox="0 0 1080 470" font-family="Geist,-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" role="img" aria-label="Lint and Validate runs first. Unit Tests, E2E Tests and Helm Chart Tests run after it in parallel. Build and Push image runs when all three pass and Go code, go.mod or the Dockerfile changed. vulncheck.yml, test-chart.yml and release.yml run separately.">
+<title>Pull request checks</title>
+<defs>
+    <filter id="sh" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="1.5" stdDeviation="1.7" flood-color="#000000" flood-opacity="0.45"/></filter>
+    <marker id="a" markerWidth="8" markerHeight="8" refX="6" refY="2.5" orient="auto"><path d="M0,0 L0,5 L7,2.5 z" fill="#14A18E"/></marker>
+    <marker id="m" markerWidth="8" markerHeight="8" refX="6" refY="2.5" orient="auto"><path d="M0,0 L0,5 L7,2.5 z" fill="#5f7d76"/></marker>
+  </defs>
+<rect width="1080" height="470" fill="#0c1413" rx="12"/>
+<text x="40" y="36" font-size="10.5" font-weight="700" fill="#5f7d76" text-anchor="start" letter-spacing="1.6">PULL REQUEST CHECKS</text>
+<text x="1040" y="36" font-size="11" font-weight="500" fill="#5f7d76" text-anchor="end" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace">.github/workflows/build-pr.yml</text>
+<rect x="40" y="130" width="240" height="132" rx="10" fill="#122220" stroke="#14A18E" stroke-width="1.5" filter="url(#sh)"/>
+<text x="56" y="156" font-size="14" font-weight="700" fill="#e3efec" text-anchor="start">Lint and Validate</text>
+<text x="56" y="178" font-size="11.5" font-weight="500" fill="#8fa39d" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace">make fmt · make vet · golangci-lint</text>
+<text x="56" y="196" font-size="11.5" font-weight="400" fill="#8fa39d" text-anchor="start">generated files up to date:</text>
+<text x="56" y="214" font-size="11.5" font-weight="400" fill="#8fa39d" text-anchor="start">manifests, deepcopy,</text>
+<text x="56" y="232" font-size="11.5" font-weight="400" fill="#8fa39d" text-anchor="start">API reference, AGENTS.md</text>
+<rect x="360" y="62" width="360" height="92" rx="10" fill="#122220" stroke="#14A18E" stroke-width="1.5" filter="url(#sh)"/>
+<text x="376" y="88" font-size="14" font-weight="700" fill="#e3efec" text-anchor="start">Unit Tests</text>
+<text x="706" y="88" font-size="10.5" font-weight="600" fill="#14A18E" text-anchor="end" letter-spacing="0.4">1-3 min</text>
+<text x="376" y="110" font-size="11.5" font-weight="500" fill="#8fa39d" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace">make test</text>
+<text x="376" y="128" font-size="11.5" font-weight="400" fill="#8fa39d" text-anchor="start">reconcilers against envtest (real API server)</text>
+<rect x="360" y="170" width="360" height="128" rx="10" fill="#122220" stroke="#14A18E" stroke-width="1.5" filter="url(#sh)"/>
+<text x="376" y="196" font-size="14" font-weight="700" fill="#e3efec" text-anchor="start">E2E Tests</text>
+<text x="706" y="196" font-size="10.5" font-weight="600" fill="#14A18E" text-anchor="end" letter-spacing="0.4">15-20 min</text>
+<text x="376" y="218" font-size="11.5" font-weight="500" fill="#8fa39d" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace">make test-e2e</text>
+<text x="376" y="236" font-size="11.5" font-weight="400" fill="#8fa39d" text-anchor="start">kind + Envoy Gateway + cert-manager + Keycloak</text>
+<text x="376" y="254" font-size="11.5" font-weight="400" fill="#8fa39d" text-anchor="start">operator built from this commit</text>
+<text x="376" y="272" font-size="11.5" font-weight="400" fill="#8fa39d" text-anchor="start">includes the pack contract matrix</text>
+<rect x="360" y="314" width="360" height="92" rx="10" fill="#122220" stroke="#14A18E" stroke-width="1.5" filter="url(#sh)"/>
+<text x="376" y="340" font-size="14" font-weight="700" fill="#e3efec" text-anchor="start">Helm Chart Tests</text>
+<text x="706" y="340" font-size="10.5" font-weight="600" fill="#14A18E" text-anchor="end" letter-spacing="0.4">2-5 min</text>
+<text x="376" y="362" font-size="11.5" font-weight="500" fill="#8fa39d" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace">make helm-test</text>
+<text x="376" y="380" font-size="11.5" font-weight="400" fill="#8fa39d" text-anchor="start">library chart goldens · chart lint · install</text>
+<path d="M280,196 C320,196 320,108 354,108" fill="none" stroke="#14A18E" stroke-width="1.6" stroke-linejoin="round" marker-end="url(#a)"/>
+<path d="M280,196 L354,234" fill="none" stroke="#14A18E" stroke-width="1.6" stroke-linejoin="round" marker-end="url(#a)"/>
+<path d="M280,196 C320,196 320,360 354,360" fill="none" stroke="#14A18E" stroke-width="1.6" stroke-linejoin="round" marker-end="url(#a)"/>
+<rect x="800" y="170" width="240" height="128" rx="10" fill="#14A18E" stroke="#14A18E" stroke-width="1.5" filter="url(#sh)"/>
+<text x="816" y="196" font-size="14" font-weight="700" fill="#04140f" text-anchor="start">Build &amp; Push image</text>
+<text x="816" y="218" font-size="11.5" font-weight="400" fill="#04140f" text-anchor="start">quay.io/nebari/nebari-operator</text>
+<text x="816" y="236" font-size="11.5" font-weight="400" fill="#04140f" text-anchor="start">only when Go code, go.mod</text>
+<text x="816" y="254" font-size="11.5" font-weight="400" fill="#04140f" text-anchor="start">or the Dockerfile changed</text>
+<text x="816" y="272" font-size="11.5" font-weight="400" fill="#04140f" text-anchor="start">needs all three test jobs</text>
+<path d="M720,108 C760,108 760,234 794,234" fill="none" stroke="#14A18E" stroke-width="1.6" stroke-linejoin="round" marker-end="url(#a)"/>
+<path d="M720,234 L794,234" fill="none" stroke="#14A18E" stroke-width="1.6" stroke-linejoin="round" marker-end="url(#a)"/>
+<path d="M720,360 C760,360 760,234 794,234" fill="none" stroke="#14A18E" stroke-width="1.6" stroke-linejoin="round" marker-end="url(#a)"/>
+<line x1="40" y1="416" x2="1040" y2="416" stroke="#24413b" stroke-width="1"/>
+<text x="40" y="436" font-size="10.5" font-weight="700" fill="#5f7d76" text-anchor="start" letter-spacing="1.6">ALSO</text>
+<text x="100" y="436" font-size="11.5" font-weight="600" fill="#e3efec" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace">vulncheck.yml</text>
+<text x="100" y="454" font-size="11.5" font-weight="400" fill="#8fa39d" text-anchor="start">make vuln on Go changes, on main, weekly</text>
+<text x="430" y="436" font-size="11.5" font-weight="600" fill="#e3efec" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace">test-chart.yml</text>
+<text x="430" y="454" font-size="11.5" font-weight="400" fill="#8fa39d" text-anchor="start">full chart install on kind</text>
+<text x="760" y="436" font-size="11.5" font-weight="600" fill="#e3efec" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace">release.yml</text>
+<text x="760" y="454" font-size="11.5" font-weight="400" fill="#8fa39d" text-anchor="start">fmt · vet · unit · lint before publishing</text>
+</svg>
