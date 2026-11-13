@@ -10,13 +10,13 @@ End-to-end tests for the Nebari Operator. For how they fit with the other test l
 Setup infrastructure first, then run tests:
 
 ```bash
-# Setup infrastructure
-cd dev
-make setup
+# Setup infrastructure and the Keycloak realm the tests sign in to
+make -C dev setup
+dev/scripts/services/keycloak/setup.sh
 
-# Run tests
-cd ..
-make test-e2e USE_EXISTING_CLUSTER=true
+# Run tests. KIND_CLUSTER names the cluster to load the operator image into;
+# the dev cluster is nebari-operator-dev, not the default "kind".
+KIND_CLUSTER=nebari-operator-dev make test-e2e USE_EXISTING_CLUSTER=true
 ```
 
 ### Option 2: Let Tests Setup Infrastructure
@@ -40,6 +40,8 @@ make test-e2e
 - `USE_EXISTING_CLUSTER=true`: Use existing cluster, don't create/delete Kind cluster
 - `SETUP_INFRASTRUCTURE=true`: Run `dev/scripts/services/install.sh` to setup Envoy Gateway, cert-manager, etc.
 - `SKIP_SETUP=true`: Skip all setup, assume cluster and infrastructure exist
+- `SKIP_DOCKER_BUILD=true`: Skip building and loading the operator image, assume `IMG` is already in the cluster
+- `KIND_CLUSTER`: Kind cluster to load the image into (default `kind`; the dev setup creates `nebari-operator-dev`)
 
 ## Test Structure
 
