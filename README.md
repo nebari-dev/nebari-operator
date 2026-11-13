@@ -292,6 +292,7 @@ See [docs/maintainers/release-checklist.md](docs/maintainers/release-checklist.m
 - **[Release Process](docs/maintainers/release-process.md)** — How releases are created
 - **[Release Checklist](docs/maintainers/release-checklist.md)** — Step-by-step release guide for maintainers
 - **[Release Setup](docs/maintainers/release-setup.md)** — GitHub Actions configuration
+- **[What We Test](docs/maintainers/testing.md)** — Test layers, CI gates, and what each one covers
 
 ## Contributing
 

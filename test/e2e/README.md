@@ -1,6 +1,7 @@
 # E2E Tests
 
-End-to-end tests for the Nebari Operator.
+End-to-end tests for the Nebari Operator. For how they fit with the other test layers and CI, see
+[docs/maintainers/testing.md](../../docs/maintainers/testing.md).
 
 ## Running Tests
 
@@ -60,7 +61,7 @@ Tests that validate the operator's core functionality:
 
 ### Routing Schema Variation Tests
 
-Comprehensive tests covering all routing schema variations (**NEW**):
+Comprehensive tests covering all routing schema variations:
 
 - **TLS Configuration**: HTTP vs HTTPS listeners, default TLS behavior
 - **Path-Based Routing**: PathPrefix and Exact match types, multiple path rules
@@ -68,11 +69,9 @@ Comprehensive tests covering all routing schema variations (**NEW**):
 - **Hostname Variations**: Different hostname formats
 - **Edge Cases**: No routing config, TLS-only, root path, etc.
 
-See [ROUTING_TEST_COVERAGE.md](./ROUTING_TEST_COVERAGE.md) for detailed test coverage matrix.
-
 ### NebariApp Authentication Tests
 
-Comprehensive tests for OIDC authentication integration (**NEW**):
+Comprehensive tests for OIDC authentication integration:
 
 - **Operator Configuration Validation**: Verifies operator has correct Keycloak environment variables and can access
   admin credentials

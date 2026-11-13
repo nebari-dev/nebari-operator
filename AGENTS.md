@@ -280,7 +280,7 @@ CI (`build-pr.yml`) runs the unit, e2e, and chart suites on every PR. **Never di
 **Reference material:**
 
 - **`docs/api-reference.md`** — generated CRD reference (`make docs`).
-- **`docs/maintainers/`** — release checklist / process / setup.
+- **`docs/maintainers/`** — release checklist / process / setup, and `testing.md`: what each test layer and CI gate covers.
 - **`docs/quickstart.md`, `docs/configuration-reference.md`, `docs/troubleshooting.md`, `docs/makefile-reference.md`** — user-facing guides.
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** — the human-facing contribution process.
 
