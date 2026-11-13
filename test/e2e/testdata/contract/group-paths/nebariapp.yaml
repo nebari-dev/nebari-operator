@@ -1,0 +1,24 @@
+# Group-gated by path: the other ways packs write auth.groups. A leading slash
+# and a nested path both name a full group path, and a subgroup entry admits
+# only that subgroup's members, not the parent's.
+apiVersion: reconcilers.nebari.dev/v1
+kind: NebariApp
+metadata:
+  name: group-paths
+  namespace: NAMESPACE_PLACEHOLDER
+spec:
+  hostname: group-paths.contract.nebari.local
+  service:
+    name: claims-echo
+    port: 8080
+  routing:
+    routes:
+      - pathPrefix: /
+    publicRoutes:
+      - pathPrefix: /healthz
+  auth:
+    enabled: true
+    provider: keycloak
+    groups:
+      - /ct-team-b
+      - ct-team-a/sub
