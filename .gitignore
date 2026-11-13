@@ -33,6 +33,8 @@ go.work.sum
 
 # Go build files
 bin
+# what `go build ./cmd/operator` writes when run from the repo root
+/operator
 
 # Release artifacts
 dist/
