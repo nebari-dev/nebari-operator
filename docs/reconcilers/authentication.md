@@ -401,14 +401,15 @@ conditions:
 conditions:
   - type: AuthReady
     status: "False"
-    reason: ProvisioningFailed | ValidationFailed | SecurityPolicyFailed | GroupsNotResolved | GroupsRequireKeycloak | GroupsClaimConflict | GroupsEmpty
+    reason: ProvisioningFailed | ValidationFailed | SecurityPolicyFailed | TokenExchangeFailed | TokenExchangeCleanupFailed | GroupsNotResolved | GroupsRequireKeycloak | GroupsClaimConflict | GroupsEmpty
     message: "<detailed error message>"
 ```
 
 ### Events
 
 Provisioning, validation and SecurityPolicy failures are reported through the `AuthReady` condition only; they emit no
-event.
+event. The exception is a failed token exchange removal (`Warning/TokenExchangeCleanupFailed` below), because peer
+clients keep their access until it succeeds.
 
 **Success Events:**
 - `Normal/Provisioned`: "OIDC client provisioned successfully"
@@ -416,6 +417,9 @@ event.
   a message saying the application must check the groups claim
 - `Normal/Deleted`: "OIDC client deleted" (cleanup)
 - `Normal/SecurityPolicyDeleted`: "SecurityPolicy deleted (enforceAtGateway disabled)"
+- `Normal/TokenExchangeRemoved`: `spec.auth.tokenExchange` was turned off and its permissions were removed from the client.
+  `status.tokenExchangeConfigured` records that the operator configured token exchange, so this only runs for apps that
+  had it on.
 
 **Warning Events:**
 - `Warning/GroupsRequireKeycloak`: "spec.auth.groups requires provider \"keycloak\" for gateway enforcement; all requests are denied"
@@ -425,6 +429,9 @@ event.
   — partial-success condition; the SecurityPolicy is still created and the reconciler
   retries on the next requeue (see [Client Provisioning](#2-client-provisioning)).
 - `Warning/GroupsMappersRemoved`: groups mappers on the client that are not in `keycloakConfig.protocolMappers` were deleted: {mappers}
+- `Warning/TokenExchangeCleanupFailed`: `spec.auth.tokenExchange` was turned off but its permissions could not be removed
+  from the client, so other clients can still exchange tokens for its audience. `AuthReady` is `False` with the same
+  reason, and the removal is retried on every reconcile.
 
 ## Cleanup Process
 
