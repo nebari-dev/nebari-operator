@@ -37,7 +37,7 @@ When you change the CRD's shape or behavior, these are the downstreams that feel
 
 ## Common Development Commands
 
-Dependencies (kustomize, controller-gen, setup-envtest, golangci-lint, crd-ref-docs) are auto-installed into `bin/` on first use — you do not need to install them globally.
+Dependencies (kustomize, controller-gen, setup-envtest, golangci-lint, govulncheck, crd-ref-docs) are auto-installed into `bin/` on first use — you do not need to install them globally.
 
 The tables below are generated from the Makefile (see [Keeping this file current](#keeping-this-file-current)).
 
@@ -68,6 +68,7 @@ _Generated from the Makefile; do not edit by hand. Change a target and run `make
 | `make lint` | Run golangci-lint linter |
 | `make lint-fix` | Run golangci-lint linter and perform fixes |
 | `make lint-config` | Verify golangci-lint linter configuration |
+| `make vuln` | Fail on reachable Go vulnerabilities that have a fix (govulncheck). |
 
 ### Documentation
 
@@ -287,7 +288,7 @@ When you add a new design doc, ADR, or plan, link it here so it is discoverable 
 
 ## Dependencies
 
-Core libraries (see `go.mod`; module `github.com/nebari-dev/nebari-operator`, Go 1.25):
+Core libraries (see `go.mod`; module `github.com/nebari-dev/nebari-operator`, Go 1.26):
 
 - `sigs.k8s.io/controller-runtime` — operator framework.
 - `k8s.io/api` / `apimachinery` / `client-go` — Kubernetes API machinery.

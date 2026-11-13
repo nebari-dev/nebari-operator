@@ -89,6 +89,23 @@ make lint
 - `make lint-fix` - Runs linter with auto-fix
 - `make lint-config` - Verifies linter configuration
 
+#### `make vuln`
+Runs [govulncheck](https://go.dev/doc/security/vuln/) and fails when a
+vulnerability is reachable from the operator's code and a fixed version exists.
+Advisories that are not reachable, or have no fix yet, are listed but do not
+fail.
+
+```bash
+make vuln
+```
+
+**Used in CI**:
+- ✅ PR builds that touch Go code or dependencies
+- ✅ Every push to `main`, and weekly on `main` for newly published advisories
+
+**When it fails**: bump the module (or the Go version in `go.mod`) to the
+version it names.
+
 
 
 ### Testing
