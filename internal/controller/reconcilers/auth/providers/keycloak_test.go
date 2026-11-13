@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -1648,6 +1649,8 @@ type fakeGroupsKeycloak struct {
 	// ID a confidential client, as when it is another app's main client.
 	deviceClientConfidential bool
 	deletedClients           []string
+	// updatedClients records the internal ID of every client updated with PUT.
+	updatedClients []string
 }
 
 func (f *fakeGroupsKeycloak) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -1692,6 +1695,7 @@ func (f *fakeGroupsKeycloak) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // serveClient handles the client endpoints used by ProvisionClient and
 // reports whether it handled the request.
 func (f *fakeGroupsKeycloak) serveClient(w http.ResponseWriter, r *http.Request) bool {
+	const deviceClientPath = "/admin/realms/test/clients/device-uuid"
 	switch {
 	case r.Method == http.MethodPost && r.URL.Path == "/realms/master/protocol/openid-connect/token":
 		w.Header().Set("Content-Type", "application/json")
@@ -1710,14 +1714,23 @@ func (f *fakeGroupsKeycloak) serveClient(w http.ResponseWriter, r *http.Request)
 		default:
 			_, _ = w.Write([]byte(`[]`))
 		}
-	case r.Method == http.MethodDelete && r.URL.Path == "/admin/realms/test/clients/device-uuid":
+	case r.Method == http.MethodDelete && r.URL.Path == deviceClientPath:
 		f.deletedClients = append(f.deletedClients, "device-uuid")
 		w.WriteHeader(http.StatusNoContent)
 	case r.Method == http.MethodGet && r.URL.Path == "/admin/realms/test/clients/client-uuid/client-secret":
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"type":"secret","value":"client-secret-value"}`))
-	case r.Method == http.MethodPut && r.URL.Path == "/admin/realms/test/clients/client-uuid":
+	case r.Method == http.MethodPut && (r.URL.Path == "/admin/realms/test/clients/client-uuid" ||
+		r.URL.Path == deviceClientPath):
+		f.updatedClients = append(f.updatedClients, r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:])
 		w.WriteHeader(http.StatusNoContent)
+	case r.Method == http.MethodGet && r.URL.Path == deviceClientPath:
+		// Read by the device flow client's audience mapper sync.
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"device-uuid","protocolMappers":[]}`))
+	case r.Method == http.MethodPost && r.URL.Path == deviceClientPath+"/protocol-mappers/models":
+		w.Header().Set("Location", "/admin/realms/test/clients/device-uuid/protocol-mappers/models/mapper-uuid")
+		w.WriteHeader(http.StatusCreated)
 	case r.Method == http.MethodGet && r.URL.Path == "/admin/realms/test/clients/client-uuid":
 		// Read by protocol mapper sync, which runs whenever auth.groups is set.
 		mappers := f.clientMappers
@@ -2198,39 +2211,63 @@ func TestProvisionClient_DeviceFlowClientTurnedOff(t *testing.T) {
 	}
 }
 
-// TestProvisionClient_DeviceFlowClientIDTaken covers device flow turned on when
-// the device flow client ID already names a confidential client, such as the
-// main client of an app called "<name>-device". Provisioning must fail without
-// rewriting that client into a public device client.
-func TestProvisionClient_DeviceFlowClientIDTaken(t *testing.T) {
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = appsv1.AddToScheme(scheme)
-	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-
-	kcServer := &fakeGroupsKeycloak{t: t, withClient: true, deviceClient: true, deviceClientConfidential: true}
-	server := httptest.NewServer(kcServer)
-	defer server.Close()
-
-	provider := &KeycloakProvider{
-		Client: k8sClient,
-		Config: config.KeycloakConfig{URL: server.URL, Realm: "test", AdminUsername: "admin", AdminPassword: "admin"},
+// TestProvisionClient_DeviceFlowClientUpdate covers device flow turned on when a
+// client with the device flow client ID already exists. The operator's own
+// device client is updated in place. A confidential client at that ID, such as
+// the main client of an app called "<name>-device", fails provisioning without
+// being rewritten into a public device client.
+func TestProvisionClient_DeviceFlowClientUpdate(t *testing.T) {
+	tests := []struct {
+		name         string
+		confidential bool
+		wantErr      string
+		wantUpdated  bool
+	}{
+		{name: "existing device flow client is updated", wantUpdated: true},
+		{name: "ID held by another app's confidential client", confidential: true, wantErr: "is not a device flow client"},
 	}
-	app := &appsv1.NebariApp{
-		ObjectMeta: metav1.ObjectMeta{Name: "test-app", Namespace: "default"},
-		Spec: appsv1.NebariAppSpec{
-			Hostname: "test.example.com",
-			Auth:     &appsv1.AuthConfig{Enabled: true, DeviceFlowClient: &appsv1.DeviceFlowClientConfig{Enabled: true}},
-		},
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scheme := runtime.NewScheme()
+			_ = corev1.AddToScheme(scheme)
+			_ = appsv1.AddToScheme(scheme)
+			k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-	err := provider.ProvisionClient(context.Background(), app)
-	if err == nil || !strings.Contains(err.Error(), "is not a device flow client") {
-		t.Fatalf("ProvisionClient error = %v, want one saying the client is not a device flow client", err)
-	}
-	for _, req := range kcServer.requests {
-		if strings.Contains(req, "/clients/device-uuid") {
-			t.Errorf("request touched the other app's client: %s", req)
-		}
+			kcServer := &fakeGroupsKeycloak{t: t, withClient: true, deviceClient: true, deviceClientConfidential: tt.confidential}
+			server := httptest.NewServer(kcServer)
+			defer server.Close()
+
+			provider := &KeycloakProvider{
+				Client: k8sClient,
+				Config: config.KeycloakConfig{URL: server.URL, Realm: "test", AdminUsername: "admin", AdminPassword: "admin"},
+			}
+			app := &appsv1.NebariApp{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-app", Namespace: "default"},
+				Spec: appsv1.NebariAppSpec{
+					Hostname: "test.example.com",
+					Auth:     &appsv1.AuthConfig{Enabled: true, DeviceFlowClient: &appsv1.DeviceFlowClientConfig{Enabled: true}},
+				},
+			}
+
+			err := provider.ProvisionClient(context.Background(), app)
+			switch {
+			case tt.wantErr == "" && err != nil:
+				t.Fatalf("ProvisionClient: %v", err)
+			case tt.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tt.wantErr)):
+				t.Fatalf("ProvisionClient error = %v, want one containing %q", err, tt.wantErr)
+			}
+
+			updated := slices.Contains(kcServer.updatedClients, "device-uuid")
+			if updated != tt.wantUpdated {
+				t.Errorf("device-uuid updated = %v, want %v (requests: %q)", updated, tt.wantUpdated, kcServer.requests)
+			}
+			if tt.confidential {
+				for _, req := range kcServer.requests {
+					if strings.Contains(req, "/clients/device-uuid") {
+						t.Errorf("request touched the other app's client: %s", req)
+					}
+				}
+			}
+		})
 	}
 }
