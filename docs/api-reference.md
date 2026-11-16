@@ -55,18 +55,33 @@ _Appears in:_
 
 #### DatabaseConfig
 
-DatabaseConfig specifies a managed database request backed by a database
-operator (CloudNativePG).
+DatabaseConfig requests one managed PostgreSQL database, backed by its own
+CloudNativePG Cluster.
 
 _Appears in:_
 - [NebariAppSpec](#nebariappspec)
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `enabled` _boolean_ | Enabled determines whether a managed database is provisioned. | false | Optional: \{\} <br /> |
-| `provider` _string_ | Provider selects the database operator backing this request. | cloudnativepg | Enum: [cloudnativepg] <br />Optional: \{\} <br /> |
+| `name` _string_ | Name identifies this database within the NebariApp and is part of the<br />names of the resources created for it ("<app>-<name>-db" and<br />"<app>-<name>-db-credentials"). It does not name anything inside<br />PostgreSQL: the database and its owner keep CloudNativePG's defaults,<br />and packs read the real values from the credentials Secret.<br />CloudNativePG caps Cluster names at 50 characters, so "<app>-<name>-db"<br />must fit within that. |  | MaxLength: 20 <br />MinLength: 1 <br />Pattern: `^[a-z]([-a-z0-9]*[a-z0-9])?$` <br />Required: \{\} <br /> |
 | `instances` _integer_ | Instances is the number of PostgreSQL instances (1 primary plus N-1 replicas, maximum 9).<br />The cap is a platform guardrail, not a CloudNativePG limit. | 1 | Maximum: 9 <br />Minimum: 1 <br />Optional: \{\} <br /> |
-| `size` _string_ | Size is the storage request for each instance, as a Kubernetes quantity.<br />Size cannot be decreased once set (CloudNativePG restriction). | 1Gi | Pattern: `^[0-9]+(\.[0-9]+)?(Ki\|Mi\|Gi\|Ti\|Pi\|Ei\|k\|M\|G\|T\|P\|E)?$` <br />Optional: \{\} <br /> |
+| `size` _string_ | Size is the storage request for each instance, as a Kubernetes quantity.<br />Size cannot be decreased once set (CloudNativePG restriction). | 1Gi | MaxLength: 32 <br />Pattern: `^[0-9]+(\.[0-9]+)?(Ki\|Mi\|Gi\|Ti\|Pi\|Ei\|k\|M\|G\|T\|P\|E)?$` <br />Optional: \{\} <br /> |
+
+
+---
+
+#### DatabaseStatus
+
+DatabaseStatus reports the state of one managed database.
+
+_Appears in:_
+- [NebariAppStatus](#nebariappstatus)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `name` _string_ | Name is the database's name, as given in spec.databases. |  |  |
+| `secretRef` _[ResourceReference](#resourcereference)_ | SecretRef identifies the Secret containing this database's connection<br />credentials (keys: host, port, username, password, database, uri). It<br />is set once the credentials have been published. |  | Optional: \{\} <br /> |
+| `retained` _boolean_ | Retained is true when this database's entry was removed from<br />spec.databases. The CloudNativePG Cluster and its data still exist, but<br />the operator no longer manages them or refreshes the credentials<br />Secret. Add the entry back to resume management, or delete the Cluster<br />to remove the database and its data. |  | Optional: \{\} <br /> |
 
 
 ---
@@ -259,7 +274,7 @@ _Appears in:_
 | `gateway` _string_ | Gateway specifies which shared Gateway to use for routing.<br />Valid values are "public" (default) or "internal". | public | Enum: [public internal] <br />Optional: \{\} <br /> |
 | `serviceAccountName` _string_ | ServiceAccountName is the name of the Kubernetes ServiceAccount used by the<br />app's pods. Used for RBAC scoping of OIDC and database credentials secrets<br />so only the app's pods can read them. Defaults to the NebariApp's name if omitted. |  | MinLength: 1 <br />Optional: \{\} <br /> |
 | `landingPage` _[LandingPageConfig](#landingpageconfig)_ | LandingPage configures how this service appears on the Nebari landing page.<br />When enabled, the service will be discoverable through the landing page portal. |  | Optional: \{\} <br /> |
-| `database` _[DatabaseConfig](#databaseconfig)_ | Database requests a managed PostgreSQL database for this application.<br />When enabled, the operator provisions a CloudNativePG Cluster named<br />"<name>-db" and writes connection credentials to the Secret<br />"<name>-db-credentials" with keys: host, port, username, password,<br />database, uri. Read access is scoped to the app's ServiceAccount.<br />Requires the CloudNativePG operator on the cluster (in Nebari, NIC<br />installs it on every GitOps bootstrap as foundational infrastructure).<br />Disabling later stops management but never deletes the database.<br />Deleting the NebariApp deletes the database and its data via owner<br />references. |  | Optional: \{\} <br /> |
+| `databases` _[DatabaseConfig](#databaseconfig) array_ | Databases requests managed PostgreSQL databases for this application.<br />Each entry provisions its own CloudNativePG Cluster named<br />"<app>-<name>-db" and a credentials Secret named<br />"<app>-<name>-db-credentials" with keys: host, port, username, password,<br />database, uri. Read access to those Secrets is scoped to the app's<br />ServiceAccount.<br />Requires the CloudNativePG operator on the cluster (in Nebari, NIC<br />installs it on every GitOps bootstrap as foundational infrastructure).<br />Removing an entry never deletes its database: the operator stops<br />managing the Cluster and reports it as retained. Renaming an entry is a<br />removal plus an addition, so it yields a new, empty database. Deleting<br />the NebariApp deletes every database it owns, and their data, via owner<br />references. |  | MaxItems: 10 <br />Optional: \{\} <br /> |
 
 
 ---
@@ -273,12 +288,12 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#condition-v1-meta) array_ | Conditions represent the current state of the NebariApp resource.<br />Standard condition types:<br />  - "RoutingReady": HTTPRoute has been created and is functioning<br />  - "TLSReady": TLS certificate is available and configured<br />  - "AuthReady": Authentication policy is configured (if auth is enabled)<br />  - "DatabaseReady": Managed database is provisioned and credentials are available (if database is enabled)<br />  - "Ready": All components are ready (aggregate condition) |  | Optional: \{\} <br /> |
+| `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#condition-v1-meta) array_ | Conditions represent the current state of the NebariApp resource.<br />Standard condition types:<br />  - "RoutingReady": HTTPRoute has been created and is functioning<br />  - "TLSReady": TLS certificate is available and configured<br />  - "AuthReady": Authentication policy is configured (if auth is enabled)<br />  - "DatabaseReady": Every requested database is provisioned and its credentials are available (if databases are requested)<br />  - "Ready": All components are ready (aggregate condition) |  | Optional: \{\} <br /> |
 | `observedGeneration` _integer_ | ObservedGeneration is the most recent generation observed for this NebariApp.<br />It corresponds to the NebariApp's generation, which is updated on mutation by the API Server. |  | Optional: \{\} <br /> |
 | `hostname` _string_ | Hostname is the actual hostname where the application is accessible.<br />This mirrors the spec.hostname for easy reference. |  | Optional: \{\} <br /> |
 | `gatewayRef` _[GatewayReference](#gatewayreference)_ | GatewayRef identifies the Gateway resource that routes traffic to this application. |  | Optional: \{\} <br /> |
 | `clientSecretRef` _[ResourceReference](#resourcereference)_ | ClientSecretRef identifies the Secret containing OIDC client credentials. |  | Optional: \{\} <br /> |
-| `databaseSecretRef` _[ResourceReference](#resourcereference)_ | DatabaseSecretRef identifies the Secret containing database connection<br />credentials (keys: host, port, username, password, database, uri). |  | Optional: \{\} <br /> |
+| `databases` _[DatabaseStatus](#databasestatus) array_ | Databases reports the state of each managed database: one entry per<br />entry in spec.databases, plus one for every retained database (a<br />database whose entry was removed from the spec). |  | Optional: \{\} <br /> |
 | `authConfigHash` _string_ | AuthConfigHash stores a SHA-256 hash of the last successfully provisioned OIDC<br />client configuration. When this matches the hash of the current spec, and the<br />AuthReady condition is True, ProvisionClient is skipped to avoid unnecessary<br />external API calls on every reconcile cycle.<br />To force re-provisioning, set the nebari.dev/force-reprovision annotation on<br />the NebariApp. The annotation is automatically removed after the forced<br />re-provisioning completes. |  | Optional: \{\} <br /> |
 | `tokenExchangeConfigured` _boolean_ | TokenExchangeConfigured is true once the operator has configured token<br />exchange on this app's OIDC client. When spec.auth.tokenExchange is turned<br />off while this is true, the operator removes the token exchange permissions<br />from the client and clears it. |  | Optional: \{\} <br /> |
 | `serviceDiscovery` _[ServiceDiscoveryStatus](#servicediscoverystatus)_ | ServiceDiscovery is the computed service discovery descriptor.<br />The controller populates this after reconciling spec.landingPage so the<br />webapi watcher can consume a pre-validated, URL-resolved view via<br />status.serviceDiscovery.* without re-deriving it from spec. |  | Optional: \{\} <br /> |
@@ -291,6 +306,7 @@ _Appears in:_
 ResourceReference identifies a Kubernetes resource.
 
 _Appears in:_
+- [DatabaseStatus](#databasestatus)
 - [NebariAppStatus](#nebariappstatus)
 
 | Field | Description | Default | Validation |

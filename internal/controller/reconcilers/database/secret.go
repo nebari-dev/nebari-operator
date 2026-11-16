@@ -43,13 +43,13 @@ var credentialKeys = map[string]string{
 }
 
 // reconcileCredentialsSecret copies CNPG's generated app-user Secret into the
-// documented "<name>-db-credentials" contract. Returns requeue=true when the
+// documented "<app>-<name>-db-credentials" contract. Returns requeue=true when the
 // source Secret does not exist yet (CNPG creates it shortly after the
 // Cluster), which is a provisioning state rather than an error.
-func (r *DatabaseReconciler) reconcileCredentialsSecret(ctx context.Context, nebariApp *appsv1.NebariApp, cluster *cnpgv1.Cluster) (requeue bool, err error) {
+func (r *DatabaseReconciler) reconcileCredentialsSecret(ctx context.Context, nebariApp *appsv1.NebariApp, dbName string, cluster *cnpgv1.Cluster) (requeue bool, err error) {
 	source := &corev1.Secret{}
 	if err := r.Client.Get(ctx, types.NamespacedName{
-		Name:      naming.DatabaseAppSecretName(nebariApp),
+		Name:      naming.DatabaseAppSecretName(nebariApp, dbName),
 		Namespace: nebariApp.Namespace,
 	}, source); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -72,11 +72,15 @@ func (r *DatabaseReconciler) reconcileCredentialsSecret(ctx context.Context, neb
 
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      naming.DatabaseSecretName(nebariApp),
+			Name:      naming.DatabaseSecretName(nebariApp, dbName),
 			Namespace: nebariApp.Namespace,
 		},
 	}
 	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
+		// Never overwrite a same-named Secret that someone else created.
+		if secret.ResourceVersion != "" && !metav1.IsControlledBy(secret, nebariApp) {
+			return fmt.Errorf("secret %s already exists and is not managed by this NebariApp", secret.Name)
+		}
 		secret.Type = corev1.SecretTypeOpaque
 		secret.Data = data
 		return controllerReference(nebariApp, secret, r.Scheme)

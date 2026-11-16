@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	certmanagerv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
@@ -227,7 +228,7 @@ func (r *NebariAppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 	logger.Info("Auth reconciled successfully", "nebariapp", nebariApp.Name)
 
-	// Reconcile the managed database if configured. Extracted into its own
+	// Reconcile managed databases if any are requested. Extracted into its own
 	// method (like reconcilePublicRoutes) to keep Reconcile's cyclomatic
 	// complexity manageable. A non-nil result or error means the caller
 	// should return early.
@@ -370,9 +371,9 @@ func (r *NebariAppReconciler) reconcilePublicRoutes(ctx context.Context, nebariA
 	return nil, nil
 }
 
-// reconcileDatabase reconciles the managed database if configured. Nil guard
-// mirrors TLSReconciler so tests can opt out. A non-nil result means the
-// database is still provisioning (or CNPG is missing / the name is invalid):
+// reconcileDatabase reconciles the managed databases in spec.databases. Nil
+// guard mirrors TLSReconciler so tests can opt out. A non-nil result means a
+// database is still provisioning (or CNPG is missing / an entry is blocked):
 // the caller should persist status and return it (polling or backoff).
 func (r *NebariAppReconciler) reconcileDatabase(ctx context.Context, nebariApp *appsv1.NebariApp) (*ctrl.Result, error) {
 	logger := logf.FromContext(ctx)
@@ -392,6 +393,13 @@ func (r *NebariAppReconciler) reconcileDatabase(ctx context.Context, nebariApp *
 		return &ctrl.Result{RequeueAfter: time.Minute}, nil
 	}
 	if dbResult != nil {
+		// Routing and auth are already in place, but the app is not Ready
+		// until every database it asked for is. Mirror the DatabaseReady
+		// condition so a previously Ready app does not keep a stale True.
+		if cond := conditions.GetCondition(nebariApp, appsv1.ConditionTypeDatabaseReady); cond != nil {
+			conditions.SetCondition(nebariApp, appsv1.ConditionTypeReady, metav1.ConditionFalse,
+				cond.Reason, cond.Message)
+		}
 		nebariApp.Status.ObservedGeneration = nebariApp.Generation
 		if err := r.Status().Update(ctx, nebariApp); err != nil {
 			return &ctrl.Result{}, err
@@ -466,8 +474,8 @@ func (r *NebariAppReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 
 	// Watch Secrets so CNPG password rotations propagate into the normalized
-	// credentials copy without waiting for the periodic requeue. Only
-	// CNPG-generated app secrets ("<app>-db-app") map back to a NebariApp.
+	// credentials copies without waiting for the periodic requeue. Only
+	// CNPG-generated app secrets ("<app>-<db>-db-app") map back to a NebariApp.
 	if r.DatabaseReconciler != nil {
 		builder = builder.Watches(
 			&corev1.Secret{},
@@ -492,15 +500,28 @@ func (r *NebariAppReconciler) certificateToNebariApp(_ context.Context, obj clie
 }
 
 // databaseSecretToNebariApp maps a CNPG-generated app-user Secret
-// ("<app>-db-app") to the NebariApp whose database it belongs to. A false
-// positive (an unrelated secret matching the suffix) only triggers a
-// reconcile of a NebariApp that may not exist, which Reconcile ignores.
-func (r *NebariAppReconciler) databaseSecretToNebariApp(_ context.Context, obj client.Object) []reconcile.Request {
-	appName, ok := naming.NebariAppNameForDatabaseSecret(obj.GetName())
-	if !ok {
+// ("<app>-<db>-db-app") to the NebariApp whose database it belongs to. The
+// name cannot be split back into app and database (both may contain hyphens),
+// so the NebariApps in the Secret's namespace are matched forwards instead.
+func (r *NebariAppReconciler) databaseSecretToNebariApp(ctx context.Context, obj client.Object) []reconcile.Request {
+	// Cheap filter first: this runs for every Secret event in the cluster.
+	if !strings.HasSuffix(obj.GetName(), "-"+constants.DatabaseSuffix+naming.DatabaseAppSecretSuffix) {
 		return nil
 	}
-	return []reconcile.Request{
-		{NamespacedName: types.NamespacedName{Name: appName, Namespace: obj.GetNamespace()}},
+
+	apps := &appsv1.NebariAppList{}
+	if err := r.List(ctx, apps, client.InNamespace(obj.GetNamespace())); err != nil {
+		logf.FromContext(ctx).Error(err, "Failed to list NebariApps for database Secret", "secret", obj.GetName())
+		return nil
 	}
+
+	var requests []reconcile.Request
+	for i := range apps.Items {
+		if _, ok := naming.DatabaseForAppSecret(&apps.Items[i], obj.GetName()); ok {
+			requests = append(requests, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: apps.Items[i].Name, Namespace: apps.Items[i].Namespace},
+			})
+		}
+	}
+	return requests
 }

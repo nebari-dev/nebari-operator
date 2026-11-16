@@ -29,13 +29,18 @@ import (
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/naming"
 )
 
-// reconcileSecretRBAC creates or updates a Role and RoleBinding that scopes
-// read access to the database credentials Secret to the app's ServiceAccount.
-func (r *DatabaseReconciler) reconcileSecretRBAC(ctx context.Context, nebariApp *appsv1.NebariApp) error {
-	logger := log.FromContext(ctx)
+// reconcileSecretRBAC creates or updates a Role and RoleBinding that scope
+// read access to the given database credentials Secrets to the app's
+// ServiceAccount. One Role covers every database of the app.
+func (r *DatabaseReconciler) reconcileSecretRBAC(ctx context.Context, nebariApp *appsv1.NebariApp, secretNames []string) error {
+	// A rule with no resourceNames would grant read on every Secret in the
+	// namespace, so with nothing published there must be no rule at all.
+	if len(secretNames) == 0 {
+		return nil
+	}
 
-	secretName := naming.DatabaseSecretName(nebariApp)
-	rbacName := fmt.Sprintf("%s-db-secret-reader", nebariApp.Name)
+	logger := log.FromContext(ctx)
+	rbacName := naming.DatabaseSecretReaderName(nebariApp)
 
 	saName := nebariApp.Spec.ServiceAccountName
 	if saName == "" {
@@ -48,17 +53,18 @@ func (r *DatabaseReconciler) reconcileSecretRBAC(ctx context.Context, nebariApp 
 			Namespace: nebariApp.Namespace,
 		},
 	}
-	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, role, func() error {
+	op, err := controllerutil.CreateOrUpdate(ctx, r.Client, role, func() error {
 		role.Rules = []rbacv1.PolicyRule{
 			{
 				APIGroups:     []string{""},
 				Resources:     []string{"secrets"},
-				ResourceNames: []string{secretName},
+				ResourceNames: secretNames,
 				Verbs:         []string{"get"},
 			},
 		}
 		return controllerReference(nebariApp, role, r.Scheme)
-	}); err != nil {
+	})
+	if err != nil {
 		return fmt.Errorf("failed to reconcile database secret reader Role: %w", err)
 	}
 
@@ -68,7 +74,7 @@ func (r *DatabaseReconciler) reconcileSecretRBAC(ctx context.Context, nebariApp 
 			Namespace: nebariApp.Namespace,
 		},
 	}
-	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, rb, func() error {
+	rbOp, err := controllerutil.CreateOrUpdate(ctx, r.Client, rb, func() error {
 		rb.RoleRef = rbacv1.RoleRef{
 			APIGroup: "rbac.authorization.k8s.io",
 			Kind:     "Role",
@@ -82,10 +88,13 @@ func (r *DatabaseReconciler) reconcileSecretRBAC(ctx context.Context, nebariApp 
 			},
 		}
 		return controllerReference(nebariApp, rb, r.Scheme)
-	}); err != nil {
+	})
+	if err != nil {
 		return fmt.Errorf("failed to reconcile database secret reader RoleBinding: %w", err)
 	}
 
-	logger.Info("Reconciled database secret RBAC", "name", rbacName, "serviceAccount", saName)
+	if op != controllerutil.OperationResultNone || rbOp != controllerutil.OperationResultNone {
+		logger.Info("Reconciled database secret RBAC", "name", rbacName, "serviceAccount", saName, "secrets", secretNames)
+	}
 	return nil
 }
