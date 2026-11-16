@@ -17,6 +17,7 @@ Resource Definition (CRD).
     - [keycloakConfig](#authkeycloakconfig)
   - [gateway](#gateway)
   - [landingPage](#landingpage)
+  - [databases](#databases)
 - [Status Fields](#status-fields)
 - [Complete Examples](#complete-examples)
 
@@ -761,6 +762,68 @@ spec:
 
 
 
+### databases
+
+**Type:** `array` (optional, at most 10 entries)
+
+Requests managed PostgreSQL databases, provisioned through [CloudNativePG](https://cloudnative-pg.io). Each entry is its own PostgreSQL cluster, with its own pods and volumes.
+
+For each entry the operator creates a CloudNativePG `Cluster` named `<app>-<name>-db` and a credentials Secret named `<app>-<name>-db-credentials` with the keys `host`, `port`, `username`, `password`, `database`, and `uri`. Only the app's ServiceAccount (`serviceAccountName`, defaulting to the NebariApp's name) may read those Secrets.
+
+Removing an entry never deletes its database: the Cluster and its data are kept and reported as retained. Renaming an entry therefore creates a new, empty database. Deleting the NebariApp deletes every database it owns. See [reconcilers/database.md](reconcilers/database.md) for the full lifecycle.
+
+#### databases[].name
+
+**Type:** `string` (required)
+
+Identifies the database within the NebariApp and forms part of its resource names. It does not name anything inside PostgreSQL; read the database name from the credentials Secret.
+
+**Validation:**
+- Lowercase letters, digits, and hyphens; must start with a letter and end with a letter or digit
+- At most 20 characters
+- Unique within the list
+- `<app>-<name>-db` must be at most 50 characters (a CloudNativePG limit, reported on the `DatabaseReady` condition)
+
+#### databases[].instances
+
+**Type:** `integer` (optional)
+
+Number of PostgreSQL instances: one primary plus N-1 replicas.
+
+**Validation:**
+- Minimum: 1
+- Maximum: 9
+
+**Default:** `1`
+
+#### databases[].size
+
+**Type:** `string` (optional)
+
+Storage request for each instance, as a Kubernetes quantity. It cannot be decreased once set.
+
+**Default:** `1Gi`
+
+**Example:**
+```yaml
+spec:
+  databases:
+    - name: metadata
+    - name: warehouse
+      instances: 3
+      size: 20Gi
+```
+
+Consuming the credentials from a pod:
+```yaml
+env:
+  - name: DATABASE_URL
+    valueFrom:
+      secretKeyRef:
+        name: my-app-metadata-db-credentials
+        key: uri
+```
+
 ## Status Fields
 
 The status section is managed by the operator and reflects the observed state of the NebariApp.
@@ -775,6 +838,7 @@ Represents the current state of the NebariApp resource.
 - `RoutingReady`: HTTPRoute has been created and is functioning
 - `TLSReady`: TLS termination is functioning (Gateway's TLS listeners are accessible)
 - `AuthReady`: Authentication policy is configured (if auth is enabled)
+- `DatabaseReady`: Every requested database is provisioned and its credentials are available (if databases are requested)
 - `Ready`: All components are ready (aggregate condition)
 
 **Common reasons:**
@@ -790,6 +854,9 @@ Represents the current state of the NebariApp resource.
 - `GroupsRequireKeycloak`, `GroupsClaimConflict`, `GroupsEmpty`: `auth.groups` cannot be enforced, so every request is denied (for AuthReady and Ready)
 - `GroupsNotResolved`: an `auth.groups` path does not exist in Keycloak; the SecurityPolicy is still applied (for AuthReady and Ready)
 - `GroupsEnforcedByApplication`: `AuthReady=True` with `enforceAtGateway: false`; the application must check the groups claim
+- `DatabaseProvisioning`: a requested database or its credentials are not ready yet (for DatabaseReady and Ready)
+- `CNPGNotInstalled`: CloudNativePG is not installed on the cluster (for DatabaseReady and Ready)
+- `DatabaseRetained`: no database is requested any more, but earlier ones still exist (for DatabaseReady)
 
 ### hostname
 
@@ -816,6 +883,17 @@ Identifies the Secret containing OIDC client credentials (when auth is enabled).
 Fields:
 - `name`: Name of the Secret
 - `namespace`: Namespace of the Secret (optional)
+
+### databases
+
+**Type:** `array`
+
+Reports each managed database: one entry per `spec.databases` entry, followed by one per retained database.
+
+Fields:
+- `name`: Name of the database, as given in `spec.databases`
+- `secretRef`: `name` and `namespace` of the Secret holding the connection credentials, set once they are published
+- `retained`: `true` when the entry was removed from `spec.databases`; the database and its data still exist but are no longer managed
 
 
 

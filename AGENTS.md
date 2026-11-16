@@ -13,17 +13,18 @@ A team declares a single `NebariApp` custom resource, and the operator provision
 - **Routing** — a Gateway API `HTTPRoute` on the shared Nebari gateway.
 - **TLS** — a cert-manager `Certificate` and a per-app HTTPS listener on the gateway.
 - **Auth** — an OIDC `SecurityPolicy` (Envoy Gateway) wired to Keycloak, including automatic Keycloak client provisioning and per-app RBAC.
+- **Databases**: optional managed PostgreSQL, one CloudNativePG `Cluster` per `spec.databases` entry, with connection credentials published in a per-database Secret.
 - **Landing-page registration** — surfaced to nebari-landing so the app appears on the platform's landing page. See https://github.com/nebari-dev/nebari-landing for extra details.
 
 It is part of **Nebari Infrastructure Core (NIC)**. The sibling repository [`nebari-infrastructure-core`](https://github.com/nebari-dev/nebari-infrastructure-core) provisions the cluster and bootstraps foundational software; this operator runs *on* that cluster and manages application-level resources. APIs and behavior are still under active development and may change without notice.
 
 ### Core Architecture Principles
 
-1. **One CRD, a pipeline of focused reconcilers.** A single `NebariApp` spec fans out to independent sub-reconcilers (Core, TLS, Routing, Auth), each owning exactly one concern.
+1. **One CRD, a pipeline of focused reconcilers.** A single `NebariApp` spec fans out to independent sub-reconcilers (Core, TLS, Routing, Auth, Database), each owning exactly one concern.
 2. **Continuously reconciled.** The control loop re-runs on a steady cadence; drift in owned resources is auto-corrected. Reconcile is idempotent.
 3. **Namespace opt-in.** The operator only acts in namespaces explicitly labeled `nebari.dev/managed=true` — no accidental adoption.
 4. **Observable by contract.** Every reconciler updates `status.conditions` and emits typed Kubernetes Events. Condition/event vocabularies are centralized as Go constants.
-5. **Contract independence.** The routing, TLS, auth, and landing-page contracts each degrade gracefully and do not depend on one another being present.
+5. **Contract independence.** The routing, TLS, auth, database, and landing-page contracts each degrade gracefully and do not depend on one another being present.
 
 ### Who applies the `NebariApp` CRD
 
@@ -153,6 +154,7 @@ internal/
       routing/           RoutingReconciler — Gateway API HTTPRoute + public routes
       auth/              AuthReconciler — OIDC SecurityPolicy + Keycloak client + per-app RBAC
         providers/       OIDCProvider interface, keycloak.go, generic_oidc.go
+      database/          DatabaseReconciler: CloudNativePG Clusters + credentials Secrets + per-app RBAC
     utils/
       conditions/        SetCondition/GetCondition helpers over meta.SetStatusCondition
       constants/         gateway/namespace names, name suffixes, finalizer, annotations
@@ -171,9 +173,9 @@ The operator manages a **single** custom resource:
 
 - **Group / Version / Kind:** `reconcilers.nebari.dev/v1`, `NebariApp` (shortName `nebariapp`), namespaced, with a `status` subresource.
 
-`NebariAppSpec` top-level fields: `hostname`, `service` (name/port/namespace), `routing` (routes, publicRoutes, TLS, annotations), `auth` (OIDC/Keycloak config), `gateway` (`public`|`internal`), `serviceAccountName`, `landingPage`. Validation is expressed via kubebuilder markers (Required/Enum/Min/Max/Pattern/default) plus a CEL `XValidation` on `AuthConfig`.
+`NebariAppSpec` top-level fields: `hostname`, `service` (name/port/namespace), `routing` (routes, publicRoutes, TLS, annotations), `auth` (OIDC/Keycloak config), `gateway` (`public`|`internal`), `serviceAccountName`, `landingPage`, `databases` (a list keyed by `name`, each with `instances` and `size`). Validation is expressed via kubebuilder markers (Required/Enum/Min/Max/Pattern/default) plus CEL `XValidation` rules on `AuthConfig` and on a database's `size`.
 
-`NebariAppStatus`: `conditions[]` (`Ready`, `RoutingReady`, `TLSReady`, `AuthReady`), `observedGeneration`, `hostname`, `gatewayRef`, `clientSecretRef`, `authConfigHash`, `tokenExchangeConfigured`, `serviceDiscovery`.
+`NebariAppStatus`: `conditions[]` (`Ready`, `RoutingReady`, `TLSReady`, `AuthReady`, `DatabaseReady`), `observedGeneration`, `hostname`, `gatewayRef`, `clientSecretRef`, `databases[]`, `authConfigHash`, `tokenExchangeConfigured`, `serviceDiscovery`.
 
 ### The Reconciler Pipeline
 
@@ -182,7 +184,7 @@ The operator manages a **single** custom resource:
   <img src="docs/assets/diagrams/reconciler-pipeline-light.svg" alt="NebariApp reconcile pipeline: NebariApp CR feeds the ordered Core, TLS, Routing, and Auth reconcilers, ending at Ready; the loop requeues continuously and finalizer cleanup runs in reverse." width="1000">
 </picture>
 
-`NebariAppReconciler` (`internal/controller/nebariapp_controller.go`) holds the four sub-reconcilers as struct fields and drives them in order:
+`NebariAppReconciler` (`internal/controller/nebariapp_controller.go`) holds the five sub-reconcilers as struct fields and drives them in order:
 
 ```
 Reconcile:
@@ -194,15 +196,17 @@ Reconcile:
   -> RoutingReconciler.ReconcileRouting (HTTPRoute; cleanup when spec.routing == nil)
   -> RoutingReconciler.ReconcilePublicRoute
   -> AuthReconciler.ReconcileAuth       (SecurityPolicy + Keycloak client + Role/RoleBinding)
+  -> DatabaseReconciler.ReconcileDatabase (CNPG Cluster + credentials Secret per spec.databases entry;
+                                           not all ready -> Ready=False, requeue 15s)
   -> set Ready=True, populate status.serviceDiscovery
   -> requeue after 1m
 ```
 
-Cleanup (finalizer) runs the pipeline in reverse: **Auth -> Routing -> TLS**. Owned resources carry ownerReferences for garbage collection; the finalizer is `apps.nebari.dev/finalizer`.
+Cleanup (finalizer) runs the pipeline in reverse: **Auth -> Routing -> TLS**. Owned resources carry ownerReferences for garbage collection; the finalizer is `apps.nebari.dev/finalizer`. The database reconciler has no cleanup step: its Clusters, Secrets, and RBAC are removed only by that garbage collection, and never by a spec edit (see `docs/reconcilers/database.md`).
 
-Each sub-reconciler is a struct embedding a controller-runtime `client.Client`, a `*runtime.Scheme`, and a `record.EventRecorder`, and exposes a `ReconcileX` and a `CleanupX` method. They do not import one another.
+Each sub-reconciler is a struct embedding a controller-runtime `client.Client`, a `*runtime.Scheme`, and a `record.EventRecorder`, and exposes a `ReconcileX` and (except Database) a `CleanupX` method. They do not import one another.
 
-`SetupWithManager` watches the primary `NebariApp` plus cert-manager `Certificate` objects, mapped back to their owning `NebariApp` via the `nebari.dev/nebariapp-name` / `nebari.dev/nebariapp-namespace` labels.
+`SetupWithManager` watches the primary `NebariApp` plus cert-manager `Certificate` objects, mapped back to their owning `NebariApp` via the `nebari.dev/nebariapp-name` / `nebari.dev/nebariapp-namespace` labels. It also watches Secrets, so that a password CloudNativePG rotates in its generated `<app>-<db>-db-app` Secret reaches the credentials Secret the operator publishes. It does not watch CloudNativePG types: those CRDs are optional, and a watch on a missing CRD would stop the manager from starting.
 
 ### Platform Assumptions
 
@@ -210,7 +214,8 @@ The operator targets a Nebari platform laid down by NIC, and encodes those assum
 
 - A shared Gateway `nebari-gateway` in namespace `envoy-gateway-system`, GatewayClass `envoy-gateway`, wildcard TLS secret `nebari-gateway-tls`.
 - Keycloak reachable in the `keycloak` namespace.
-- Per-app resources are named `<app>-<suffix>` (route, public-route, security, cert, tls, oidc-client).
+- The CloudNativePG operator, for apps that set `spec.databases`. Its absence is tolerated: the app reports `DatabaseReady=False/CNPGNotInstalled` and everything else reconciles.
+- Per-app resources are named `<app>-<suffix>` (route, public-route, security, cert, tls, oidc-client). Per-database resources are named `<app>-<db>-db` (Cluster) and `<app>-<db>-db-credentials` (Secret).
 
 ## Key Development Patterns
 
@@ -223,7 +228,7 @@ The operator targets a Nebari platform laid down by NIC, and encodes those assum
 
 ### Adding behavior to a reconciler
 
-1. Put the logic in the sub-reconciler that owns that concern (`core`/`tls`/`routing`/`auth`). Do not cross concerns — reconcilers are independent by design.
+1. Put the logic in the sub-reconciler that owns that concern (`core`/`tls`/`routing`/`auth`/`database`). Do not cross concerns — reconcilers are independent by design.
 2. Keep it idempotent: create-or-update, and reconcile drift on every pass.
 3. Update `status.conditions` and emit a typed Event (Normal on success, Warning on failure) using the constants from `api/v1` and the `utils/conditions` helpers.
 4. If cleanup is needed on deletion, extend the corresponding `CleanupX` (remember: cleanup runs reverse order).
@@ -243,7 +248,7 @@ The manager's RBAC is generated, not hand-written. `+kubebuilder:rbac:...` marke
 
 ### Status Conditions
 
-- Standardized types: `Ready` (aggregate), `RoutingReady`, `TLSReady`, `AuthReady`.
+- Standardized types: `Ready` (aggregate), `RoutingReady`, `TLSReady`, `AuthReady`, `DatabaseReady`.
 - Managed through `utils/conditions`, which wraps `k8s.io/apimachinery/pkg/api/meta` and only bumps `LastTransitionTime` on an actual status change.
 - Track `observedGeneration` so consumers can tell a stale status from a current one.
 - Condition types, reasons, and event reasons are Go constants in `api/v1/nebariapp_types.go` — reference them, never re-type the strings.
@@ -260,7 +265,7 @@ Never reconcile a resource in a namespace that lacks `nebari.dev/managed=true`. 
 
 Three layers, each with its own make target:
 
-- **Unit tests** — `make test`, the target CI runs. It covers every package except `test/e2e` and fails when any test fails. `make test-unit` is a narrower verbose run over `internal/controller/...` only. Table-driven Go tests run against **envtest** (a real kube-apiserver + etcd, no kubelet), so reconcilers are exercised against a live API without a full cluster. Every sub-reconciler and utility is covered next to its code: `internal/controller/reconcilers/{core,tls,routing,auth}` (and `auth/providers`), `internal/config`, `internal/controller/utils/*`, and `api/v1`, plus the Ginkgo suite in `internal/controller` that drives the full `NebariAppReconciler` against envtest with the Gateway API and Envoy Gateway CRDs installed. This is the fast gate — run it before every push.
+- **Unit tests** — `make test`, the target CI runs. It covers every package except `test/e2e` and fails when any test fails. `make test-unit` is a narrower verbose run over `internal/controller/...` only. Table-driven Go tests run against **envtest** (a real kube-apiserver + etcd, no kubelet), so reconcilers are exercised against a live API without a full cluster. Every sub-reconciler and utility is covered next to its code: `internal/controller/reconcilers/{core,tls,routing,auth,database}` (and `auth/providers`), `internal/config`, `internal/controller/utils/*`, and `api/v1`, plus the Ginkgo suite in `internal/controller` that drives the full `NebariAppReconciler` against envtest with the Gateway API and Envoy Gateway CRDs installed, plus a stand-in for the CloudNativePG `Cluster` CRD from `internal/controller/testdata/crds/` (the CNPG API module ships no CRD manifests). This is the fast gate — run it before every push.
 - **End-to-end tests** — `make test-e2e` (plus `make test-e2e-smoke` for a quick subset, `make test-e2e-parallel`). A **Ginkgo/Gomega** suite under `test/e2e/` (`-tags=e2e`) that deploys the operator to a **real cluster** and asserts end-to-end behavior: `auth_test.go`, `auth_groups_test.go`, `routing_test.go`, `tls_user_secret_test.go`, `gateway_test.go`, `validation_test.go`, `connectivity_test.go`, `conditions_test.go`, `manager_test.go`, and `contract_test.go`, which signs Keycloak personas in to sample apps shaped like real packs and compares what each gets with the app's `expect.yaml` (see `test/e2e/testdata/contract/README.md`). Fixtures live in `test/e2e/testdata/`; shared helpers in `test/e2e/e2e_utils.go` and `test/utils/`. Bring up a local cluster with `make -C dev setup` first (see [Local development cluster](#local-development-cluster)).
 - **Helm chart golden tests** — `make helm-test` renders the `nebari-app` library chart for each case in `test/helm/nebari-app/templates/` and diffs it against the committed goldens in `test/helm/nebari-app/golden/`. When a template change is intentional, regenerate with `make helm-test-generate-golden`; `make helm-lint-library` lints the chart.
 
@@ -272,10 +277,10 @@ CI (`build-pr.yml`) runs the unit, e2e, and chart suites on every PR. **Never di
 
 **Authoritative context — consult before changing the area it covers:**
 
-- **`docs/decisions/`** — ADR-style records of choices already made, and why. Currently `2026-03-05-webapi-extracted-to-nebari-landing.md` (why the web API moved out to nebari-landing), `2026-08-10-library-helm-chart-added.md`, and `2026-08-14-adopt-effver.md` (the versioning convention). Don't re-litigate a decision recorded here without amending it.
-- **`docs/pack-specification.md`** — the normative contract between the platform and a software pack: registration, routing, auth, TLS, the security baseline, and how the contract is versioned. Read it before changing anything in `api/v1/`, since a field change is a contract change. Requirements in it are governed by the Core team via a platform RFD in [`nebari-dev/governance`](https://github.com/nebari-dev/governance).
+- **`docs/decisions/`** — ADR-style records of choices already made, and why. Currently `2026-03-05-webapi-extracted-to-nebari-landing.md` (why the web API moved out to nebari-landing), `2026-08-10-library-helm-chart-added.md`, `2026-08-14-adopt-effver.md` (the versioning convention), and `2026-11-16-managed-databases-via-nebariapp.md` (why databases are requested through the CRD, and why a spec edit never deletes one). Don't re-litigate a decision recorded here without amending it.
+- **`docs/pack-specification.md`** — the normative contract between the platform and a software pack: registration, routing, auth, TLS, managed databases, the security baseline, and how the contract is versioned. Read it before changing anything in `api/v1/`, since a field change is a contract change. Requirements in it are governed by the Core team via a platform RFD in [`nebari-dev/governance`](https://github.com/nebari-dev/governance).
 - **`docs/plans/`** — in-flight implementation plans (e.g. `2026-02-20-tls-certificate-management*.md`). Check whether the work is already planned here before starting.
-- **`docs/reconcilers/`** — per-reconciler architecture with condition/reason/event tables and pipeline diagrams (`README.md`, `routing.md`, `validation.md`, `authentication.md`). The source of truth for reconciler behavior.
+- **`docs/reconcilers/`** — per-reconciler architecture with condition/reason/event tables and pipeline diagrams (`README.md`, `routing.md`, `validation.md`, `authentication.md`, `database.md`). The source of truth for reconciler behavior.
 
 **Reference material:**
 
@@ -295,6 +300,7 @@ Core libraries (see `go.mod`; module `github.com/nebari-dev/nebari-operator`, Go
 - `sigs.k8s.io/gateway-api` — HTTPRoute / Gateway types.
 - `github.com/cert-manager/cert-manager` — Certificate types.
 - `github.com/envoyproxy/gateway` — `SecurityPolicy` (OIDC at the gateway).
+- `github.com/cloudnative-pg/api`: CloudNativePG `Cluster` types only. Pinned to the release whose Kubernetes libraries match the operator's; see the comment in `go.mod` before bumping it.
 - `github.com/Nerzal/gocloak/v13` — Keycloak admin client.
 - `github.com/onsi/ginkgo/v2` + `gomega` — test framework.
 

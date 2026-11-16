@@ -69,7 +69,7 @@ flowchart TD
     Routing -->|No| Fail3[Set RoutingReady=False<br/>Emit Event]
     Routing -->|Yes| AuthCheck{Auth<br/>Enabled?}
 
-    AuthCheck -->|No| DBCheck{Database<br/>Enabled?}
+    AuthCheck -->|No| DBCheck{Databases<br/>Requested?}
     AuthCheck -->|Yes| Auth[Authentication Reconciler]
 
     Auth --> Provider[Get OIDC Provider]
@@ -88,8 +88,8 @@ flowchart TD
     DBCheck -->|No| Success[Set Ready=True<br/>Complete]
     DBCheck -->|Yes| DB[Database Reconciler]
 
-    DB --> Cluster[Create/Update CNPG Cluster<br/>Publish Credentials Secret]
-    Cluster --> DBReady{Database<br/>Ready?}
+    DB --> Cluster[Create/Update a CNPG Cluster per entry<br/>Publish Credentials Secrets]
+    Cluster --> DBReady{All Databases<br/>Ready?}
 
     DBReady -->|No| Fail5[Set DatabaseReady=False<br/>Requeue]
     DBReady -->|Yes| Success
@@ -162,15 +162,15 @@ flowchart TD
 **Purpose:** Provision managed PostgreSQL databases via CloudNativePG
 
 **Responsibilities:**
-- Create or update CloudNativePG Cluster resources
-- Wait for database readiness
+- Create or update one CloudNativePG Cluster per `spec.databases` entry
+- Wait for each database to become ready, independently of the others
 - Normalize generated secrets into well-known Secret format
 - Scope read access to the app's ServiceAccount
-- Handle cleanup with data safety guarantees
+- Retain, and never delete, a database whose entry is removed
 
 **Outcomes:**
-- ✅ `DatabaseReady=True` - Database ready, credentials published
-- ❌ `DatabaseReady=False` - Database not ready, or CNPG not installed
+- ✅ `DatabaseReady=True` - Every requested database ready, credentials published
+- ❌ `DatabaseReady=False` - A database is not ready or cannot be provisioned, or CNPG is not installed
 
 **Details:** [database.md](database.md)
 
@@ -184,7 +184,7 @@ The operator manages these conditions on each `NebariApp`:
 | `RoutingReady` | HTTPRoute created and Gateway is routing traffic | Routing reconciler |
 | `TLSReady` | TLS certificate ready and listener attached (when TLS is enabled) | TLS reconciler |
 | `AuthReady` | Authentication configured (if enabled) | Authentication reconciler |
-| `DatabaseReady` | Managed database provisioned and credentials available (if enabled) | Database reconciler |
+| `DatabaseReady` | Every requested database provisioned and credentials available (if any are requested) | Database reconciler |
 
 ### Condition Reasons
 
@@ -218,8 +218,8 @@ Common reasons you'll see in conditions:
 - `UserProvidedSecretCheckFailed` - The operator could not determine the secret's state (transient API error, RBAC failure). Distinct from `UserProvidedSecretNotFound`.
 
 **DatabaseReady-specific:**
-- `DatabaseProvisioning` - CNPG Cluster or credentials not ready yet (the reconciler polls until ready)
-- `DatabaseDisabled` - `database.enabled` was turned off while the database still exists (data is retained)
+- `DatabaseProvisioning` - A CNPG Cluster or its credentials are not ready yet (the reconciler polls until ready)
+- `DatabaseRetained` - No database is requested any more, but earlier ones still exist (data is retained)
 - `CNPGNotInstalled` - CloudNativePG CRDs are missing on this cluster (re-checked every 5 minutes)
 
 ## Event Recording
@@ -264,9 +264,9 @@ Reconcilers emit Kubernetes events to provide visibility into operations:
 See [authentication.md](authentication.md#events) for messages.
 
 **Database Events:**
-- `DatabaseProvisioned` (Normal) - Managed database ready and credentials published
-- `DatabaseProvisionFailed` (Warning) - Database provisioning failed
-- `DatabaseOrphaned` (Warning) - Database disabled; the CNPG Cluster and its data are retained
+- `DatabaseProvisioned` (Normal) - A managed database is ready and its credentials are published
+- `DatabaseProvisionFailed` (Warning) - A database cannot be provisioned
+- `DatabaseRetained` (Warning) - An entry was removed from `spec.databases`; the CNPG Cluster and its data are retained
 
 View events for a NebariApp:
 ```bash
