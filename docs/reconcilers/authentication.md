@@ -58,7 +58,7 @@ type OIDCProvider interface {
 
 **Features:**
 - Automatic OIDC client provisioning via Keycloak Admin API
-- Internal cluster DNS resolution for issuer URL
+- Split-horizon endpoints: token back-channel in-cluster, browser-facing endpoints public
 - Client secret management in Kubernetes secrets
 
 **Configuration:**
@@ -67,8 +67,12 @@ type OIDCProvider interface {
 
 **Issuer URL Format (Keycloak 26+, root context path):**
 ```
-http://keycloak.keycloak.svc.cluster.local:8080/realms/{realm}
+# KEYCLOAK_EXTERNAL_URL set (required on Envoy Gateway v1.9.1+)
+https://keycloak.example.com/realms/{realm}
+# KEYCLOAK_EXTERNAL_URL unset (Envoy Gateway < v1.9.1 only)
+http://keycloak-keycloakx-http.keycloak.svc.cluster.local:8080/realms/{realm}
 ```
+See [Issuer Semantics](#issuer-semantics-keycloak) for why the issuer depends on it.
 
 **Client ID Format:**
 ```
@@ -125,9 +129,28 @@ func (r *AuthReconciler) getProvider(nebariApp *appsv1.NebariApp) (OIDCProvider,
 - Labels: Standard app.kubernetes.io labels
 
 **On Failure:**
-- Event: `Warning` with reason `ProvisioningFailed`
-- Condition: `AuthReady=False` with reason `ProvisioningFailed`
+- Condition: `AuthReady=False` with reason `ProvisioningFailed` (no event is emitted)
 - Error message includes provider error details
+
+**Partial Success — `GroupsNotResolved`:**
+
+When `spec.auth.groups` lists a path that does not exist in Keycloak (e.g. `/missing-team`),
+the client, its Secret and the SecurityPolicy are still reconciled, so a new app is never
+served without OIDC in front of it. The reconciler then:
+
+- Emits `Warning/GroupsNotResolved` naming the missing paths.
+- Sets `AuthReady=False` with reason `GroupsNotResolved` (the controller mirrors this onto
+  `Ready=False/GroupsNotResolved` on the NebariApp).
+- Does not store the new `status.authConfigHash`, so the one-minute requeue retries provisioning
+  until the group is created, at which point the condition clears and the hash is stored.
+- Still publishes `status.serviceDiscovery` so routing stays functional.
+
+Any other provisioning error still fails as `ProvisioningFailed`. Bare-name entries (a
+top-level group the operator creates on 404) never trigger `GroupsNotResolved`; only
+path-form entries that fail resolution do.
+
+If a custom mapper conflict makes the policy deny-all, `GroupsClaimConflict` is reported instead of `GroupsNotResolved`,
+since creating the missing group would not admit anyone.
 
 ### 3. Configuration Validation
 
@@ -193,10 +216,142 @@ spec:
 - `redirectURL`: Defaults to `https://{hostname}/oauth2/callback`
 - `scopes`: Uses `spec.auth.scopes` or defaults to `["openid", "profile", "email"]`
 
+### Issuer Semantics (Keycloak)
+
+For Keycloak, `provider.issuer` depends on whether `KEYCLOAK_EXTERNAL_URL` is set, because
+that decides whether Envoy Gateway runs OIDC discovery
+([#112](https://github.com/nebari-dev/nebari-operator/issues/112),
+[#186](https://github.com/nebari-dev/nebari-operator/issues/186)):
+
+| `KEYCLOAK_EXTERNAL_URL` | Endpoint overrides | Discovery | `provider.issuer` |
+|---|---|---|---|
+| set | token (in-cluster) + authorization, endSession (public) | never runs | public realm URL (`https://…`) |
+| unset | token only | runs against the issuer | in-cluster realm URL (`http://…`) |
+
+Why this is safe:
+
+- Envoy Gateway uses the issuer **only at control-plane time** to fetch
+  `/.well-known/openid-configuration`, and only when `authorizationEndpoint` or
+  `tokenEndpoint` is not explicitly set. With `KEYCLOAK_EXTERNAL_URL` configured the
+  operator sets both, so the issuer is never contacted and never reaches the data plane.
+  The gateway never resolves the public hostname, so private-domain and air-gapped
+  clusters are unaffected.
+- The token back-channel protocol is taken from `tokenEndpoint` when it is set, so an
+  `https` issuer does not move token calls off the in-cluster URL.
+- The Envoy `oauth2` filter has no issuer field in its configuration and never inspects
+  the token's `iss` claim (its only JWT decode is an unverified `exp` read for cookie
+  lifetimes). Envoy Gateway also ignores the discovery document's `issuer` field.
+- Envoy Gateway **v1.9.1** constrains the issuer to `^https://[^/?#@]+(/[^?#]*)?$` in both
+  the CRD and its translator. The public URL satisfies it and matches the `iss` claim
+  Keycloak stamps into tokens.
+
+When `KEYCLOAK_EXTERNAL_URL` is unset, discovery does run, so the issuer stays in-cluster:
+pointing discovery at a public hostname fails on clusters where that hostname does not
+resolve from inside the cluster (the private-domain failure seen in
+nebari-dev/nebari-infrastructure-core#568). That mode only works on Envoy Gateway
+< v1.9.1. On v1.9.1+ the SecurityPolicy is rejected at admission, and the `AuthReady`
+condition message says to set `KEYCLOAK_EXTERNAL_URL`.
+
+Consumers that **do** strictly validate `iss` — e.g. a SecurityPolicy `spec.jwt` provider
+configured by a downstream pack — read the public issuer from the client Secret's
+`issuer-url` key, which is populated from `GetExternalIssuerURL()`. That key is empty when
+`KEYCLOAK_EXTERNAL_URL` is unset, so strict-`iss` consumers require it to be set.
+
 **On Failure:**
 - Event: `Warning` with reason `SecurityPolicyFailed`
 - Condition: `AuthReady=False` with reason `SecurityPolicyFailed`
 - Error message includes underlying error
+
+## Group-based access control
+
+When `spec.auth.groups` is non-empty, the provider is `keycloak`, and `enforceAtGateway` is `true`, the operator adds
+three sections to the SecurityPolicy so that the gateway itself rejects users outside the listed groups. For app
+`finance-dash` in namespace `finance` with `groups: [finance, /ops/oncall]`:
+
+Gateway enforcement needs Envoy Gateway v1.2.0 or later, which added JWT claims as an authorization principal. The
+Envoy proxy pods fetch the realm JWKS from the in-cluster Keycloak service (the `KEYCLOAK_ISSUER_SERVICE_*` settings),
+so a NetworkPolicy in front of Keycloak must allow that traffic.
+
+```yaml
+spec:
+  oidc:
+    # ...as above, plus:
+    cookieNames:
+      accessToken: nebari-at-finance-finance-dash
+  jwt:
+    providers:
+      - name: nebari-groups
+        remoteJWKS:
+          uri: http://<service>.<namespace>.svc.cluster.local:<port><context-path>/realms/<realm>/protocol/openid-connect/certs
+        extractFrom:
+          cookies:
+            - nebari-at-finance-finance-dash
+  authorization:
+    defaultAction: Deny
+    rules:
+      - name: allow-groups
+        action: Allow
+        principal:
+          jwt:
+            provider: nebari-groups
+            claims:
+              - name: groups
+                valueType: StringArray
+                values: ["/finance", "/ops/oncall"]
+              - name: azp
+                valueType: String
+                values: ["finance-finance-dash"]
+```
+
+Claims in one rule are ANDed. The `azp` claim must equal the app's own client ID, because every SecurityPolicy shares
+one oauth2 HMAC secret, so the cookie check alone does not tie a token to this app.
+
+The `oidc` section's access-token cookie is renamed to `nebari-at-<namespace>-<name>` so the `jwt` provider can read a
+known cookie and verify the token against the realm JWKS. Apps that enforce groups at the gateway get this pinned cookie, so their users are logged out once when the app
+starts enforcing (for example on upgrade); other apps keep the default cookie name. A token with no `groups` claim matches no rule and receives 403. The operator puts at
+most 16 values in one rule (Envoy Gateway's limit on a claim before v1.6.0), so with more than 16 groups the values are
+split across rules `allow-groups`, `allow-groups-2`, and so on.
+
+**Claim format.** The `groups` claim carries full group paths such as `/finance` or `/ops/oncall`. The default
+`group-membership` mapper is switched to `full.path=true` for every app, not only apps that set `auth.groups`. Entries
+in `auth.groups` are normalized to full paths (`finance` becomes `/finance`) and matched exactly and case-sensitively.
+A parent group does not admit members of its subgroups; list the subgroup itself. When the app defines custom
+`keycloakConfig.protocolMappers` and sets `auth.groups`, the operator appends a mapper named `nebari-group-membership`
+unless a custom mapper already emits `groups`. While `auth.groups` is set, any other mapper on the app's client that
+emits the `groups` claim, including one added by hand in Keycloak, is deleted on the next provisioning pass, and a
+`Warning/GroupsMappersRemoved` event names each one. Custom mappers belong in `keycloakConfig.protocolMappers`.
+Provisioning runs when the auth config changes, while `AuthReady` is not `True`, or when the NebariApp carries the
+`nebari.dev/force-reprovision` annotation, so a mapper added by hand to a ready app is only removed on the next of
+those passes.
+
+**Removal delay.** Group membership is read from the access token, so removing a user from a group takes effect when
+their token expires: the realm's access token lifespan, 5 minutes by default.
+
+**Token size.** A user in many groups produces a large access token, and browsers cap a cookie near 4 KB. Users with
+very many group memberships may fail to sign in.
+
+**Unsupported configurations.** The operator writes a deny-all policy (`authorization.defaultAction: Deny` with no
+rules) rather than deleting the policy or leaving it open:
+
+| Reason | When | Conditions |
+|--------|------|------------|
+| `GroupsRequireKeycloak` | `generic-oidc` with groups, `enforceAtGateway: true` and `provisionClient: false` | `AuthReady=False`, `Ready=False` |
+| `GroupsClaimConflict` | A custom mapper emits the `groups` claim and its type is not `oidc-group-membership-mapper`, or `full.path` is not `"true"`, or `access.token.claim` is not `"true"` | `AuthReady=False`, `Ready=False` |
+| `GroupsEmpty` | Every `groups` entry is empty after normalization, for example `"/"` or whitespace | `AuthReady=False`, `Ready=False` |
+
+In all three cases `Ready` carries the same reason, and `observedGeneration` and `status.serviceDiscovery` are still
+published. `generic-oidc` with groups and the default `provisionClient: true` is denied too, but reports
+`AuthReady=False/ProvisioningNotSupported` and `Ready=False/Failed`, because the provider cannot provision a client.
+
+With `enforceAtGateway: false` the operator provisions the claim but writes no authorization rules, and `AuthReady` is
+`True` with reason `GroupsEnforcedByApplication`.
+
+**Fail closed.** If provisioning, RBAC, token exchange or validation fails while groups are enforced (for example,
+Keycloak is unreachable during provisioning), the operator still tries to write the enforced policy, so the app denies
+users instead of opening up. This does not hold when the SecurityPolicy write itself is rejected, when the provider is
+not registered, or when reconcile stops before the auth step (missing Service, namespace opt-in removed, TLS
+certificate pending). The previous policy then stays in place, and while the certificate is pending `Ready` stays
+`True`. A path that does not exist is not a failure: see `GroupsNotResolved` above.
 
 ## Status Management
 
@@ -231,25 +386,52 @@ conditions:
     message: "Authentication configured with provider keycloak"
 ```
 
+With `auth.groups` set and `enforceAtGateway: false`, the reason is `GroupsEnforcedByApplication` instead:
+
+```yaml
+conditions:
+  - type: AuthReady
+    status: "True"
+    reason: GroupsEnforcedByApplication
+    message: "Authentication configured with provider keycloak; enforceAtGateway is false, so the application must check the groups claim"
+```
+
 **On Failure:**
 ```yaml
 conditions:
   - type: AuthReady
     status: "False"
-    reason: ProvisioningFailed | ValidationFailed | SecurityPolicyFailed
+    reason: ProvisioningFailed | ValidationFailed | SecurityPolicyFailed | TokenExchangeFailed | TokenExchangeCleanupFailed | GroupsNotResolved | GroupsRequireKeycloak | GroupsClaimConflict | GroupsEmpty
     message: "<detailed error message>"
 ```
 
 ### Events
 
+Provisioning, validation and SecurityPolicy failures are reported through the `AuthReady` condition only; they emit no
+event. The exception is a failed token exchange removal (`Warning/TokenExchangeCleanupFailed` below), because peer
+clients keep their access until it succeeds.
+
 **Success Events:**
 - `Normal/Provisioned`: "OIDC client provisioned successfully"
-- `Normal/Configured`: "Authentication configured successfully"
+- `Normal/Configured`: "Authentication configured successfully", or, with `enforceAtGateway: false` and groups set,
+  a message saying the application must check the groups claim
+- `Normal/Deleted`: "OIDC client deleted" (cleanup)
+- `Normal/SecurityPolicyDeleted`: "SecurityPolicy deleted (enforceAtGateway disabled)"
+- `Normal/TokenExchangeRemoved`: `spec.auth.tokenExchange` was turned off and its permissions were removed from the client.
+  `status.tokenExchangeConfigured` records that the operator configured token exchange, so this only runs for apps that
+  had it on.
 
 **Warning Events:**
-- `Warning/ProvisioningFailed`: "Failed to provision OIDC client: {error}"
-- `Warning/ValidationFailed`: "Auth configuration validation failed: {error}"
-- `Warning/SecurityPolicyFailed`: "Failed to reconcile SecurityPolicy: {error}"
+- `Warning/GroupsRequireKeycloak`: "spec.auth.groups requires provider \"keycloak\" for gateway enforcement; all requests are denied"
+- `Warning/GroupsClaimConflict`: "{mapper conflict}; all requests are denied"
+- `Warning/GroupsEmpty`: "every spec.auth.groups entry is empty after normalization, so no group is admitted; all requests are denied"
+- `Warning/GroupsNotResolved`: "group paths not found in realm {realm}: {paths} (paths are never created: ...)"
+  — partial-success condition; the SecurityPolicy is still created and the reconciler
+  retries on the next requeue (see [Client Provisioning](#2-client-provisioning)).
+- `Warning/GroupsMappersRemoved`: groups mappers on the client that are not in `keycloakConfig.protocolMappers` were deleted: {mappers}
+- `Warning/TokenExchangeCleanupFailed`: `spec.auth.tokenExchange` was turned off but its permissions could not be removed
+  from the client, so other clients can still exchange tokens for its audience. `AuthReady` is `False` with the same
+  reason, and the removal is retried on every reconcile.
 
 ## Cleanup Process
 
@@ -288,10 +470,15 @@ The auth reconciler can be configured via environment variables:
 - `KEYCLOAK_ADMIN_SECRET_NAME`: Secret containing master realm admin credentials (default:
   `nebari-realm-admin-credentials`)
 - `KEYCLOAK_ADMIN_SECRET_NAMESPACE`: Namespace of admin secret (default: `keycloak`)
+- `KEYCLOAK_EXTERNAL_URL`: Publicly routable Keycloak base URL, including any context path
+  (e.g. `https://keycloak.example.com`). Drives the browser-facing OIDC endpoints, the
+  SecurityPolicy issuer and the client Secret's `issuer-url`. Required on Envoy Gateway
+  v1.9.1+ (see [Issuer Semantics](#issuer-semantics-keycloak)).
 
 **Keycloak Issuer URL Components (for Envoy Gateway):**
 
-These configure how the OIDC issuer URL is built for SecurityPolicy resources:
+These build the in-cluster realm URL, used for the SecurityPolicy `tokenEndpoint` and, when
+`KEYCLOAK_EXTERNAL_URL` is unset, for `provider.issuer`:
 - `KEYCLOAK_ISSUER_SERVICE_NAME`: Kubernetes service name (default: `keycloak-keycloakx-http`)
 - `KEYCLOAK_ISSUER_SERVICE_NAMESPACE`: Keycloak namespace (default: `keycloak`)
 - `KEYCLOAK_ISSUER_SERVICE_PORT`: Service port (default: `8080`)

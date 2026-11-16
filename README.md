@@ -20,15 +20,13 @@
   src="https://github.com/nebari-dev/nebari-operator/actions/workflows/test-chart.yml/badge.svg" alt="Test Chart"></a>
   <a href="https://github.com/nebari-dev/nebari-operator/actions/workflows/build-pr.yml"><img
   src="https://github.com/nebari-dev/nebari-operator/actions/workflows/build-pr.yml/badge.svg" alt="PR Checks"></a> <a
-  href="https://github.com/nebari-dev/nebari-operator/actions/workflows/generated-files.yml"><img
-  src="https://github.com/nebari-dev/nebari-operator/actions/workflows/generated-files.yml/badge.svg" alt="Generated
-  Files"></a> <a href="https://github.com/nebari-dev/nebari-operator/actions/workflows/release.yml"></a> <a
+  href="https://github.com/nebari-dev/nebari-operator/actions/workflows/generated-files.yml"> <a href="https://github.com/nebari-dev/nebari-operator/actions/workflows/release.yml"></a> <a
   href="https://github.com/nebari-dev/nebari-operator/blob/main/LICENSE"><img
   src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache 2.0"></a> <a
   href="https://github.com/nebari-dev/nebari-operator/releases/latest"><img
   src="https://img.shields.io/github/v/release/nebari-dev/nebari-operator?logo=github&label=release" alt="Latest
   Release"></a> <a href="https://golang.org"><img
-  src="https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go&logoColor=white" alt="Go 1.25+"></a> <a
+  src="https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go&logoColor=white" alt="Go 1.26+"></a> <a
   href="https://kubernetes.io"></a>
 </p>
 
@@ -41,8 +39,9 @@
 
 
 
-> **Status**: Under active development as part of Nebari Infrastructure Core (NIC). APIs and behavior may change without
-> notice.
+> **Status**: Pre-1.0 and under active development as part of Nebari Infrastructure Core (NIC). The project follows
+> [Effort-based Versioning](https://jacobtomlinson.dev/effver/): while the major version is `0`, CRD fields and behavior
+> can still change between releases — watch the MACRO (leftmost) digit for upgrades that need manifest changes.
 
 ## What is Nebari Operator?
 
@@ -112,7 +111,7 @@ kubectl apply -f https://github.com/nebari-dev/nebari-operator/releases/download
 
 ```bash
 helm upgrade --install nebari-operator \
-  oci://ghcr.io/nebari-dev/charts/nebari-operator \
+  oci://quay.io/nebari/charts/nebari-operator \
   --namespace nebari-operator-system \
   --create-namespace
 ```
@@ -172,7 +171,6 @@ spec:
     description: "A great internal tool"
     category: "Engineering"
     icon: "tool"
-    visibility: authenticated
 ```
 
 The operator will automatically create:
@@ -191,7 +189,7 @@ See the [Configuration Reference](docs/configuration-reference.md) for all avail
 
 | Tool | Version | Notes |
 | --- | --- | --- |
-| `go` | 1.25+ | Controller and tests |
+| `go` | 1.26+ | Controller and tests |
 | `docker` or `podman` | 24+ | Image builds |
 | `kubectl` | 1.28+ | Cluster interaction |
 | `make` | any | Build automation |

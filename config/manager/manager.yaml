@@ -79,6 +79,15 @@ spec:
             value: "nebari-realm-admin-credentials"
           - name: KEYCLOAK_ADMIN_SECRET_NAMESPACE
             value: "keycloak"
+          # Publicly routable Keycloak base URL, including any context path.
+          # Required for gateway-enforced auth on Envoy Gateway v1.9.1+, which
+          # only accepts an https:// SecurityPolicy issuer: unset, the operator
+          # keeps the in-cluster http:// issuer and every gateway-enforced
+          # NebariApp reports AuthReady=False (SecurityPolicyFailed). Envoy
+          # never resolves this URL, so private-domain clusters are fine. See
+          # docs/reconcilers/authentication.md, "Issuer Semantics (Keycloak)".
+          # - name: KEYCLOAK_EXTERNAL_URL
+          #   value: "https://keycloak.example.com"
           # Alternative: Use direct credentials (not recommended for production)
           # - name: KEYCLOAK_ADMIN_USERNAME
           #   value: "admin"

@@ -106,6 +106,13 @@ End-to-end connectivity tests:
 - HTTPS connectivity with TLS via Gateway IP
 - Response validation
 
+### Pack Contract Matrix
+
+`contract_test.go` signs Keycloak personas (anonymous, no group, a group, a subgroup, another group) in to sample
+apps shaped like real packs, and compares what each persona gets on each path, and the token claims each app
+receives, with the app's `expect.yaml`. An intended behavior change updates `expect.yaml` in the same PR. See
+[testdata/contract/README.md](testdata/contract/README.md). Skipped if Keycloak or the gateway is missing.
+
 ## Prerequisites
 
 The tests assume the following infrastructure exists:

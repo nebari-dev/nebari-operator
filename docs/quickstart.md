@@ -293,6 +293,7 @@ make teardown
 
 ## Next Steps
 
+- **[Using the nebari-app Helm chart](using-the-nebari-app-chart.md)** - Package this app as a reusable, versioned Software Pack instead of hand-written YAML
 - **[Platform Setup](platform-setup.md)** - Production infrastructure setup
 - **[Configuration Reference](configuration-reference.md)** - Complete NebariApp CRD documentation
 - **[Reconciler Architecture](reconcilers/README.md)** - How the operator works internally

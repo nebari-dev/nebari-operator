@@ -1,0 +1,15 @@
+{{- if .Values.cases.multi.enabled }}
+{{- include "fixture.nebariApp" (dict
+    "top" $
+    "component" "frontend"
+    "spec" .Values.cases.multi.frontend.nebariApp
+)
+}}
+---
+{{- include "fixture.nebariApp" (dict
+    "top" $
+    "component" "api"
+    "spec" .Values.cases.multi.api.nebariApp
+)
+}}
+{{- end }}

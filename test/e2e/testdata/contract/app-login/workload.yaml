@@ -1,0 +1,78 @@
+# Stands in for an app that runs its own OIDC login, the way JupyterHub does in
+# data-science-pack: it reads its client credentials from the Secret the
+# operator writes, and serves its callback at the NebariApp's redirectURI.
+#
+# The issuer is the in-cluster realm URL rather than the Secret's issuer-url
+# key, because the dev setup does not set KEYCLOAK_EXTERNAL_URL and the
+# operator leaves issuer-url empty without it.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-login
+  namespace: NAMESPACE_PLACEHOLDER
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: app-login
+  template:
+    metadata:
+      labels:
+        app: app-login
+    spec:
+      containers:
+        - name: oauth2-proxy
+          image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.5
+          args:
+            - --http-address=0.0.0.0:4180
+            - --reverse-proxy=true
+            - --provider=keycloak-oidc
+            - --oidc-issuer-url=http://keycloak-keycloakx-http.keycloak.svc.cluster.local/auth/realms/nebari
+            - --scope=openid profile email groups
+            - --code-challenge-method=S256
+            - --proxy-prefix=/hub/oauth
+            - --redirect-url=https://app-login.contract.nebari.local/hub/oauth/callback
+            - --skip-provider-button=true
+            - --skip-auth-route=^/hub/health$
+            - --email-domain=*
+            - --pass-access-token=true
+            - --upstream=http://claims-echo:8080/
+          env:
+            - name: OAUTH2_PROXY_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: app-login-oidc-client
+                  key: client-id
+            - name: OAUTH2_PROXY_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: app-login-oidc-client
+                  key: client-secret
+            - name: OAUTH2_PROXY_COOKIE_SECRET
+              # Test-only value: 32 bytes, as oauth2-proxy requires for AES.
+              value: e2e-contract-cookie-secret-32byt
+          ports:
+            - containerPort: 4180
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: 4180
+            periodSeconds: 2
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: app-login
+  namespace: NAMESPACE_PLACEHOLDER
+spec:
+  selector:
+    app: app-login
+  ports:
+    - port: 4180
+      targetPort: 4180

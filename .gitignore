@@ -33,6 +33,8 @@ go.work.sum
 
 # Go build files
 bin
+# what `go build ./cmd/operator` writes when run from the repo root
+/operator
 
 # Release artifacts
 dist/
@@ -68,3 +70,7 @@ landingpage
 /webapi
 *-coverage.out
 *-coverage.html
+
+# Helm dependency vendoring (repopulated by `helm dependency build`)
+test/helm/*/charts/
+test/helm/*/Chart.lock

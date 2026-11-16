@@ -1,0 +1,223 @@
+/*
+Copyright 2026, OpenTeams.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package controller
+
+import (
+	"context"
+	"slices"
+	"testing"
+
+	egv1alpha1 "github.com/envoyproxy/gateway/api/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
+
+	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
+	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/auth"
+	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/auth/providers"
+	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/core"
+	"github.com/nebari-dev/nebari-operator/internal/controller/reconcilers/routing"
+	"github.com/nebari-dev/nebari-operator/internal/controller/utils/constants"
+	"github.com/nebari-dev/nebari-operator/internal/controller/utils/naming"
+)
+
+// TestReconcile_GroupsNotReady checks that when spec.auth.groups admits no one
+// yet, Ready is False with the specific reason while the SecurityPolicy and
+// the rest of the status (observedGeneration, serviceDiscovery) are still
+// applied. That covers a path missing from Keycloak (GroupsNotResolved) and a
+// groups list that denies every request (here GroupsEmpty).
+func TestReconcile_GroupsNotReady(t *testing.T) {
+	tests := []struct {
+		name         string
+		groups       []string
+		provider     providers.OIDCProvider
+		wantReason   string
+		wantRequired []string
+	}{
+		{
+			name:         "path missing from Keycloak",
+			groups:       []string{"/does-not-exist"},
+			provider:     groupsNotResolvedProvider{},
+			wantReason:   appsv1.ReasonGroupsNotResolved,
+			wantRequired: []string{"/does-not-exist"},
+		},
+		{
+			name:         "every entry normalizes to nothing",
+			groups:       []string{"/"},
+			provider:     groupsProvisionedProvider{},
+			wantReason:   appsv1.ReasonGroupsEmpty,
+			wantRequired: []string{},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reconcileGroupsNotReady(t, tt.groups, tt.provider, tt.wantReason, tt.wantRequired)
+		})
+	}
+}
+
+func reconcileGroupsNotReady(t *testing.T, groups []string, provider providers.OIDCProvider, wantReason string, wantRequired []string) {
+	t.Helper()
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	for _, add := range []func(*runtime.Scheme) error{
+		appsv1.AddToScheme, corev1.AddToScheme, rbacv1.AddToScheme, egv1alpha1.AddToScheme, gwapiv1.Install,
+	} {
+		if err := add(scheme); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Generation=2, ObservedGeneration=1 so Reconcile's "init if 0" branch
+	// (nebariapp_controller.go:122) is skipped. The ObservedGeneration check
+	// below then actually measures whether the degrade path propagates the
+	// bump to 2, instead of being driven by the init branch.
+	app := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "team", Generation: 2},
+		Status:     appsv1.NebariAppStatus{ObservedGeneration: 1},
+		Spec: appsv1.NebariAppSpec{
+			Hostname: "app.nebari.local",
+			Service:  appsv1.ServiceReference{Name: "app", Port: 8080},
+			Auth: &appsv1.AuthConfig{
+				Enabled:  true,
+				Provider: constants.ProviderKeycloak,
+				Groups:   groups,
+			},
+			LandingPage: &appsv1.LandingPageConfig{Enabled: true},
+		},
+	}
+	objs := []runtime.Object{
+		app,
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+			Name: "team", Labels: map[string]string{core.ManagedNamespaceLabel: "true"},
+		}},
+		&corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "team"},
+			Spec:       corev1.ServiceSpec{Ports: []corev1.ServicePort{{Name: "http", Port: 8080}}},
+		},
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: naming.ClientSecretName(app), Namespace: "team"},
+			Data:       map[string][]byte{constants.ClientSecretKey: []byte("test-secret")},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objs...).
+		WithStatusSubresource(&appsv1.NebariApp{}).Build()
+
+	recorder := record.NewFakeRecorder(20)
+	r := &NebariAppReconciler{
+		Client:            c,
+		Scheme:            scheme,
+		Recorder:          recorder,
+		CoreReconciler:    &core.CoreReconciler{Client: c, Scheme: scheme, Recorder: recorder},
+		RoutingReconciler: &routing.RoutingReconciler{Client: c, Scheme: scheme, Recorder: recorder},
+		AuthReconciler: &auth.AuthReconciler{
+			Client:    c,
+			Scheme:    scheme,
+			Recorder:  recorder,
+			Providers: map[string]providers.OIDCProvider{constants.ProviderKeycloak: provider},
+		},
+	}
+
+	key := types.NamespacedName{Name: "app", Namespace: "team"}
+	result, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+	if err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	if result.RequeueAfter == 0 {
+		t.Error("expected a requeue so the groups are checked again")
+	}
+
+	sp := &egv1alpha1.SecurityPolicy{}
+	if err := c.Get(ctx, types.NamespacedName{Name: naming.SecurityPolicyName(app), Namespace: "team"}, sp); err != nil {
+		t.Fatalf("expected SecurityPolicy to be created: %v", err)
+	}
+	if sp.Spec.OIDC == nil {
+		t.Error("expected SecurityPolicy to configure OIDC")
+	}
+
+	got := &appsv1.NebariApp{}
+	if err := c.Get(ctx, key, got); err != nil {
+		t.Fatal(err)
+	}
+	for _, condType := range []string{appsv1.ConditionTypeReady, appsv1.ConditionTypeAuthReady} {
+		cond := meta.FindStatusCondition(got.Status.Conditions, condType)
+		if cond == nil || cond.Status != metav1.ConditionFalse || cond.Reason != wantReason {
+			t.Errorf("expected %s=False/%s, got %+v", condType, wantReason, cond)
+		}
+	}
+	if got.Status.ServiceDiscovery == nil || !slices.Equal(got.Status.ServiceDiscovery.RequiredGroups, wantRequired) {
+		t.Errorf("expected serviceDiscovery to publish requiredGroups %v, got %+v", wantRequired, got.Status.ServiceDiscovery)
+	}
+	if got.Status.ObservedGeneration != got.Generation {
+		t.Errorf("ObservedGeneration = %d, want %d", got.Status.ObservedGeneration, got.Generation)
+	}
+}
+
+// groupsProvisionedProvider provisions everything, including the groups.
+type groupsProvisionedProvider struct{ groupsNotResolvedProvider }
+
+func (groupsProvisionedProvider) ProvisionClient(context.Context, *appsv1.NebariApp) error {
+	return nil
+}
+
+// groupsNotResolvedProvider provisions everything except a missing group path.
+type groupsNotResolvedProvider struct{}
+
+func (groupsNotResolvedProvider) GetIssuerURL(context.Context, *appsv1.NebariApp) (string, error) {
+	return "https://keycloak.example.com/realms/test", nil
+}
+
+func (groupsNotResolvedProvider) GetEndpointOverrides(context.Context, *appsv1.NebariApp) (providers.OIDCEndpointOverrides, error) {
+	return providers.OIDCEndpointOverrides{}, nil
+}
+
+func (groupsNotResolvedProvider) GetExternalIssuerURL(context.Context, *appsv1.NebariApp) (string, error) {
+	return "https://keycloak.example.com/realms/test", nil
+}
+
+func (groupsNotResolvedProvider) GetClientID(context.Context, *appsv1.NebariApp) string {
+	return "test-client"
+}
+
+func (groupsNotResolvedProvider) ProvisionClient(context.Context, *appsv1.NebariApp) error {
+	return &providers.GroupsNotResolvedError{Realm: "test", Paths: []string{"/does-not-exist"}}
+}
+
+// GetJWKSURL implements providers.GroupsClaimProvider, which the SecurityPolicy
+// needs to enforce spec.auth.groups at the gateway.
+func (groupsNotResolvedProvider) GetJWKSURL(context.Context, *appsv1.NebariApp) (string, error) {
+	return "https://keycloak.example.com/realms/test/protocol/openid-connect/certs", nil
+}
+
+func (groupsNotResolvedProvider) DeleteClient(context.Context, *appsv1.NebariApp) error { return nil }
+
+func (groupsNotResolvedProvider) SupportsProvisioning() bool { return true }
+
+func (groupsNotResolvedProvider) ConfigureTokenExchange(context.Context, *appsv1.NebariApp, []string) error {
+	return nil
+}
+
+func (groupsNotResolvedProvider) CleanupTokenExchange(context.Context, *appsv1.NebariApp) error {
+	return nil
+}

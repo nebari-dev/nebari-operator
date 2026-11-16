@@ -1,0 +1,30 @@
+# Gateway sign-in: the gateway runs the OIDC flow for every route, and the app
+# reads the user from the forwarded access token. This is the most common pack
+# shape: the pack template's default plus a health check left public, with the
+# groups scope requested so the app can make per-group decisions itself.
+apiVersion: reconcilers.nebari.dev/v1
+kind: NebariApp
+metadata:
+  name: gateway-signin
+  namespace: NAMESPACE_PLACEHOLDER
+spec:
+  hostname: gateway-signin.contract.nebari.local
+  service:
+    name: claims-echo
+    port: 8080
+  routing:
+    routes:
+      - pathPrefix: /
+    publicRoutes:
+      - pathPrefix: /healthz
+  auth:
+    enabled: true
+    provider: keycloak
+    provisionClient: true
+    enforceAtGateway: true
+    forwardAccessToken: true
+    scopes:
+      - openid
+      - profile
+      - email
+      - groups

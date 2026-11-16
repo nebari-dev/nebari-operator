@@ -18,6 +18,8 @@ package providers
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
 )
@@ -34,10 +36,14 @@ type OIDCEndpointOverrides struct {
 // OIDCProvider defines the interface for OIDC provider implementations.
 // Each provider (Keycloak, generic OIDC, etc.) must implement this interface.
 type OIDCProvider interface {
-	// GetIssuerURL returns the OIDC issuer URL for this provider.
-	// For Keycloak, this constructs the realm-specific URL.
+	// GetIssuerURL returns the issuer written to the SecurityPolicy.
+	// For Keycloak, this is the public realm URL when the endpoint overrides
+	// suppress discovery, and the in-cluster realm URL otherwise.
 	// For generic OIDC, this returns the configured issuer URL.
-	// The URL should be accessible from within the cluster (internal DNS).
+	// Envoy Gateway fetches discovery from it only when GetEndpointOverrides
+	// leaves the authorization or token endpoint unset, so in that case it
+	// must be reachable from the envoy-gateway controller. Envoy Gateway
+	// v1.9.1+ rejects non-https issuers.
 	GetIssuerURL(ctx context.Context, nebariApp *appsv1.NebariApp) (string, error)
 
 	// GetEndpointOverrides returns explicit OIDC endpoint URLs that should
@@ -60,6 +66,8 @@ type OIDCProvider interface {
 	// ProvisionClient provisions an OIDC client in the provider if supported.
 	// Returns nil if provisioning is not supported or not needed.
 	// The client secret should be stored in a Kubernetes Secret.
+	// Returns a *GroupsNotResolvedError if the client was provisioned but some
+	// spec.auth.groups paths do not exist in the provider.
 	ProvisionClient(ctx context.Context, nebariApp *appsv1.NebariApp) error
 
 	// DeleteClient removes the OIDC client from the provider if it was provisioned.
@@ -79,4 +87,37 @@ type OIDCProvider interface {
 	// For Keycloak, this disables management permissions on the client, which
 	// causes Keycloak to automatically remove the auto-created permission.
 	CleanupTokenExchange(ctx context.Context, nebariApp *appsv1.NebariApp) error
+}
+
+// GroupsNotResolvedError reports group paths from spec.auth.groups that do not
+// exist in the provider and that the operator will not create. Everything
+// else was provisioned.
+type GroupsNotResolvedError struct {
+	Realm string
+	Paths []string
+}
+
+func (e *GroupsNotResolvedError) Error() string {
+	return fmt.Sprintf("group paths not found in realm %q: %s (paths are never created: create them in Keycloak, or list a top-level group by bare name to have it created)",
+		e.Realm, strings.Join(e.Paths, ", "))
+}
+
+// GroupsMappersRemovedError reports protocol mappers that wrote the groups
+// claim without being declared in the NebariApp, and that provisioning deleted.
+// Everything else was provisioned.
+type GroupsMappersRemovedError struct {
+	Mappers []string
+}
+
+func (e *GroupsMappersRemovedError) Error() string {
+	return fmt.Sprintf("deleted protocol mappers that wrote the groups claim but are not in spec.auth.keycloakConfig.protocolMappers: %s (declare custom mappers in the NebariApp)",
+		strings.Join(e.Mappers, ", "))
+}
+
+// GroupsClaimProvider is implemented by providers whose access tokens carry a
+// groups claim that the gateway can verify against the provider's signing keys.
+type GroupsClaimProvider interface {
+	// GetJWKSURL returns the JWKS URL Envoy fetches to verify access tokens.
+	// It must be reachable from the Envoy proxy pods.
+	GetJWKSURL(ctx context.Context, nebariApp *appsv1.NebariApp) (string, error)
 }

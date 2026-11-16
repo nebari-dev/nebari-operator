@@ -65,7 +65,7 @@ vet: ## Run go vet against code.
 
 .PHONY: test
 test: manifests generate fmt vet setup-envtest ## Run tests.
-	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" go test $$(go list ./... | grep -v /e2e | grep -v 'internal/controller$$') -coverprofile cover.out 2>&1 | grep -v "compile: version.*does not match" | grep -v "^# " || true
+	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
 .PHONY: test-unit
 test-unit: ## Run controller unit tests with coverage.
@@ -104,6 +104,10 @@ lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
 lint-config: golangci-lint ## Verify golangci-lint linter configuration
 	"$(GOLANGCI_LINT)" config verify
 
+.PHONY: vuln
+vuln: govulncheck ## Fail on reachable Go vulnerabilities that have a fix (govulncheck).
+	GOVULNCHECK="$(GOVULNCHECK)" ./hack/govulncheck-gate.sh
+
 ##@ Documentation
 
 CRD_REF_DOCS ?= $(LOCALBIN)/crd-ref-docs
@@ -122,6 +126,10 @@ docs: crd-ref-docs ## Generate API reference documentation from Go types in api/
 crd-ref-docs: $(CRD_REF_DOCS) ## Download crd-ref-docs locally if necessary.
 $(CRD_REF_DOCS): $(LOCALBIN)
 	$(call go-install-tool,$(CRD_REF_DOCS),github.com/elastic/crd-ref-docs,$(CRD_REF_DOCS_VERSION))
+
+.PHONY: agents
+agents: ## Regenerate the machine-owned make-targets block in AGENTS.md.
+	./hack/gen-agents.sh
 
 ##@ Build
 
@@ -182,11 +190,11 @@ helm-chart: build-installer ## Generate Helm chart from manifests using kubebuil
 	@echo "  make helm-chart-version VERSION=1.0.0 APP_VERSION=v1.0.0"
 
 .PHONY: helm-package
-helm-package: ## Package the Helm chart (run helm-chart first).
+helm-package: helm-chart ## Package the Helm charts.
 	@command -v helm >/dev/null 2>&1 || { echo >&2 "helm is required but not installed. See https://helm.sh/docs/intro/install/"; exit 1; }
-	@if [ ! -d "dist/chart" ]; then echo "Error: dist/chart/ not found. Run 'make helm-chart' first."; exit 1; fi
 	helm package dist/chart --destination dist/
-	@echo "✅ Helm chart packaged in dist/"
+	helm package charts/nebari-app --destination dist/
+	@echo "✅ Helm charts packaged in dist/"
 
 .PHONY: helm-chart-version
 helm-chart-version: ## Update Helm chart version and appVersion (requires VERSION and APP_VERSION vars).
@@ -199,7 +207,75 @@ helm-chart-version: ## Update Helm chart version and appVersion (requires VERSIO
 	sed -i.bak "s/^version:.*/version: $(VERSION)/" dist/chart/Chart.yaml
 	sed -i.bak "s/^appVersion:.*/appVersion: \"$(APP_VERSION)\"/" dist/chart/Chart.yaml
 	rm -f dist/chart/Chart.yaml.bak
-	@echo "✅ Updated chart version to $(VERSION) and appVersion to $(APP_VERSION)"
+	sed -i.bak "s/^version:.*/version: $(VERSION)/" charts/nebari-app/Chart.yaml
+	sed -i.bak "s/^appVersion:.*/appVersion: \"$(APP_VERSION)\"/" charts/nebari-app/Chart.yaml
+	rm -f charts/nebari-app/Chart.yaml.bak
+	@echo "✅ Updated chart versions to $(VERSION) and appVersion to $(APP_VERSION)"
+
+.PHONY: helm-lint-library
+helm-lint-library: ## Lint the nebari-app library chart.
+	@command -v helm >/dev/null 2>&1 || { echo >&2 "helm is required but not installed. See https://helm.sh/docs/intro/install/"; exit 1; }
+	helm lint charts/nebari-app
+
+.PHONY: helm-lint
+helm-lint: helm-lint-library ## Lint the helm charts
+	@command -v helm >/dev/null 2>&1 || { echo >&2 "helm is required but not installed. See https://helm.sh/docs/intro/install/"; exit 1; }
+	@if [ ! -d "dist/chart" ]; then echo "Error: dist/chart/ not found. Run 'make helm-chart' first."; exit 1; fi
+	helm lint dist/chart
+
+.PHONY: helm-test-generate-golden
+helm-test-generate-golden: ## Generate golden files for nebari-app chart tests.
+	@command -v helm >/dev/null 2>&1 || { echo >&2 "helm is required but not installed. See https://helm.sh/docs/intro/install/"; exit 1; }
+	helm dependency build --skip-refresh test/helm/nebari-app >/dev/null
+	mkdir -p test/helm/nebari-app/golden
+	@for c in minimal static multi templating; do \
+		helm template t test/helm/nebari-app --set cases.$$c.enabled=true > test/helm/nebari-app/golden/$$c.yaml; \
+		echo "  case $$c: golden written"; \
+	done
+	@echo "✅ Golden files written to test/helm/nebari-app/golden/"
+
+.PHONY: helm-test
+helm-test: helm-lint-library ## Render the nebari-app library chart for all cases and verify against golden files.
+	@command -v helm >/dev/null 2>&1 || { echo >&2 "helm is required but not installed. See https://helm.sh/docs/intro/install/"; exit 1; }
+	helm dependency build --skip-refresh test/helm/nebari-app >/dev/null
+	@workdir=$$(mktemp -d); \
+	for c in minimal static multi templating; do \
+		helm template t test/helm/nebari-app --set cases.$$c.enabled=true > $$workdir/$$c.yaml; \
+		diff -q test/helm/nebari-app/golden/$$c.yaml $$workdir/$$c.yaml >/dev/null \
+			|| { echo >&2 "case $$c: golden mismatch"; diff test/helm/nebari-app/golden/$$c.yaml $$workdir/$$c.yaml; rm -rf $$workdir; exit 1; }; \
+		echo "  case $$c: ok"; \
+	done; \
+	rm -rf $$workdir
+	@# Verify required field guards: render without each field, expect error
+	@# Note: helm template returns non-zero on validation errors, which would cause the
+	@# pipeline to fail with pipefail even if grep finds the expected message. Disable
+	@# pipefail locally to ensure grep's exit code determines success.
+	@for f in metadata.name spec.hostname spec.service.name spec.service.port; do \
+		( set +o pipefail; \
+			helm template t test/helm/nebari-app \
+				--set cases.minimal.enabled=true \
+				--set "cases.minimal.$$f=" \
+				2>&1 >/dev/null | grep -q "$$f is required" \
+		) || { echo >&2 "expected required failure for $$f"; exit 1; }; \
+		echo "  required guard $$f: ok"; \
+	done
+	@# Verify the whole service block is guarded: render with an empty service, expect error
+	@( set +o pipefail; \
+		helm template t test/helm/nebari-app \
+			--set cases.minimal.enabled=true \
+			--set "cases.minimal.spec.service=" \
+			2>&1 >/dev/null | grep -q "spec.service is required" \
+	) || { echo >&2 "expected required failure for empty spec.service"; exit 1; }
+	@echo "  required guard spec.service: ok"
+	@# Verify port positivity is enforced client-side: port=0 must fail before the API server
+	@( set +o pipefail; \
+		helm template t test/helm/nebari-app \
+			--set cases.minimal.enabled=true \
+			--set "cases.minimal.spec.service.port=0" \
+			2>&1 >/dev/null | grep -q "must be >= 1" \
+	) || { echo >&2 "expected sub-minimum failure for spec.service.port=0"; exit 1; }
+	@echo "  positivity guard spec.service.port=0: ok"
+	@echo "✅ nebari-app chart tests passed"
 
 .PHONY: generate-dev
 generate-dev: ## Generate for development (CRDs + deepcopy code only)
@@ -278,6 +354,7 @@ KUSTOMIZE ?= $(LOCALBIN)/kustomize
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 ENVTEST ?= $(LOCALBIN)/setup-envtest
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
+GOVULNCHECK ?= $(LOCALBIN)/govulncheck
 
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5.7.1
@@ -294,6 +371,7 @@ ENVTEST_K8S_VERSION ?= $(shell v='$(call gomodver,k8s.io/api)'; \
   printf '%s\n' "$$v" | sed -E 's/^v?[0-9]+\.([0-9]+).*/1.\1/')
 
 GOLANGCI_LINT_VERSION ?= v2.5.0
+GOVULNCHECK_VERSION ?= v1.9.0
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
 $(KUSTOMIZE): $(LOCALBIN)
@@ -321,6 +399,11 @@ $(ENVTEST): $(LOCALBIN)
 golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
 $(GOLANGCI_LINT): $(LOCALBIN)
 	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
+
+.PHONY: govulncheck
+govulncheck: $(GOVULNCHECK) ## Download govulncheck locally if necessary.
+$(GOVULNCHECK): $(LOCALBIN)
+	$(call go-install-tool,$(GOVULNCHECK),golang.org/x/vuln/cmd/govulncheck,$(GOVULNCHECK_VERSION))
 
 # go-install-tool will 'go install' any package with custom target and name of binary, if it doesn't exist
 # $1 - target path with name of binary

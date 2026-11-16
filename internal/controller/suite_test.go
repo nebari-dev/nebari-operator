@@ -19,18 +19,22 @@ package controller
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	egv1alpha1 "github.com/envoyproxy/gateway/api/v1alpha1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	reconcilersv1 "github.com/nebari-dev/nebari-operator/api/v1"
 	// +kubebuilder:scaffold:imports
@@ -61,12 +65,22 @@ var _ = BeforeSuite(func() {
 	var err error
 	err = reconcilersv1.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
+	err = gatewayapiv1.Install(scheme.Scheme)
+	Expect(err).NotTo(HaveOccurred())
+	err = egv1alpha1.AddToScheme(scheme.Scheme)
+	Expect(err).NotTo(HaveOccurred())
 
 	// +kubebuilder:scaffold:scheme
 
 	By("bootstrapping test environment")
+	// The reconciler reads HTTPRoutes and SecurityPolicies even when routing
+	// and auth are unset, so their CRDs must exist in the API server.
 	testEnv = &envtest.Environment{
-		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "config", "crd", "bases")},
+		CRDDirectoryPaths: []string{
+			filepath.Join("..", "..", "config", "crd", "bases"),
+			filepath.Join(moduleDir("sigs.k8s.io/gateway-api"), "config", "crd", "standard"),
+			filepath.Join(moduleDir("github.com/envoyproxy/gateway"), "charts", "gateway-helm", "crds", "generated"),
+		},
 		ErrorIfCRDPathMissing: true,
 	}
 
@@ -91,6 +105,16 @@ var _ = AfterSuite(func() {
 	err := testEnv.Stop()
 	Expect(err).NotTo(HaveOccurred())
 })
+
+// moduleDir returns the local module cache directory of a dependency, so the
+// suite can install the CRDs it ships at the version pinned in go.mod.
+func moduleDir(module string) string {
+	out, err := exec.Command("go", "list", "-m", "-f", "{{.Dir}}", module).Output()
+	Expect(err).NotTo(HaveOccurred(), "resolving module directory for %s", module)
+	dir := strings.TrimSpace(string(out))
+	Expect(dir).NotTo(BeEmpty(), "module %s is not downloaded; run go mod download", module)
+	return dir
+}
 
 // getFirstFoundEnvTestBinaryDir locates the first binary in the specified path.
 // ENVTEST-based tests depend on specific binaries, usually located in paths set by

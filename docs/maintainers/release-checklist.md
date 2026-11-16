@@ -30,7 +30,7 @@ git pull origin main
 ### 2. Create and push the release tag
 
 ```bash
-# Create a tag (use semantic versioning)
+# Create a tag (EffVer; see ADR-003 for how to pick the number)
 git tag -a v1.2.3 -m "Release v1.2.3"
 
 # Push the tag to trigger the release workflow
@@ -81,7 +81,8 @@ Wait for all jobs to complete (typically 5-10 minutes):
 
 Check that all artifacts are attached to the release:
 - [ ] `install.yaml` - Kubernetes manifests for kubectl installation
-- [ ] `nebari-operator-<version>.tgz` - Helm chart package
+- [ ] `nebari-operator-<version>.tgz` - Operator Helm chart package
+- [ ] `nebari-app-<version>.tgz` - Library Helm chart package
 - [ ] `nebari-operator_<version>_<os>_<arch>.tar.gz` - Go binaries for each platform
 - [ ] `checksums.txt` - SHA256 checksums
 
@@ -174,4 +175,4 @@ gh release create v1.2.4 --generate-notes
 
 - [Release Process Documentation](./release-process.md)
 - [Makefile Reference](../makefile-reference.md)
-- [Semantic Versioning](https://semver.org/)
+- [Effort-based Versioning (EffVer)](https://jacobtomlinson.dev/effver/)

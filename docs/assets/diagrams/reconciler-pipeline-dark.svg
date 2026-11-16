@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="264" viewBox="0 0 1080 264" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">
+  <defs>
+    <linearGradient id="rail" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#14A18E"/><stop offset="1" stop-color="#2CD4BF"/>
+    </linearGradient>
+    <filter id="sh" x="-60%" y="-60%" width="220%" height="220%"><feDropShadow dx="0" dy="1.5" stdDeviation="2" flood-color="#000000" flood-opacity="0.45"/></filter>
+    <marker id="loop" markerWidth="8" markerHeight="8" refX="6" refY="2.5" orient="auto"><path d="M0,0 L0,5 L7,2.5 z" fill="#2CD4BF"/></marker>
+    <marker id="clean" markerWidth="8" markerHeight="8" refX="6" refY="2.5" orient="auto"><path d="M0,0 L0,5 L7,2.5 z" fill="#5f7d76"/></marker>
+  </defs>
+  <rect width="1080" height="264" fill="#0c1413" rx="12"/>
+  <text x="40" y="34" font-size="10.5" font-weight="700" letter-spacing="1.6" fill="#5f7d76">RECONCILE PIPELINE</text>
+
+  <!-- continuous requeue loop -->
+  <path d="M1010,120 L1010,66 Q1010,56 1000,56 L80,56 Q70,56 70,66 L70,123" fill="none" stroke="#2CD4BF" stroke-width="1.5" stroke-linejoin="round" opacity="0.9" marker-end="url(#loop)"/>
+  <text x="540" y="46" font-size="10.5" font-weight="500" fill="#2CD4BF" text-anchor="middle">reconciles continuously — steady-state requeue 1m</text>
+
+  <!-- rail -->
+  <line x1="70" y1="140" x2="1010" y2="140" stroke="url(#rail)" stroke-width="4" stroke-linecap="round"/>
+
+  <!-- stage names (above) -->
+  <g font-size="14.5" font-weight="700" fill="#e3efec" text-anchor="middle">
+    <text x="250" y="112">Core</text><text x="430" y="112">TLS</text>
+    <text x="610" y="112">Routing</text><text x="790" y="112">Auth</text>
+  </g>
+
+  <!-- stations -->
+  <circle cx="70" cy="140" r="15" fill="#0c1413" stroke="#2CD4BF" stroke-width="2.5"/>
+  <text x="70" y="144" font-size="9.5" font-weight="700" fill="#2CD4BF" text-anchor="middle">CR</text>
+
+  <g filter="url(#sh)">
+    <circle cx="250" cy="140" r="17" fill="#14A18E"/><circle cx="430" cy="140" r="17" fill="#14A18E"/>
+    <circle cx="610" cy="140" r="17" fill="#14A18E"/><circle cx="790" cy="140" r="17" fill="#14A18E"/>
+    <circle cx="1010" cy="140" r="20" fill="#0d8f7c"/>
+  </g>
+  <g font-size="13" font-weight="700" fill="#04140f" text-anchor="middle">
+    <text x="250" y="145">1</text><text x="430" y="145">2</text><text x="610" y="145">3</text><text x="790" y="145">4</text>
+  </g>
+  <path d="M1000,141 l6,7 l13,-15" fill="none" stroke="#04140f" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- resource sublabels (below), monospace -->
+  <text x="70" y="176" font-size="11.5" font-weight="700" fill="#e3efec" text-anchor="middle">NebariApp CR</text>
+  <text x="1010" y="176" font-size="11.5" font-weight="700" fill="#3BE0C9" text-anchor="middle">Ready</text>
+  <g font-family="ui-monospace,'Cascadia Code','Source Code Pro',Menlo,Consolas,monospace" font-size="9.5" fill="#8fa39d" text-anchor="middle">
+    <text x="70" y="190">create · update · drift</text>
+    <text x="250" y="176">namespace opt-in</text><text x="250" y="189">+ service exists</text>
+    <text x="430" y="176">Certificate</text><text x="430" y="189">+ HTTPS listener</text>
+    <text x="610" y="176">HTTPRoute</text><text x="610" y="189">+ public route</text>
+    <text x="790" y="176">SecurityPolicy · RBAC</text><text x="790" y="189">+ Keycloak client</text>
+    <text x="1010" y="190">serviceDiscovery set</text>
+  </g>
+
+  <!-- reverse cleanup -->
+  <path d="M796,222 L424,222" fill="none" stroke="#5f7d76" stroke-width="1.4" stroke-dasharray="5,4" marker-end="url(#clean)"/>
+  <text x="610" y="240" font-size="9.5" fill="#7d938c" text-anchor="middle">finalizer cleanup runs in reverse — Auth → Routing → TLS</text>
+</svg>

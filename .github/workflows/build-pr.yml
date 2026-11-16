@@ -16,6 +16,7 @@ on:
       - 'api/**'
       - 'internal/**'
       - 'hack/**'
+      - "charts/**"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -31,6 +32,26 @@ env:
   IMAGE_NAME: nebari/nebari-operator
 
 jobs:
+  changes:
+    name: Detect image-affecting changes
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.filter.outputs.image }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Filter changed paths
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            image:
+              - '**.go'
+              - 'go.mod'
+              - 'go.sum'
+              - 'Dockerfile'
+
   lint:
     name: Lint and Validate
     runs-on: ubuntu-latest
@@ -56,6 +77,9 @@ jobs:
         uses: golangci/golangci-lint-action@v9
         with:
           version: v2.5.0
+          # Build it with the module's Go: the released v2.5.0 binary is built
+          # with Go 1.25 and refuses a module that targets Go 1.26.
+          install-mode: goinstall
 
       - name: Generate manifests
         run: make manifests
@@ -78,6 +102,13 @@ jobs:
         run: |
           git diff --exit-code docs/api-reference.md || (echo "API reference is out of date. Run 'make docs'" && exit 1)
 
+      - name: Regenerate AGENTS.md generated blocks
+        run: make agents
+
+      - name: Check for stale AGENTS.md
+        run: |
+          git diff --exit-code AGENTS.md || (echo "AGENTS.md is out of date. Run 'make agents'" && exit 1)
+
   test:
     name: Unit Tests
     runs-on: ubuntu-latest
@@ -99,6 +130,10 @@ jobs:
     name: E2E Tests
     runs-on: ubuntu-latest
     needs: lint
+    # Hard cap so a hung setup step (e.g. an unbounded wait while installing
+    # foundational services) fails the job in minutes instead of squatting a
+    # runner until GitHub's 6h default. A healthy run finishes well under this.
+    timeout-minutes: 30
     env:
       CLUSTER_NAME: test-cluster
     steps:
@@ -170,6 +205,11 @@ jobs:
 
       - name: Set up Helm
         uses: azure/setup-helm@v5
+        with:
+          # Pin to Helm 3.x: setup-helm's "latest" now installs Helm 4, whose
+          # multi-document template output differs (trailing newline), which
+          # breaks the nebari-app golden tests. The goldens are Helm 3-rendered.
+          version: v3.19.0
 
       - name: Install foundational services
         run: dev/scripts/services/install.sh
@@ -226,6 +266,11 @@ jobs:
 
       - name: Set up Helm
         uses: azure/setup-helm@v5
+        with:
+          # Pin to Helm 3.x: setup-helm's "latest" now installs Helm 4, whose
+          # multi-document template output differs (trailing newline), which
+          # breaks the nebari-app golden tests. The goldens are Helm 3-rendered.
+          version: v3.19.0
 
       - name: Install kubebuilder
         run: |
@@ -238,6 +283,9 @@ jobs:
 
       - name: Lint Helm Chart
         run: helm lint ./dist/chart
+
+      - name: Test nebari-app library chart
+        run: make helm-test
 
       - name: Create KinD Cluster
         id: kind
@@ -273,7 +321,8 @@ jobs:
   build-multiarch:
     name: Build & Push (${{ matrix.platform }})
     runs-on: ${{ matrix.runner }}
-    needs: [test-chart, test, test-e2e]
+    needs: [changes, test-chart, test, test-e2e]
+    if: needs.changes.outputs.image == 'true'
     strategy:
       matrix:
         include:

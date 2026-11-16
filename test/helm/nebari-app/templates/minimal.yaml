@@ -1,0 +1,6 @@
+{{- if .Values.cases.minimal.enabled }}
+{{ include "nebari-app.nebariApp" (dict
+    "metadata" .Values.cases.minimal.metadata
+    "spec"     .Values.cases.minimal.spec
+) }}
+{{- end }}

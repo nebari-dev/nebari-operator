@@ -89,6 +89,23 @@ make lint
 - `make lint-fix` - Runs linter with auto-fix
 - `make lint-config` - Verifies linter configuration
 
+#### `make vuln`
+Runs [govulncheck](https://go.dev/doc/security/vuln/) and fails when a
+vulnerability is reachable from the operator's code and a fixed version exists.
+Advisories that are not reachable, or have no fix yet, are listed but do not
+fail.
+
+```bash
+make vuln
+```
+
+**Used in CI**:
+- ✅ PR builds that touch Go code or dependencies
+- ✅ Every push to `main`, and weekly on `main` for newly published advisories
+
+**When it fails**: bump the module (or the Go version in `go.mod`) to the
+version it names.
+
 
 
 ### Testing
@@ -104,7 +121,11 @@ make test
 - ✅ PR builds
 - ✅ Release workflow
 
-**Output**: Generates `cover.out` coverage profile.
+**Output**: Generates `cover.out` coverage profile. Exits non-zero when any test fails.
+
+Covers every package except `test/e2e`, including the envtest suite in `internal/controller`, which installs the Gateway API and Envoy Gateway CRDs from the Go module cache.
+
+If you see `compile: version "go1.X.Y" does not match go tool version ...`, the Go on your `PATH` is older than the one in `go.mod`, and the automatic toolchain switch breaks coverage builds for packages without tests. Install the `go.mod` version, or put it first on `PATH`: `PATH="$(go env GOROOT)/bin:$PATH" make test`.
 
 **When to use**: After making any code changes, before committing.
 

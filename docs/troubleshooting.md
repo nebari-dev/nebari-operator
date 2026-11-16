@@ -141,6 +141,51 @@ kubectl get gateway nebari-gateway -n envoy-gateway-system -o jsonpath='{.spec.l
 
 **Note:** When using internal services (accessed via Kubernetes DNS only), you typically don't need external routing at all. Consider whether a NebariApp resource is necessary for purely internal services.
 
+### Group Access (`auth.groups`) Issues
+
+These apply when a NebariApp sets `auth.groups` (see [Group-based access control](reconcilers/authentication.md#group-based-access-control)).
+
+```bash
+kubectl get nebariapp <name> -n <namespace> \
+  -o jsonpath='{.status.conditions[?(@.type=="AuthReady")].reason}{"\n"}'
+kubectl get events -n <namespace> --field-selector involvedObject.name=<name>
+```
+
+#### Symptom: a logged-in user gets 403
+
+The gateway admits a user only if their access token's `groups` claim holds one of the listed groups.
+
+- Entries are full paths matched exactly: `finance` means `/finance`, and `/finance` does not admit a member of `/finance/analysts` only. List each subgroup that needs access.
+- Check the values the gateway enforces:
+  ```bash
+  kubectl get securitypolicy <name>-security -n <namespace> -o jsonpath='{.spec.authorization}'
+  ```
+- Group changes reach the gateway with the next access token. A user removed from a group keeps access until their token expires (5 minutes by default); a user just added should sign out and back in.
+
+#### Symptom: `Ready=False` with reason `GroupsRequireKeycloak`, `GroupsClaimConflict` or `GroupsEmpty`
+
+Every request is denied until the configuration is fixed.
+
+- `GroupsRequireKeycloak`: `auth.groups` with `provider: generic-oidc` and `enforceAtGateway: true`. Gateway enforcement needs `provider: keycloak`; otherwise set `enforceAtGateway: false` and check the groups in the application.
+- `GroupsClaimConflict`: a mapper in `keycloakConfig.protocolMappers` writes the `groups` claim but is not an `oidc-group-membership-mapper` with `full.path: "true"` and `access.token.claim: "true"`. Fix that mapper or remove it so the operator adds its own.
+- `GroupsEmpty`: every entry is empty after normalization, for example `"/"`.
+
+#### Symptom: `Ready=False` with reason `GroupsNotResolved`
+
+A listed path does not exist in Keycloak. Paths are never created, so create the group in Keycloak, or list a top-level group by bare name to have the operator create it. The SecurityPolicy is still applied, and the lookup is retried every minute.
+
+#### Symptom: every request is denied while `AuthReady=True`
+
+With `provider: keycloak` and `provisionClient: false`, the operator does not manage the client's mappers. The client must emit full group paths in an access-token `groups` claim.
+
+#### Symptom: a mapper added to the client in Keycloak disappeared
+
+While `auth.groups` is set, provisioning deletes any mapper on the app's client that writes the `groups` claim and is not in `keycloakConfig.protocolMappers`, and records a `GroupsMappersRemoved` Warning event naming it. Declare the mapper in the NebariApp instead.
+
+#### Symptom: users were logged out after an upgrade
+
+Apps that enforce groups at the gateway use the access-token cookie `nebari-at-<namespace>-<name>`, so users are logged out once when an app starts enforcing.
+
 ### Operator Logs
 
 View operator logs for detailed troubleshooting:

@@ -1,0 +1,16 @@
+# What each persona gets from group-paths, which admits /ct-team-b and
+# /ct-team-a/sub. See ../README.md.
+paths:
+  /:
+    anonymous: login
+    no-group: 403
+    # Listing a subgroup does not admit members of its parent.
+    team-a: 403
+    team-a-sub: 200
+    team-b: 200
+  /healthz:
+    anonymous: 200
+    no-group: 200
+    team-a: 200
+    team-a-sub: 200
+    team-b: 200

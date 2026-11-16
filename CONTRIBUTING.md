@@ -159,6 +159,7 @@ make run
 4. Update controller logic in `internal/controller/`
 5. Add tests
 6. Document in `docs/configuration-reference.md`
+7. If adding a required field, update Helm chart validation in `charts/nebari-app/templates/_nebari-app.tpl` and regenerate golden files with `make helm-test-generate-golden`
 
 ### Debugging
 

@@ -1,0 +1,6 @@
+{{- if .Values.cases.static.enabled }}
+{{ include "nebari-app.nebariApp" (dict
+    "metadata" .Values.cases.static.metadata
+    "spec"     .Values.cases.static.spec
+) }}
+{{- end }}

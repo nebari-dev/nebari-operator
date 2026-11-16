@@ -223,9 +223,41 @@ type AuthConfig struct {
 	// +optional
 	Scopes []string `json:"scopes,omitempty"`
 
-	// Groups specifies the list of groups that should have access to this application.
-	// When specified, only users belonging to these groups will be authorized.
-	// Group matching is case-sensitive and depends on the OIDC provider's group claim.
+	// Groups lists the Keycloak groups whose members may access this application.
+	// When enforceAtGateway is true and the provider is keycloak, the gateway
+	// denies every request whose access token has none of these groups in its
+	// "groups" claim (HTTP 403).
+	//
+	// With provider="keycloak" and provisionClient=true, each entry is a Keycloak
+	// group path, such as "/team-example" or "/parent/child". A bare name such as
+	// "team-example" is shorthand for the top-level group "/team-example", and
+	// "team-example" and "/team-example" refer to the same group.
+	//
+	//   - Bare name: the top-level group is created in Keycloak if missing.
+	//   - Path: never created. If it does not exist, the rest of the auth
+	//     configuration, including the SecurityPolicy, is still applied, but
+	//     AuthReady and Ready are set to False with reason GroupsNotResolved
+	//     until the group exists. The lookup is retried every minute.
+	//
+	// Entries are matched as full group paths, exactly and case-sensitively:
+	// "finance" is treated as "/finance", and "/finance" does not admit members
+	// of "/finance/analysts" only. List each subgroup that needs access.
+	//
+	// Removing a user from a group takes effect when their access token expires
+	// (the realm's access token lifespan, 5 minutes by default).
+	//
+	// For provider="generic-oidc", the operator does not create or resolve
+	// entries, and GroupsNotResolved never fires. With enforceAtGateway true,
+	// setting groups denies every request (AuthReady reason GroupsRequireKeycloak
+	// with provisionClient false, ProvisioningNotSupported otherwise). With
+	// enforceAtGateway false, the application must enforce the claim its
+	// provider emits.
+	//
+	// With provider="keycloak" and provisionClient=false the operator does not
+	// manage the client's mappers, so the client must emit full group paths in
+	// an access-token "groups" claim. Otherwise every request is denied while
+	// AuthReady stays True.
+	// +kubebuilder:validation:items:MinLength=1
 	// +optional
 	Groups []string `json:"groups,omitempty"`
 
@@ -292,6 +324,10 @@ type AuthConfig struct {
 	// using the OAuth2 Device Authorization Grant (RFC 8628).
 	// When enabled, the operator provisions a separate public client configured for device flow.
 	// The device flow client ID is written to the OIDC client Secret under key "device-client-id".
+	// Turning it off deletes the device flow client from Keycloak.
+	// Its client ID is "<namespace>-<name>-device", which is also the main client ID of an app
+	// named "<name>-device" in the same namespace. A client with that ID that is not a public
+	// device flow client is never changed or deleted; with device flow on, provisioning fails.
 	// Only supported for provider="keycloak".
 	// +optional
 	DeviceFlowClient *DeviceFlowClientConfig `json:"deviceFlowClient,omitempty"`
@@ -307,6 +343,7 @@ type AuthConfig struct {
 	// When enabled, other NebariApp OIDC clients in the same Keycloak realm can
 	// exchange their access tokens for tokens with this client's audience.
 	// Requires KC_FEATURES=token-exchange on the Keycloak server.
+	// Turning it off removes the token exchange permissions from the client.
 	// Only supported for provider="keycloak".
 	// +optional
 	TokenExchange *TokenExchangeConfig `json:"tokenExchange,omitempty"`
@@ -342,7 +379,9 @@ type KeycloakClientConfig struct {
 
 // KeycloakGroup defines a Keycloak group to create in the realm with optional member assignments.
 type KeycloakGroup struct {
-	// Name is the group name to create in Keycloak.
+	// Name is the group to sync in Keycloak, as a bare name or a path, with the
+	// same rules as spec.auth.groups. An entry that names the same group as
+	// spec.auth.groups takes precedence over it.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	Name string `json:"name"`
@@ -370,7 +409,8 @@ type KeycloakProtocolMapperConfig struct {
 
 	// Config is the mapper configuration as arbitrary key-value pairs.
 	// Keys and values are specific to the mapper type.
-	// Example for group-membership mapper: {"claim.name": "groups", "full.path": "false"}
+	// Example for group-membership mapper: {"claim.name": "groups", "full.path": "true", "access.token.claim": "true"}
+	// (with spec.auth.groups set, a groups mapper must emit full paths in the access token)
 	// +optional
 	Config map[string]string `json:"config,omitempty"`
 }
@@ -660,6 +700,13 @@ type NebariAppStatus struct {
 	// +optional
 	AuthConfigHash string `json:"authConfigHash,omitempty"`
 
+	// TokenExchangeConfigured is true once the operator has configured token
+	// exchange on this app's OIDC client. When spec.auth.tokenExchange is turned
+	// off while this is true, the operator removes the token exchange permissions
+	// from the client and clears it.
+	// +optional
+	TokenExchangeConfigured bool `json:"tokenExchangeConfigured,omitempty"`
+
 	// ServiceDiscovery is the computed service discovery descriptor.
 	// The controller populates this after reconciling spec.landingPage so the
 	// webapi watcher can consume a pre-validated, URL-resolved view via
@@ -770,10 +817,50 @@ const (
 	// UserProvidedSecretNotFound so operators can tell "the secret is missing" apart from "we could
 	// not tell whether the secret is missing".
 	ReasonUserProvidedSecretCheckFailed = "UserProvidedSecretCheckFailed"
+
+	// ReasonGroupsNotResolved indicates that one or more spec.auth.groups paths do
+	// not exist in the identity provider. The rest of the auth configuration,
+	// including the SecurityPolicy, is applied, and the lookup is retried.
+	ReasonGroupsNotResolved = "GroupsNotResolved"
+
+	// ReasonGroupsRequireKeycloak indicates spec.auth.groups is set with a provider
+	// that cannot enforce groups at the gateway. Every request is denied.
+	ReasonGroupsRequireKeycloak = "GroupsRequireKeycloak"
+
+	// ReasonGroupsClaimConflict indicates a custom protocol mapper emits the groups
+	// claim in a format the gateway rule cannot match. Every request is denied.
+	ReasonGroupsClaimConflict = "GroupsClaimConflict"
+
+	// ReasonGroupsEnforcedByApplication indicates spec.auth.groups is set with
+	// enforceAtGateway=false, so the application must check the groups claim.
+	ReasonGroupsEnforcedByApplication = "GroupsEnforcedByApplication"
+
+	// ReasonGroupsEmpty indicates every spec.auth.groups entry is empty after
+	// normalization (for example "/" or whitespace), so no group is admitted.
+	// Every request is denied.
+	ReasonGroupsEmpty = "GroupsEmpty"
+
+	// ReasonTokenExchangeFailed indicates token exchange permissions could not be
+	// configured on the client while spec.auth.tokenExchange enables it.
+	ReasonTokenExchangeFailed = "TokenExchangeFailed"
+
+	// ReasonTokenExchangeCleanupFailed indicates spec.auth.tokenExchange was
+	// turned off but the token exchange permissions could not be removed from the
+	// client, so other clients may still exchange tokens for its audience.
+	ReasonTokenExchangeCleanupFailed = "TokenExchangeCleanupFailed"
 )
 
 // Event reasons for recording Kubernetes events
 const (
+	// EventReasonGroupsMappersRemoved is used when provisioning deletes protocol
+	// mappers that wrote the groups claim without being declared in
+	// spec.auth.keycloakConfig.protocolMappers.
+	EventReasonGroupsMappersRemoved = "GroupsMappersRemoved"
+
+	// EventReasonTokenExchangeRemoved is used when token exchange is removed from
+	// the client after spec.auth.tokenExchange was turned off.
+	EventReasonTokenExchangeRemoved = "TokenExchangeRemoved"
+
 	// EventReasonValidationFailed is used when validation fails
 	EventReasonValidationFailed = "ValidationFailed"
 
@@ -806,6 +893,10 @@ const (
 
 	// EventReasonAuthConfigured is used when auth is successfully configured
 	EventReasonAuthConfigured = "AuthConfigured"
+
+	// EventReasonConfigured is used when the auth reconciler finishes configuring
+	// authentication, including when the application enforces spec.auth.groups
+	EventReasonConfigured = "Configured"
 
 	// EventReasonAuthFailed is used when auth configuration fails
 	EventReasonAuthFailed = "AuthFailed"
