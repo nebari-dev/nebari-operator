@@ -56,6 +56,10 @@ const (
 
 	// ClientSecretSuffix is appended to NebariApp name for OIDC client secret resources
 	ClientSecretSuffix = "oidc-client"
+
+	// DatabaseSuffix ends the name of every CloudNativePG Cluster the operator
+	// provisions: "<nebariapp-name>-<db-name>-db".
+	DatabaseSuffix = "db"
 )
 
 // Annotation constants

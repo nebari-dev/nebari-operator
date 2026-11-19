@@ -10,9 +10,10 @@ aspect of application onboarding:
 - **Validation Reconciler** - Ensures prerequisites are met (namespace opt-in, service exists)
 - **Routing Reconciler** - Creates and manages Gateway API HTTPRoutes for traffic routing
 - **Authentication Reconciler** - Provisions OIDC clients and configures SecurityPolicy for authentication
+- **Database Reconciler** - Provisions managed PostgreSQL databases through CloudNativePG
 
 These reconcilers work together in a coordinated pipeline to transform a simple `NebariApp` custom resource into a fully
-configured application with routing, TLS, and optional authentication.
+configured application with routing, TLS, optional authentication, and optional managed databases.
 
 ## Platform Context
 
@@ -32,6 +33,7 @@ flowchart TB
     Core[Core Validator]
     Routing[Routing Reconciler]
     Auth[Auth Reconciler]
+    Database[Database Reconciler]
   end
 
   AppCR --> Core
@@ -42,6 +44,9 @@ flowchart TB
   Auth --> KC[Keycloak Client Optional]
   KC --> Secret[K8s Secret]
   Secret --> SecPol
+
+  Core --> Database --> PG[CloudNativePG Cluster Optional]
+  PG --> DBSecret[K8s Secret]
 ```
 
 ## Reconciliation Flow
@@ -64,7 +69,7 @@ flowchart TD
     Routing -->|No| Fail3[Set RoutingReady=False<br/>Emit Event]
     Routing -->|Yes| AuthCheck{Auth<br/>Enabled?}
 
-    AuthCheck -->|No| Success[Set Ready=True<br/>Complete]
+    AuthCheck -->|No| DBCheck{Databases<br/>Requested?}
     AuthCheck -->|Yes| Auth[Authentication Reconciler]
 
     Auth --> Provider[Get OIDC Provider]
@@ -78,16 +83,27 @@ flowchart TD
 
     SecPol --> AuthReady{Auth<br/>Ready?}
     AuthReady -->|No| Fail4[Set AuthReady=False<br/>Emit Event]
-    AuthReady -->|Yes| Success
+    AuthReady -->|Yes| DBCheck
+
+    DBCheck -->|No| Success[Set Ready=True<br/>Complete]
+    DBCheck -->|Yes| DB[Database Reconciler]
+
+    DB --> Cluster[Create/Update a CNPG Cluster per entry<br/>Publish Credentials Secrets]
+    Cluster --> DBReady{All Databases<br/>Ready?}
+
+    DBReady -->|No| Fail5[Set DatabaseReady=False<br/>Requeue]
+    DBReady -->|Yes| Success
 
     style Core fill:#e1f5ff
     style Route fill:#fff4e6
     style Auth fill:#f3e5f5
+    style DB fill:#e0f2f1
     style Success fill:#e8f5e9
     style Fail1 fill:#ffebee
     style Fail2 fill:#ffebee
     style Fail3 fill:#ffebee
     style Fail4 fill:#ffebee
+    style Fail5 fill:#ffebee
 ```
 
 ## Reconciler Pipeline
@@ -141,6 +157,23 @@ flowchart TD
 
 **Details:** [authentication.md](authentication.md)
 
+### 4. Database Reconciler
+
+**Purpose:** Provision managed PostgreSQL databases via CloudNativePG
+
+**Responsibilities:**
+- Create or update one CloudNativePG Cluster per `spec.databases` entry
+- Wait for each database to become ready, independently of the others
+- Normalize generated secrets into well-known Secret format
+- Scope read access to the app's ServiceAccount
+- Retain, and never delete, a database whose entry is removed
+
+**Outcomes:**
+- ✅ `DatabaseReady=True` - Every requested database ready, credentials published
+- ❌ `DatabaseReady=False` - A database is not ready or cannot be provisioned, or CNPG is not installed
+
+**Details:** [database.md](database.md)
+
 ## Condition Types
 
 The operator manages these conditions on each `NebariApp`:
@@ -151,6 +184,7 @@ The operator manages these conditions on each `NebariApp`:
 | `RoutingReady` | HTTPRoute created and Gateway is routing traffic | Routing reconciler |
 | `TLSReady` | TLS certificate ready and listener attached (when TLS is enabled) | TLS reconciler |
 | `AuthReady` | Authentication configured (if enabled) | Authentication reconciler |
+| `DatabaseReady` | Every requested database provisioned and credentials available (if any are requested) | Database reconciler |
 
 ### Condition Reasons
 
@@ -182,6 +216,11 @@ Common reasons you'll see in conditions:
 - `UserProvidedSecretNotFound` - `routing.tls.secretName` is set but the secret does not exist in `envoy-gateway-system`. The listener is still attached so Envoy will pick the secret up as soon as it is created.
 - `UserProvidedSecretInvalidType` - The named secret exists but is not type `kubernetes.io/tls`
 - `UserProvidedSecretCheckFailed` - The operator could not determine the secret's state (transient API error, RBAC failure). Distinct from `UserProvidedSecretNotFound`.
+
+**DatabaseReady-specific:**
+- `DatabaseProvisioning` - A CNPG Cluster or its credentials are not ready yet (the reconciler polls until ready)
+- `DatabaseRetained` - No database is requested any more, but earlier ones still exist (data is retained)
+- `CNPGNotInstalled` - CloudNativePG CRDs are missing on this cluster (re-checked every 5 minutes)
 
 ## Event Recording
 
@@ -223,6 +262,11 @@ Reconcilers emit Kubernetes events to provide visibility into operations:
 - `TokenExchangeCleanupFailed` (Warning) - `auth.tokenExchange` was turned off but its permissions could not be removed; other clients can still exchange tokens for this client's audience
 
 See [authentication.md](authentication.md#events) for messages.
+
+**Database Events:**
+- `DatabaseProvisioned` (Normal) - A managed database is ready and its credentials are published
+- `DatabaseProvisionFailed` (Warning) - A database cannot be provisioned
+- `DatabaseRetained` (Warning) - An entry was removed from `spec.databases`; the CNPG Cluster and its data are retained
 
 View events for a NebariApp:
 ```bash
@@ -350,6 +394,7 @@ Dive deeper into each reconciler:
 - **[Validation Reconciler](validation.md)** - Detailed validation logic and error scenarios
 - **[Routing Reconciler](routing.md)** - HTTPRoute management and Gateway integration
 - **[Authentication Reconciler](authentication.md)** - OIDC provider integration and SecurityPolicy configuration
+- **[Database Reconciler](database.md)** - Managed PostgreSQL provisioning through CloudNativePG
 
 ## Debugging Reconcilers
 

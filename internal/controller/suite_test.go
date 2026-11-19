@@ -27,6 +27,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	cnpgv1 "github.com/cloudnative-pg/api/pkg/api/v1"
 	egv1alpha1 "github.com/envoyproxy/gateway/api/v1alpha1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
@@ -69,6 +70,8 @@ var _ = BeforeSuite(func() {
 	Expect(err).NotTo(HaveOccurred())
 	err = egv1alpha1.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
+	err = cnpgv1.AddToScheme(scheme.Scheme)
+	Expect(err).NotTo(HaveOccurred())
 
 	// +kubebuilder:scaffold:scheme
 
@@ -80,6 +83,9 @@ var _ = BeforeSuite(func() {
 			filepath.Join("..", "..", "config", "crd", "bases"),
 			filepath.Join(moduleDir("sigs.k8s.io/gateway-api"), "config", "crd", "standard"),
 			filepath.Join(moduleDir("github.com/envoyproxy/gateway"), "charts", "gateway-helm", "crds", "generated"),
+			// The CloudNativePG API module ships no CRD manifests, so the
+			// suite installs a minimal stand-in for the Cluster CRD.
+			filepath.Join("testdata", "crds"),
 		},
 		ErrorIfCRDPathMissing: true,
 	}

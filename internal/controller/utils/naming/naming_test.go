@@ -308,3 +308,70 @@ func TestGatewayName(t *testing.T) {
 		})
 	}
 }
+
+func TestDatabaseNames(t *testing.T) {
+	app := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{Name: "myapp", Namespace: "team-a"},
+	}
+
+	if got := DatabaseClusterName(app, "main"); got != "myapp-main-db" {
+		t.Errorf("DatabaseClusterName() = %q, want %q", got, "myapp-main-db")
+	}
+	if got := DatabaseAppSecretName(app, "main"); got != "myapp-main-db-app" {
+		t.Errorf("DatabaseAppSecretName() = %q, want %q", got, "myapp-main-db-app")
+	}
+	if got := DatabaseSecretName(app, "main"); got != "myapp-main-db-credentials" {
+		t.Errorf("DatabaseSecretName() = %q, want %q", got, "myapp-main-db-credentials")
+	}
+	if got := DatabaseSecretReaderName(app); got != "myapp-db-secret-reader" {
+		t.Errorf("DatabaseSecretReaderName() = %q, want %q", got, "myapp-db-secret-reader")
+	}
+}
+
+func TestValidateDatabaseClusterName(t *testing.T) {
+	// "<app>-main-db" adds 8 characters to the app name.
+	ok := &appsv1.NebariApp{ObjectMeta: metav1.ObjectMeta{Name: strings.Repeat("a", 42)}}
+	if err := ValidateDatabaseClusterName(ok, "main"); err != nil {
+		t.Errorf("42-char name (50-char cluster name) should validate, got: %v", err)
+	}
+	long := &appsv1.NebariApp{ObjectMeta: metav1.ObjectMeta{Name: strings.Repeat("a", 43)}}
+	err := ValidateDatabaseClusterName(long, "main")
+	if err == nil {
+		t.Fatal("43-char name (51-char cluster name) must fail")
+	}
+	if !strings.Contains(err.Error(), "50") {
+		t.Errorf("error should state the 50-character limit, got: %v", err)
+	}
+}
+
+func TestDatabaseForAppSecret(t *testing.T) {
+	app := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{Name: "foo", Namespace: "team-a"},
+		Spec: appsv1.NebariAppSpec{
+			Databases: []appsv1.DatabaseConfig{{Name: "main"}, {Name: "bar-baz"}},
+		},
+	}
+
+	tests := []struct {
+		secretName string
+		wantName   string
+		wantOK     bool
+	}{
+		{"foo-main-db-app", "main", true},
+		{"foo-bar-baz-db-app", "bar-baz", true},
+		{"foo-main-db-credentials", "", false},
+		{"foo-other-db-app", "", false},
+		{"foo-db-app", "", false},
+		{"unrelated", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.secretName, func(t *testing.T) {
+			gotName, gotOK := DatabaseForAppSecret(app, tt.secretName)
+			if gotName != tt.wantName || gotOK != tt.wantOK {
+				t.Errorf("DatabaseForAppSecret(%q) = (%q, %v), want (%q, %v)",
+					tt.secretName, gotName, gotOK, tt.wantName, tt.wantOK)
+			}
+		})
+	}
+}

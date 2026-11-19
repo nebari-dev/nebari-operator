@@ -112,3 +112,64 @@ func GatewayName(nebariApp *appsv1.NebariApp) string {
 	}
 	return constants.PublicGatewayName
 }
+
+// DatabaseClusterName returns the name of the CloudNativePG Cluster
+// provisioned for the spec.databases entry called dbName.
+// Pattern: <nebariapp-name>-<db-name>-db
+func DatabaseClusterName(nebariApp *appsv1.NebariApp, dbName string) string {
+	return fmt.Sprintf("%s-%s-%s", nebariApp.Name, dbName, constants.DatabaseSuffix)
+}
+
+// DatabaseAppSecretName returns the name of the connection Secret that
+// CloudNativePG generates for the Cluster's application user
+// ("<cluster>-app" by CNPG convention).
+func DatabaseAppSecretName(nebariApp *appsv1.NebariApp, dbName string) string {
+	return DatabaseClusterName(nebariApp, dbName) + DatabaseAppSecretSuffix
+}
+
+// DatabaseSecretName returns the name of the normalized database credentials
+// Secret the operator writes for the app (keys: host, port, username,
+// password, database, uri).
+func DatabaseSecretName(nebariApp *appsv1.NebariApp, dbName string) string {
+	return DatabaseClusterName(nebariApp, dbName) + "-credentials"
+}
+
+// DatabaseSecretReaderName returns the name of the Role and RoleBinding that
+// let the app's ServiceAccount read its database credentials Secrets.
+func DatabaseSecretReaderName(nebariApp *appsv1.NebariApp) string {
+	return fmt.Sprintf("%s-%s-secret-reader", nebariApp.Name, constants.DatabaseSuffix)
+}
+
+// DatabaseAppSecretSuffix is the suffix CloudNativePG appends to a Cluster
+// name to form the name of its generated application-user Secret.
+const DatabaseAppSecretSuffix = "-app"
+
+// maxCNPGClusterNameLength is CloudNativePG's validating-webhook cap on
+// Cluster names: the name seeds Service names like "<cluster>-rw" that must
+// fit 63-character DNS labels, so CNPG rejects names longer than 50.
+const maxCNPGClusterNameLength = 50
+
+// ValidateDatabaseClusterName rejects a NebariApp name and database name
+// whose derived CNPG Cluster name would be refused by CloudNativePG's
+// admission webhook. It is called per spec.databases entry, so long app names
+// without a database stay valid.
+func ValidateDatabaseClusterName(nebariApp *appsv1.NebariApp, dbName string) error {
+	name := DatabaseClusterName(nebariApp, dbName)
+	if len(name) > maxCNPGClusterNameLength {
+		return fmt.Errorf("database cluster name %q is %d characters; CloudNativePG requires at most %d (shorten the database name, or recreate the app with a shorter name)", name, len(name), maxCNPGClusterNameLength)
+	}
+	return nil
+}
+
+// DatabaseForAppSecret reports which spec.databases entry of nebariApp, if
+// any, the CloudNativePG-generated app-user Secret called secretName belongs
+// to. The Secret name cannot be split back into an app name and a database
+// name (both may contain hyphens), so callers match candidates forwards.
+func DatabaseForAppSecret(nebariApp *appsv1.NebariApp, secretName string) (dbName string, ok bool) {
+	for _, db := range nebariApp.Spec.Databases {
+		if DatabaseAppSecretName(nebariApp, db.Name) == secretName {
+			return db.Name, true
+		}
+	}
+	return "", false
+}

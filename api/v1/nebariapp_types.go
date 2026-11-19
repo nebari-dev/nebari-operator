@@ -51,8 +51,8 @@ type NebariAppSpec struct {
 	Gateway string `json:"gateway,omitempty"`
 
 	// ServiceAccountName is the name of the Kubernetes ServiceAccount used by the
-	// app's pods. Used for RBAC scoping of OIDC secrets so only the app's pods
-	// can read its credentials. Defaults to the NebariApp's name if omitted.
+	// app's pods. Used for RBAC scoping of OIDC and database credentials secrets
+	// so only the app's pods can read them. Defaults to the NebariApp's name if omitted.
 	// +optional
 	// +kubebuilder:validation:MinLength=1
 	ServiceAccountName string `json:"serviceAccountName,omitempty"`
@@ -61,6 +61,27 @@ type NebariAppSpec struct {
 	// When enabled, the service will be discoverable through the landing page portal.
 	// +optional
 	LandingPage *LandingPageConfig `json:"landingPage,omitempty"`
+
+	// Databases requests managed PostgreSQL databases for this application.
+	// Each entry provisions its own CloudNativePG Cluster named
+	// "<app>-<name>-db" and a credentials Secret named
+	// "<app>-<name>-db-credentials" with keys: host, port, username, password,
+	// database, uri. Read access to those Secrets is scoped to the app's
+	// ServiceAccount.
+	//
+	// Requires the CloudNativePG operator on the cluster (in Nebari, NIC
+	// installs it on every GitOps bootstrap as foundational infrastructure).
+	//
+	// Removing an entry never deletes its database: the operator stops
+	// managing the Cluster and reports it as retained. Renaming an entry is a
+	// removal plus an addition, so it yields a new, empty database. Deleting
+	// the NebariApp deletes every database it owns, and their data, via owner
+	// references.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=10
+	Databases []DatabaseConfig `json:"databases,omitempty"`
 }
 
 // ServiceReference identifies the Kubernetes Service that backs this application.
@@ -518,6 +539,46 @@ type LandingPageConfig struct {
 	HealthCheck *HealthCheckConfig `json:"healthCheck,omitempty"`
 }
 
+// DatabaseConfig requests one managed PostgreSQL database, backed by its own
+// CloudNativePG Cluster.
+type DatabaseConfig struct {
+	// Name identifies this database within the NebariApp and is part of the
+	// names of the resources created for it ("<app>-<name>-db" and
+	// "<app>-<name>-db-credentials"). It does not name anything inside
+	// PostgreSQL: the database and its owner keep CloudNativePG's defaults,
+	// and packs read the real values from the credentials Secret.
+	//
+	// CloudNativePG caps Cluster names at 50 characters, so "<app>-<name>-db"
+	// must fit within that.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=20
+	// +kubebuilder:validation:Pattern=`^[a-z]([-a-z0-9]*[a-z0-9])?$`
+	Name string `json:"name"`
+
+	// Instances is the number of PostgreSQL instances (1 primary plus N-1 replicas, maximum 9).
+	// The cap is a platform guardrail, not a CloudNativePG limit.
+	//
+	// A single-instance database has no PodDisruptionBudget, so draining its
+	// node takes it down until the pod is running again. With two or more
+	// instances CloudNativePG's PodDisruptionBudgets are kept and a drain
+	// fails over to a replica first.
+	// +kubebuilder:default=1
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=9
+	// +optional
+	Instances int32 `json:"instances,omitempty"`
+
+	// Size is the storage request for each instance, as a Kubernetes quantity.
+	// Size cannot be decreased once set (CloudNativePG restriction).
+	// +kubebuilder:default="1Gi"
+	// +kubebuilder:validation:MaxLength=32
+	// +kubebuilder:validation:XValidation:rule="sign(quantity(self)) > 0",message="size must be greater than zero"
+	// +kubebuilder:validation:Pattern=`^[0-9]+(\.[0-9]+)?(Ki|Mi|Gi|Ti|Pi|Ei|k|M|G|T|P|E)?$`
+	// +optional
+	Size string `json:"size,omitempty"`
+}
+
 // HealthCheckConfig defines health check parameters for a service.
 type HealthCheckConfig struct {
 	// Enabled determines if health checks are performed.
@@ -614,6 +675,7 @@ type NebariAppStatus struct {
 	//   - "RoutingReady": HTTPRoute has been created and is functioning
 	//   - "TLSReady": TLS certificate is available and configured
 	//   - "AuthReady": Authentication policy is configured (if auth is enabled)
+	//   - "DatabaseReady": Every requested database is provisioned and its credentials are available (if databases are requested)
 	//   - "Ready": All components are ready (aggregate condition)
 	// +listType=map
 	// +listMapKey=type
@@ -637,6 +699,14 @@ type NebariAppStatus struct {
 	// ClientSecretRef identifies the Secret containing OIDC client credentials.
 	// +optional
 	ClientSecretRef *ResourceReference `json:"clientSecretRef,omitempty"`
+
+	// Databases reports the state of each managed database: one entry per
+	// entry in spec.databases, plus one for every retained database (a
+	// database whose entry was removed from the spec).
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	Databases []DatabaseStatus `json:"databases,omitempty"`
 
 	// AuthConfigHash stores a SHA-256 hash of the last successfully provisioned OIDC
 	// client configuration. When this matches the hash of the current spec, and the
@@ -682,6 +752,26 @@ type ResourceReference struct {
 	Namespace string `json:"namespace,omitempty"`
 }
 
+// DatabaseStatus reports the state of one managed database.
+type DatabaseStatus struct {
+	// Name is the database's name, as given in spec.databases.
+	Name string `json:"name"`
+
+	// SecretRef identifies the Secret containing this database's connection
+	// credentials (keys: host, port, username, password, database, uri). It
+	// is set once the credentials have been published.
+	// +optional
+	SecretRef *ResourceReference `json:"secretRef,omitempty"`
+
+	// Retained is true when this database's entry was removed from
+	// spec.databases. The CloudNativePG Cluster and its data still exist, but
+	// the operator no longer manages them or refreshes the credentials
+	// Secret. Add the entry back to resume management, or delete the Cluster
+	// to remove the database and its data.
+	// +optional
+	Retained bool `json:"retained,omitempty"`
+}
+
 // Condition types for NebariApp
 const (
 	// ConditionTypeRoutingReady indicates that the HTTPRoute has been created
@@ -695,6 +785,10 @@ const (
 	// ConditionTypeAuthReady indicates that authentication is properly configured.
 	// This includes the SecurityPolicy being created and the client secret being available.
 	ConditionTypeAuthReady = "AuthReady"
+
+	// ConditionTypeDatabaseReady indicates that every managed database is
+	// provisioned and its credentials Secret is available.
+	ConditionTypeDatabaseReady = "DatabaseReady"
 
 	// ConditionTypeReady is an aggregate condition indicating all components are ready.
 	ConditionTypeReady = "Ready"
@@ -731,6 +825,18 @@ const (
 
 	// ReasonCertificateNotReady indicates the cert-manager Certificate is not ready
 	ReasonCertificateNotReady = "CertificateNotReady"
+
+	// ReasonDatabaseProvisioning indicates the database cluster is being created
+	ReasonDatabaseProvisioning = "DatabaseProvisioning"
+
+	// ReasonDatabaseRetained indicates that no database is requested any more
+	// but previously provisioned ones still exist (a database is never deleted
+	// by removing its entry; see the spec.databases field documentation)
+	ReasonDatabaseRetained = "DatabaseRetained"
+
+	// ReasonCNPGNotInstalled indicates the CloudNativePG operator (and its CRDs)
+	// is not installed on this cluster
+	ReasonCNPGNotInstalled = "CNPGNotInstalled"
 
 	// ReasonGatewayListenerConflict indicates the Gateway listener conflicts with another NebariApp
 	ReasonGatewayListenerConflict = "GatewayListenerConflict"
@@ -838,6 +944,16 @@ const (
 
 	// EventReasonClientProvisionFailed is used when OIDC client provisioning fails
 	EventReasonClientProvisionFailed = "ClientProvisionFailed"
+
+	// EventReasonDatabaseProvisioned is used when a managed database becomes ready
+	EventReasonDatabaseProvisioned = "DatabaseProvisioned"
+
+	// EventReasonDatabaseProvisionFailed is used when database provisioning fails
+	EventReasonDatabaseProvisionFailed = "DatabaseProvisionFailed"
+
+	// EventReasonDatabaseRetained is used when an entry is removed from
+	// spec.databases while its database still exists
+	EventReasonDatabaseRetained = "DatabaseRetained"
 
 	// EventReasonSecurityPolicyCreated is used when SecurityPolicy is created
 	EventReasonSecurityPolicyCreated = "SecurityPolicyCreated"

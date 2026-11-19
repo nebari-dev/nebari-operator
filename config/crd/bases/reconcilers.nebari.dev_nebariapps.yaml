@@ -352,6 +352,75 @@ spec:
                   rule: '!has(self.forwardAccessToken) || self.forwardAccessToken
                     == false || (has(self.enforceAtGateway) && self.enforceAtGateway
                     == true)'
+              databases:
+                description: |-
+                  Databases requests managed PostgreSQL databases for this application.
+                  Each entry provisions its own CloudNativePG Cluster named
+                  "<app>-<name>-db" and a credentials Secret named
+                  "<app>-<name>-db-credentials" with keys: host, port, username, password,
+                  database, uri. Read access to those Secrets is scoped to the app's
+                  ServiceAccount.
+
+                  Requires the CloudNativePG operator on the cluster (in Nebari, NIC
+                  installs it on every GitOps bootstrap as foundational infrastructure).
+
+                  Removing an entry never deletes its database: the operator stops
+                  managing the Cluster and reports it as retained. Renaming an entry is a
+                  removal plus an addition, so it yields a new, empty database. Deleting
+                  the NebariApp deletes every database it owns, and their data, via owner
+                  references.
+                items:
+                  description: |-
+                    DatabaseConfig requests one managed PostgreSQL database, backed by its own
+                    CloudNativePG Cluster.
+                  properties:
+                    instances:
+                      default: 1
+                      description: |-
+                        Instances is the number of PostgreSQL instances (1 primary plus N-1 replicas, maximum 9).
+                        The cap is a platform guardrail, not a CloudNativePG limit.
+
+                        A single-instance database has no PodDisruptionBudget, so draining its
+                        node takes it down until the pod is running again. With two or more
+                        instances CloudNativePG's PodDisruptionBudgets are kept and a drain
+                        fails over to a replica first.
+                      format: int32
+                      maximum: 9
+                      minimum: 1
+                      type: integer
+                    name:
+                      description: |-
+                        Name identifies this database within the NebariApp and is part of the
+                        names of the resources created for it ("<app>-<name>-db" and
+                        "<app>-<name>-db-credentials"). It does not name anything inside
+                        PostgreSQL: the database and its owner keep CloudNativePG's defaults,
+                        and packs read the real values from the credentials Secret.
+
+                        CloudNativePG caps Cluster names at 50 characters, so "<app>-<name>-db"
+                        must fit within that.
+                      maxLength: 20
+                      minLength: 1
+                      pattern: ^[a-z]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    size:
+                      default: 1Gi
+                      description: |-
+                        Size is the storage request for each instance, as a Kubernetes quantity.
+                        Size cannot be decreased once set (CloudNativePG restriction).
+                      maxLength: 32
+                      pattern: ^[0-9]+(\.[0-9]+)?(Ki|Mi|Gi|Ti|Pi|Ei|k|M|G|T|P|E)?$
+                      type: string
+                      x-kubernetes-validations:
+                      - message: size must be greater than zero
+                        rule: sign(quantity(self)) > 0
+                  required:
+                  - name
+                  type: object
+                maxItems: 10
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
               gateway:
                 default: public
                 description: |-
@@ -613,8 +682,8 @@ spec:
               serviceAccountName:
                 description: |-
                   ServiceAccountName is the name of the Kubernetes ServiceAccount used by the
-                  app's pods. Used for RBAC scoping of OIDC secrets so only the app's pods
-                  can read its credentials. Defaults to the NebariApp's name if omitted.
+                  app's pods. Used for RBAC scoping of OIDC and database credentials secrets
+                  so only the app's pods can read them. Defaults to the NebariApp's name if omitted.
                 minLength: 1
                 type: string
             required:
@@ -654,6 +723,7 @@ spec:
                     - "RoutingReady": HTTPRoute has been created and is functioning
                     - "TLSReady": TLS certificate is available and configured
                     - "AuthReady": Authentication policy is configured (if auth is enabled)
+                    - "DatabaseReady": Every requested database is provisioned and its credentials are available (if databases are requested)
                     - "Ready": All components are ready (aggregate condition)
                 items:
                   description: Condition contains details for one aspect of the current
@@ -712,6 +782,47 @@ spec:
                 type: array
                 x-kubernetes-list-map-keys:
                 - type
+                x-kubernetes-list-type: map
+              databases:
+                description: |-
+                  Databases reports the state of each managed database: one entry per
+                  entry in spec.databases, plus one for every retained database (a
+                  database whose entry was removed from the spec).
+                items:
+                  description: DatabaseStatus reports the state of one managed database.
+                  properties:
+                    name:
+                      description: Name is the database's name, as given in spec.databases.
+                      type: string
+                    retained:
+                      description: |-
+                        Retained is true when this database's entry was removed from
+                        spec.databases. The CloudNativePG Cluster and its data still exist, but
+                        the operator no longer manages them or refreshes the credentials
+                        Secret. Add the entry back to resume management, or delete the Cluster
+                        to remove the database and its data.
+                      type: boolean
+                    secretRef:
+                      description: |-
+                        SecretRef identifies the Secret containing this database's connection
+                        credentials (keys: host, port, username, password, database, uri). It
+                        is set once the credentials have been published.
+                      properties:
+                        name:
+                          description: Name of the resource.
+                          type: string
+                        namespace:
+                          description: Namespace of the resource (if namespaced).
+                          type: string
+                      required:
+                      - name
+                      type: object
+                  required:
+                  - name
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
                 x-kubernetes-list-type: map
               gatewayRef:
                 description: GatewayRef identifies the Gateway resource that routes

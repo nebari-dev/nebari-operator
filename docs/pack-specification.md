@@ -1,10 +1,10 @@
 # Nebari Pack Specification
 
-**Specification version:** `0.1.0`
+**Specification version:** `0.1.1`
 **API version:** `reconcilers.nebari.dev/v1`
 **Kind:** `NebariApp`
 
-This is the contract between the Nebari platform and a software pack. It defines what a pack has to do to run on the platform and inherit single sign-on, routing, and TLS from it.
+This is the contract between the Nebari platform and a software pack. It defines what a pack has to do to run on the platform and inherit single sign-on, routing, TLS, and managed databases from it.
 
 It lives here, next to the custom resource definition it describes and the reconcilers that enforce it, so that the contract and its implementation version together. A specification maintained in a different repository from the code drifts, and the drift is invisible until a pack breaks.
 
@@ -85,7 +85,21 @@ A pack MAY appear on the platform landing page by setting `spec.landingPage`. If
 
 A pack that opts in SHOULD provide a health check endpoint, so the landing page can distinguish "installed" from "working".
 
-## 6. Security baseline
+## 6. Managed databases
+
+A pack MAY request PostgreSQL databases from the platform by listing them under `spec.databases`. The platform provisions each entry as its own PostgreSQL cluster. A pack is equally free to bring its own database and not use this at all.
+
+- A pack that bundles a PostgreSQL sub-chart SHOULD make it possible to turn that sub-chart off, so the pack can use a platform database instead.
+- A pack MUST read connection details from the Secret `<nebariapp-name>-<database-name>-db-credentials` in its namespace, using the keys `host`, `port`, `username`, `password`, `database`, and `uri`. It MUST NOT hardcode any of them, the database name included, and MUST NOT read the Secrets the database operator generates for itself.
+- A pack MUST tolerate the database not being ready when its pods start. The credentials Secret appears only once the database is ready, and `DatabaseReady` on the `NebariApp` reports progress.
+- A pack MUST NOT create or modify the platform's database resources for a database it requested through `spec.databases`.
+- A pack MUST treat a database name as permanent. Removing an entry does not delete the database, and renaming one yields a new, empty database while the old one is retained. Neither is a way to reset or migrate data.
+- A pack SHOULD request the smallest `instances` and `size` that serve it. Every entry is a full PostgreSQL cluster, and `size` cannot be decreased later.
+- A pack that cannot tolerate its database going down while a node is drained SHOULD request at least two `instances`. A single-instance database is evicted with its node and is unavailable until its pod is running again.
+
+[`reconcilers/database.md`](reconcilers/database.md) describes what the operator creates and how a retained database is removed.
+
+## 7. Security baseline
 
 These requirements apply to every pack. They are not new: they consolidate the security items that the [release readiness checklist](https://github.com/nebari-dev/software-pack-template/blob/main/docs/release-readiness-checklist.md) already gates promotion on, so there is one list rather than two that can disagree.
 
@@ -100,7 +114,7 @@ The maturity level in brackets is the level at which the checklist makes each on
 
 The checklist remains the authority on when a pack is promoted. This section is the authority on what the requirements are.
 
-## 7. Versioning and compatibility
+## 8. Versioning and compatibility
 
 This specification is versioned with [EffVer](https://jacobtomlinson.dev/effver/), the convention the operator adopted in [`decisions/2026-08-14-adopt-effver.md`](decisions/2026-08-14-adopt-effver.md). The version measures the effort an upgrade costs a pack author, not how much work the change was to make:
 
@@ -114,9 +128,11 @@ While this specification is pre-1.0, EffVer collapses to `0.Macro.Micro`.
 
 Packs declare the specification version they target, as described in the [pack policy](https://github.com/nebari-dev/governance/blob/main/pack-policy.md#maturity-and-release-readiness). A pack targeting an older version keeps working until a Macro release says otherwise.
 
-**This is version `0.1.0`, the first published version.** It describes the contract the operator already enforces rather than proposing changes to it. A pack that works today is conforming today.
+Version `0.1.0` was the first published version. It described the contract the operator already enforced rather than proposing changes to it.
 
-## 8. Changing this specification
+**This is version `0.1.1`.** It adds managed databases (section 6), which a pack opts into. A pack that conforms to `0.1.0` conforms to `0.1.1` without changes.
+
+## 9. Changing this specification
 
 This specification is a platform contract. Changing it requires an accepted platform RFD, filed in [`nebari-dev/governance`](https://github.com/nebari-dev/governance) and decided by the Core team, as described in [the governance](https://github.com/nebari-dev/governance/blob/main/GOVERNANCE.md#platform-rfds).
 
