@@ -38,6 +38,7 @@ import (
 	appsv1 "github.com/nebari-dev/nebari-operator/api/v1"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/conditions"
 	"github.com/nebari-dev/nebari-operator/internal/controller/utils/naming"
+	"github.com/nebari-dev/nebari-operator/internal/controller/utils/ptr"
 )
 
 const (
@@ -366,6 +367,12 @@ func (r *DatabaseReconciler) reconcileCluster(ctx context.Context, nebariApp *ap
 		cluster.Labels[labelDatabaseName] = db.Name
 		cluster.Spec.Instances = instances
 		cluster.Spec.StorageConfiguration.Size = size
+		// CNPG's PodDisruptionBudget keeps the primary from being evicted.
+		// With replicas that is what lets a node drain fail over first; with
+		// a single instance there is nothing to fail over to, so the budget
+		// only makes the node impossible to drain. Set on every pass so it
+		// follows instances up and down.
+		cluster.Spec.EnablePDB = ptr.To(instances > 1)
 		return controllerReference(nebariApp, cluster, r.Scheme)
 	})
 	if err != nil {

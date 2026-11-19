@@ -211,6 +211,9 @@ func TestReconcileDatabase_CreatesCluster(t *testing.T) {
 	if cluster.Spec.StorageConfiguration.Size != "10Gi" {
 		t.Errorf("storage size = %q, want 10Gi", cluster.Spec.StorageConfiguration.Size)
 	}
+	if cluster.Spec.EnablePDB == nil || !*cluster.Spec.EnablePDB {
+		t.Errorf("EnablePDB = %v, want true for a database with replicas", cluster.Spec.EnablePDB)
+	}
 	if len(cluster.OwnerReferences) != 1 || cluster.OwnerReferences[0].UID != app.UID {
 		t.Errorf("expected controller owner reference to the NebariApp, got %+v", cluster.OwnerReferences)
 	}
@@ -246,6 +249,63 @@ func TestReconcileDatabase_Defaults(t *testing.T) {
 	}
 	if cluster.Spec.StorageConfiguration.Size != "1Gi" {
 		t.Errorf("storage size = %q, want default 1Gi", cluster.Spec.StorageConfiguration.Size)
+	}
+	// A single instance must not get a PodDisruptionBudget: it would make the
+	// node hosting it impossible to drain.
+	if cluster.Spec.EnablePDB == nil || *cluster.Spec.EnablePDB {
+		t.Errorf("EnablePDB = %v, want false for a single-instance database", cluster.Spec.EnablePDB)
+	}
+}
+
+func TestReconcileDatabase_PodDisruptionBudgetFollowsInstances(t *testing.T) {
+	tests := []struct {
+		name      string
+		instances int32
+		want      bool
+	}{
+		{name: "unset instances defaults to one", instances: 0, want: false},
+		{name: "one instance", instances: 1, want: false},
+		{name: "two instances", instances: 2, want: true},
+		{name: "nine instances", instances: 9, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scheme := newScheme(t, true)
+			c := fake.NewClientBuilder().WithScheme(scheme).Build()
+			app := newApp(appsv1.DatabaseConfig{Name: "main", Instances: tt.instances})
+
+			if _, err := newReconciler(c, scheme).ReconcileDatabase(context.Background(), app); err != nil {
+				t.Fatalf("ReconcileDatabase: %v", err)
+			}
+
+			got := getCluster(t, c, "myapp-main-db").Spec.EnablePDB
+			if got == nil || *got != tt.want {
+				t.Errorf("EnablePDB = %v, want %t", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestReconcileDatabase_PodDisruptionBudgetTracksScaling(t *testing.T) {
+	scheme := newScheme(t, true)
+	c := fake.NewClientBuilder().WithScheme(scheme).Build()
+	r := newReconciler(c, scheme)
+	app := newApp(appsv1.DatabaseConfig{Name: "main", Instances: 1})
+
+	// One instance, then scaled up, then back down: the setting has to move
+	// both ways on a Cluster that already exists.
+	for _, step := range []struct {
+		instances int32
+		want      bool
+	}{{1, false}, {3, true}, {1, false}} {
+		app.Spec.Databases[0].Instances = step.instances
+		if _, err := r.ReconcileDatabase(context.Background(), app); err != nil {
+			t.Fatalf("ReconcileDatabase with %d instances: %v", step.instances, err)
+		}
+		got := getCluster(t, c, "myapp-main-db").Spec.EnablePDB
+		if got == nil || *got != step.want {
+			t.Errorf("with %d instances EnablePDB = %v, want %t", step.instances, got, step.want)
+		}
 	}
 }
 

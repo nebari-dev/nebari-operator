@@ -41,6 +41,7 @@ Key choices:
 - **Credentials are normalized.** The operator copies CNPG's generated Secret into a Secret with a fixed key set (`host`, `port`, `username`, `password`, `database`, `uri`), so the pack-facing contract does not depend on CNPG's key names.
 - **CNPG stays optional to the operator.** There is no startup watch on CNPG types. On a cluster without the CRDs the database subsystem reports `CNPGNotInstalled` and the rest of the app reconciles normally.
 - **The operator never adopts a Cluster it did not create.** A name collision is reported, not resolved by taking over someone else's database.
+- **A single-instance database has no PodDisruptionBudget.** CNPG's budget keeps the primary from being evicted, which with one instance protects nothing and makes the node impossible to drain (https://github.com/nebari-dev/nebari-infrastructure-core/issues/724). The operator disables it for one instance and keeps it for two or more, as CNPG recommends. The cost is that a node drain takes a single-instance database down until its pod is running again.
 
 Behavior is specified in [`docs/reconcilers/database.md`](../reconcilers/database.md), and the pack-facing requirements in [`docs/pack-specification.md`](../pack-specification.md).
 

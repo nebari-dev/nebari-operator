@@ -558,6 +558,11 @@ type DatabaseConfig struct {
 
 	// Instances is the number of PostgreSQL instances (1 primary plus N-1 replicas, maximum 9).
 	// The cap is a platform guardrail, not a CloudNativePG limit.
+	//
+	// A single-instance database has no PodDisruptionBudget, so draining its
+	// node takes it down until the pod is running again. With two or more
+	// instances CloudNativePG's PodDisruptionBudgets are kept and a drain
+	// fails over to a replica first.
 	// +kubebuilder:default=1
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=9

@@ -379,6 +379,11 @@ spec:
                       description: |-
                         Instances is the number of PostgreSQL instances (1 primary plus N-1 replicas, maximum 9).
                         The cap is a platform guardrail, not a CloudNativePG limit.
+
+                        A single-instance database has no PodDisruptionBudget, so draining its
+                        node takes it down until the pod is running again. With two or more
+                        instances CloudNativePG's PodDisruptionBudgets are kept and a drain
+                        fails over to a replica first.
                       format: int32
                       maximum: 9
                       minimum: 1

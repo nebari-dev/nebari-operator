@@ -77,7 +77,7 @@ spec:
 | Field       | Rules                                                                        |
 | ----------- | ---------------------------------------------------------------------------- |
 | `name`      | Required. Lowercase DNS label, at most 20 characters, unique within the list |
-| `instances` | 1 to 9, default 1. One primary plus N-1 replicas                             |
+| `instances` | 1 to 9, default 1. One primary plus N-1 replicas. See [Node drains](#node-drains) |
 | `size`      | Kubernetes quantity greater than zero, default `1Gi`. Per-instance storage   |
 
 At most 10 databases can be requested per NebariApp. **Every entry is a full
@@ -91,6 +91,25 @@ credentials Secret.
 
 The `size` field's positivity check uses CEL's `quantity()` library, which
 requires Kubernetes 1.29 or newer to install the CRD.
+
+### Node drains
+
+CloudNativePG protects a Cluster's primary with a PodDisruptionBudget. The
+operator keeps that for a database with two or more instances and turns it
+off (`enablePDB: false` on the Cluster) for a single-instance one, following
+[CloudNativePG's guidance](https://cloudnative-pg.io/docs/1.30/kubernetes_upgrade/#postgresql-clusters-used-for-development-or-testing).
+
+| `instances` | PodDisruptionBudget | What a node drain does                                          |
+| ----------- | ------------------- | --------------------------------------------------------------- |
+| 1           | None                | Evicts the pod. The database is down until it is running again  |
+| 2 or more   | CloudNativePG's     | Fails over to a replica first, then evicts the old primary      |
+
+With a single instance there is no replica to fail over to, so a budget would
+not keep the database up. It would only block the drain, which stalls node
+upgrades and node pool deletion
+(https://github.com/nebari-dev/nebari-infrastructure-core/issues/724). The
+setting follows `instances` when a database is scaled up or down. A pack that
+cannot afford the downtime of a drain should request at least two instances.
 
 ## Resource names
 

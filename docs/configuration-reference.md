@@ -790,6 +790,8 @@ Identifies the database within the NebariApp and forms part of its resource name
 
 Number of PostgreSQL instances: one primary plus N-1 replicas.
 
+A database with one instance has no PodDisruptionBudget, so draining its node (a node upgrade, a node pool deletion) takes it down until its pod is running again. With two or more instances a drain fails over to a replica first. See [Node drains](reconcilers/database.md#node-drains).
+
 **Validation:**
 - Minimum: 1
 - Maximum: 9

@@ -95,6 +95,7 @@ A pack MAY request PostgreSQL databases from the platform by listing them under 
 - A pack MUST NOT create or modify the platform's database resources for a database it requested through `spec.databases`.
 - A pack MUST treat a database name as permanent. Removing an entry does not delete the database, and renaming one yields a new, empty database while the old one is retained. Neither is a way to reset or migrate data.
 - A pack SHOULD request the smallest `instances` and `size` that serve it. Every entry is a full PostgreSQL cluster, and `size` cannot be decreased later.
+- A pack that cannot tolerate its database going down while a node is drained SHOULD request at least two `instances`. A single-instance database is evicted with its node and is unavailable until its pod is running again.
 
 [`reconcilers/database.md`](reconcilers/database.md) describes what the operator creates and how a retained database is removed.
 

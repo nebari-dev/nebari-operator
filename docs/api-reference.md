@@ -64,7 +64,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `name` _string_ | Name identifies this database within the NebariApp and is part of the<br />names of the resources created for it ("<app>-<name>-db" and<br />"<app>-<name>-db-credentials"). It does not name anything inside<br />PostgreSQL: the database and its owner keep CloudNativePG's defaults,<br />and packs read the real values from the credentials Secret.<br />CloudNativePG caps Cluster names at 50 characters, so "<app>-<name>-db"<br />must fit within that. |  | MaxLength: 20 <br />MinLength: 1 <br />Pattern: `^[a-z]([-a-z0-9]*[a-z0-9])?$` <br />Required: \{\} <br /> |
-| `instances` _integer_ | Instances is the number of PostgreSQL instances (1 primary plus N-1 replicas, maximum 9).<br />The cap is a platform guardrail, not a CloudNativePG limit. | 1 | Maximum: 9 <br />Minimum: 1 <br />Optional: \{\} <br /> |
+| `instances` _integer_ | Instances is the number of PostgreSQL instances (1 primary plus N-1 replicas, maximum 9).<br />The cap is a platform guardrail, not a CloudNativePG limit.<br />A single-instance database has no PodDisruptionBudget, so draining its<br />node takes it down until the pod is running again. With two or more<br />instances CloudNativePG's PodDisruptionBudgets are kept and a drain<br />fails over to a replica first. | 1 | Maximum: 9 <br />Minimum: 1 <br />Optional: \{\} <br /> |
 | `size` _string_ | Size is the storage request for each instance, as a Kubernetes quantity.<br />Size cannot be decreased once set (CloudNativePG restriction). | 1Gi | MaxLength: 32 <br />Pattern: `^[0-9]+(\.[0-9]+)?(Ki\|Mi\|Gi\|Ti\|Pi\|Ei\|k\|M\|G\|T\|P\|E)?$` <br />Optional: \{\} <br /> |
 
 

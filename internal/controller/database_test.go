@@ -218,12 +218,14 @@ var _ = Describe("NebariApp managed databases", func() {
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "db-app-metadata-db", Namespace: namespace}, metadata)).To(Succeed())
 			Expect(metadata.Spec.Instances).To(Equal(1))
 			Expect(metadata.Spec.StorageConfiguration.Size).To(Equal("1Gi"))
+			Expect(metadata.Spec.EnablePDB).To(HaveValue(BeFalse()), "a single instance must stay drainable")
 			Expect(metav1.IsControlledBy(metadata, getApp())).To(BeTrue())
 
 			warehouse := &cnpgv1.Cluster{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "db-app-warehouse-db", Namespace: namespace}, warehouse)).To(Succeed())
 			Expect(warehouse.Spec.Instances).To(Equal(3))
 			Expect(warehouse.Spec.StorageConfiguration.Size).To(Equal("20Gi"))
+			Expect(warehouse.Spec.EnablePDB).To(HaveValue(BeTrue()))
 
 			current := getApp()
 			dbCond := apimeta.FindStatusCondition(current.Status.Conditions, reconcilersv1.ConditionTypeDatabaseReady)
