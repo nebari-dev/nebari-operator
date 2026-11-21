@@ -18,6 +18,7 @@ package routing
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -403,6 +404,86 @@ func TestBuildHTTPRouteRules(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestUserFiltersPropagateToRoutes asserts that user-supplied routing.filters are
+// appended, in order, to both the protected and the public HTTPRoute (see #137).
+func TestUserFiltersPropagateToRoutes(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = appsv1.AddToScheme(scheme)
+	_ = gatewayv1.Install(scheme)
+
+	reconciler := &RoutingReconciler{Scheme: scheme}
+
+	filters := []gatewayv1.HTTPRouteFilter{
+		{
+			Type: gatewayv1.HTTPRouteFilterResponseHeaderModifier,
+			ResponseHeaderModifier: &gatewayv1.HTTPHeaderFilter{
+				Remove: []string{"Access-Control-Allow-Credentials"},
+			},
+		},
+		{
+			Type: gatewayv1.HTTPRouteFilterRequestHeaderModifier,
+			RequestHeaderModifier: &gatewayv1.HTTPHeaderFilter{
+				Add: []gatewayv1.HTTPHeader{{Name: "X-Forwarded-Tenant", Value: "acme"}},
+			},
+		},
+	}
+
+	nebariApp := &appsv1.NebariApp{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-app", Namespace: "default"},
+		Spec: appsv1.NebariAppSpec{
+			Hostname: "test.example.com",
+			Service:  appsv1.ServiceReference{Name: "test-service", Port: 8080},
+			Routing: &appsv1.RoutingConfig{
+				Filters:      filters,
+				PublicRoutes: []appsv1.RouteMatch{{PathPrefix: "/healthz", PathType: "Exact"}},
+			},
+		},
+	}
+
+	mainRoute, err := reconciler.buildHTTPRoute(nebariApp, "nebari-gateway", "")
+	if err != nil {
+		t.Fatalf("buildHTTPRoute returned error: %v", err)
+	}
+	publicRoute, err := reconciler.buildPublicHTTPRoute(nebariApp, "nebari-gateway", "")
+	if err != nil {
+		t.Fatalf("buildPublicHTTPRoute returned error: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name  string
+		route *gatewayv1.HTTPRoute
+	}{
+		{"main", mainRoute},
+		{"public", publicRoute},
+	} {
+		if len(tc.route.Spec.Rules) != 1 {
+			t.Fatalf("%s route: expected 1 rule, got %d", tc.name, len(tc.route.Spec.Rules))
+		}
+		got := tc.route.Spec.Rules[0].Filters
+		if !reflect.DeepEqual(got, filters) {
+			t.Errorf("%s route: filters not propagated in order.\n got: %#v\nwant: %#v", tc.name, got, filters)
+		}
+	}
+}
+
+// TestUserFiltersAbsentWhenUnset asserts the rule carries no filters when the
+// user configures none.
+func TestUserFiltersAbsentWhenUnset(t *testing.T) {
+	reconciler := &RoutingReconciler{Scheme: runtime.NewScheme()}
+	nebariApp := &appsv1.NebariApp{
+		Spec: appsv1.NebariAppSpec{
+			Service: appsv1.ServiceReference{Name: "svc", Port: 80},
+		},
+	}
+	rules := reconciler.buildHTTPRouteRules(nebariApp)
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 rule, got %d", len(rules))
+	}
+	if len(rules[0].Filters) != 0 {
+		t.Errorf("expected no filters, got %d", len(rules[0].Filters))
 	}
 }
 
